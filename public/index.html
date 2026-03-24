@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BestExplorer</title>
+  
+  <!-- w2ui CSS -->
+  <link rel="stylesheet" type="text/css" href="../node_modules/w2ui/w2ui-2.0.min.css">
+  
+  <!-- Custom styles -->
+  <link rel="stylesheet" type="text/css" href="css/styles.css">
+</head>
+<body>
+  <div id="main" style="width: 100%; height: 100%;">
+    <div class="w2ui-page page-0">
+      <div class="w2ui-panel wpanel" name="left" style="display: none; width: 250px;">
+        <!-- Left sidebar: Folder navigation - HIDDEN -->
+        <div class="w2ui-panel-title">Folders</div>
+        <div id="folders-container" style="padding: 10px; overflow-y: auto; height: calc(100% - 50px);">
+          <div id="current-path-sidebar" style="margin-bottom: 10px; font-weight: bold; word-break: break-all; font-size: 12px;"></div>
+          <button id="btn-parent-folder-sidebar" style="width: 100%; margin-bottom: 10px; padding: 8px;">Parent Folder</button>
+          <div id="subfolders-list" style="border: 1px solid #ddd; border-radius: 4px;"></div>
+        </div>
+      </div>
+
+      <div class="w2ui-panel wpanel" name="main" style="left: 0; right: 0;">
+        <!-- Main content area: File & folder grid -->
+        <div class="w2ui-panel-title">
+          <span id="current-path-title" style="font-weight: bold; font-size: 12px;"></span>
+          <div style="float: right;">
+            <button id="btn-parent-folder" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
+            <button id="btn-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
+            <button id="btn-categories" style="padding: 4px 8px;">Categories</button>
+          </div>
+        </div>
+        <div id="grid" style="width: 100%; height: calc(100% - 50px);"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div id="context-menu" style="display: none; position: fixed; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); z-index: 10000; overflow: hidden; min-width: 200px;"></div>
+
+  <!-- Category Manager Modal -->
+  <div id="category-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; width: 500px; max-height: 80vh; overflow-y: auto;">
+      <h2 style="margin-top: 0;">Category Manager</h2>
+      
+      <!-- Create new category -->
+      <div style="margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #ddd;">
+        <h3>Create New Category</h3>
+        <div style="margin-bottom: 10px;">
+          <label>Name:</label>
+          <input id="modal-cat-name" type="text" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+        </div>
+        <div style="margin-bottom: 10px;">
+          <label>Background Color:</label>
+          <input id="modal-cat-bg" type="color" style="width: 100%; padding: 4px; border: 1px solid #ccc; border-radius: 4px; height: 40px; cursor: pointer;">
+        </div>
+        <div style="margin-bottom: 10px;">
+          <label>Text/Line Color:</label>
+          <input id="modal-cat-text" type="color" style="width: 100%; padding: 4px; border: 1px solid #ccc; border-radius: 4px; height: 40px; cursor: pointer;">
+        </div>
+        <div style="margin-bottom: 10px;">
+          <label>Patterns (comma-separated regex patterns):</label>
+          <textarea id="modal-cat-patterns" style="width: 100%; height: 60px; padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-family: monospace;"></textarea>
+        </div>
+        <button id="btn-modal-create-category" style="width: 100%; padding: 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Create</button>
+      </div>
+
+      <!-- Existing categories -->
+      <div>
+        <h3>Existing Categories</h3>
+        <div id="modal-categories-list"></div>
+      </div>
+
+      <button id="btn-modal-close" style="width: 100%; padding: 10px; margin-top: 20px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+    </div>
+  </div>
+
+  <!-- jQuery -->
+  <script src="../node_modules/jquery/dist/jquery.min.js"></script>
+  
+  <!-- w2ui -->
+  <script src="../node_modules/w2ui/w2ui-2.0.min.js"></script>
+
+  <!-- Renderer logic -->
+  <script src="js/renderer.js"></script>
+</body>
+</html>

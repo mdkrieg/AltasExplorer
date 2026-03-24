@@ -1,0 +1,25 @@
+{
+  "name": "best-explorer",
+  "version": "1.0.0",
+  "description": "A powerful file explorer built with Electron, w2ui, and Node.js",
+  "main": "main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "postinstall": "npm rebuild better-sqlite3 --build-from-source"
+  },
+  "keywords": ["file", "explorer", "electron"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "sharp": "^0.33.1",
+    "jquery": "^3.7.1",
+    "w2ui": "^2.0.0"
+  }
+}
