@@ -299,6 +299,37 @@ ipcMain.handle('generate-folder-icon', async (event, { bgColor, textColor }) => 
   }
 });
 
+/**
+ * Notes: Read notes.txt file
+ */
+ipcMain.handle('read-notes-file', async (event, notesPath) => {
+  try {
+    const fsSync = require('fs');
+    if (fsSync.existsSync(notesPath)) {
+      return fsSync.readFileSync(notesPath, 'utf-8');
+    } else {
+      throw new Error('File does not exist');
+    }
+  } catch (err) {
+    console.error('Error reading notes file:', err);
+    throw err;
+  }
+});
+
+/**
+ * Notes: Write notes.txt file
+ */
+ipcMain.handle('write-notes-file', async (event, { notesPath, content }) => {
+  try {
+    const fsSync = require('fs');
+    fsSync.writeFileSync(notesPath, content, 'utf-8');
+    return { success: true };
+  } catch (err) {
+    console.error('Error writing notes file:', err);
+    throw err;
+  }
+});
+
 // ============================================
 // App lifecycle
 // ============================================

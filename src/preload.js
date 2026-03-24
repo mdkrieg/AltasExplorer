@@ -36,5 +36,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Generate folder icon
   generateFolderIcon: (bgColor, textColor) =>
-    ipcRenderer.invoke('generate-folder-icon', { bgColor, textColor })
+    ipcRenderer.invoke('generate-folder-icon', { bgColor, textColor }),
+  
+  // Notes file operations
+  readNotesFile: (notesPath) => ipcRenderer.invoke('read-notes-file', notesPath),
+  writeNotesFile: (notesPath, content) => ipcRenderer.invoke('write-notes-file', { notesPath, content })
 });

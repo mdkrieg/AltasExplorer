@@ -100,10 +100,140 @@ button:active {
   height: 100%;
 }
 
+/* Panel Container and Multi-Panel Layouts */
+.panel-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  gap: 0;
+}
+
+.panel-item {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #d0d0d0;
+  background: white;
+}
+
+/* Layout 1: Single panel (full width/height) */
+.layout-1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+.layout-1 #panel-1 {
+  display: flex !important;
+}
+
+.layout-1 #panel-2,
+.layout-1 #panel-3,
+.layout-1 #panel-4 {
+  display: none !important;
+}
+
+/* Layout 2: Two panels side by side */
+.layout-2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+
+.layout-2 #panel-1,
+.layout-2 #panel-2 {
+  display: flex !important;
+}
+
+.layout-2 #panel-3,
+.layout-2 #panel-4 {
+  display: none !important;
+}
+
+/* Layout 3: Left panel full height, right side has 2 stacked panels */
+.layout-3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.layout-3 #panel-1 {
+  display: flex !important;
+  grid-column: 1;
+  grid-row: 1 / 3;
+}
+
+.layout-3 #panel-2 {
+  display: flex !important;
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.layout-3 #panel-3 {
+  display: flex !important;
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.layout-3 #panel-4 {
+  display: none !important;
+}
+
+/* Layout 4: Four equal quadrants */
+.layout-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.layout-4 #panel-1 {
+  display: flex !important;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.layout-4 #panel-2 {
+  display: flex !important;
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.layout-4 #panel-3 {
+  display: flex !important;
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.layout-4 #panel-4 {
+  display: flex !important;
+  grid-column: 2;
+  grid-row: 2;
+}
+
+/* Layout option buttons hover effect */
+.layout-option {
+  transition: all 0.2s ease !important;
+}
+
+.layout-option:hover {
+  border-color: #2196F3 !important;
+  box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3) !important;
+  transform: translateY(-2px) !important;
+}
+
+.layout-option:active {
+  background: #f0f0f0 !important;
+}
+
 /* Modal */
-#category-modal {
+#category-modal,
+#layout-modal {
   z-index: 1000;
   animation: fadeIn 0.2s ease;
+}
+
+#layout-modal > div {
+  animation: slideUp 0.2s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
 /* Context Menu */
@@ -206,6 +336,85 @@ textarea {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #999;
+}
+
+/* Panel and Landing Page Styles */
+.panel-select-active {
+  background: #2196F3 !important;
+  color: white !important;
+  border-color: #1976D2 !important;
+}
+
+.panel-landing-page {
+  background: white;
+  border-radius: 4px;
+  overflow-y: auto;
+}
+
+.panel-landing-page h3 {
+  margin: 0 0 15px 0;
+  font-size: 14px;
+  color: #333;
+  font-weight: 600;
+}
+
+.btn-panel-select,
+.btn-panel-open-main,
+.btn-panel-notes {
+  width: 100%;
+  padding: 12px;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.btn-panel-select:hover,
+.btn-panel-open-main:hover,
+.btn-panel-notes:hover {
+  background: #e8e8e8;
+  border-color: #999;
+}
+
+.btn-panel-select:active,
+.btn-panel-open-main:active,
+.btn-panel-notes:active {
+  background: #d8d8d8;
+}
+
+.btn-notes-edit,
+.btn-notes-back {
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-notes-back {
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  color: #333;
+}
+
+.btn-notes-back:hover {
+  background: #e8e8e8;
+}
+
+.panel-notes-view {
+  display: flex;
+  flex-direction: column;
+  background: white;
+}
+
+.notes-content {
+  font-size: 12px !important;
+  line-height: 1.5;
+}
+
+.notes-content:disabled {
+  background: white;
+  color: #333;
 }
 
 /* Responsive fixes */

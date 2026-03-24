@@ -24,17 +24,86 @@
         </div>
       </div>
 
-      <div class="w2ui-panel wpanel" name="main" style="left: 0; right: 0;">
-        <!-- Main content area: File & folder grid -->
-        <div class="w2ui-panel-title">
-          <span id="current-path-title" style="font-weight: bold; font-size: 12px;"></span>
-          <div style="float: right;">
-            <button id="btn-parent-folder" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-            <button id="btn-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
-            <button id="btn-categories" style="padding: 4px 8px;">Categories</button>
+      <div id="panel-container" class="panel-container layout-1" style="left: 0; right: 0; top: 0; bottom: 0; position: absolute; display: grid;">
+        <!-- Panel 1 (always present) -->
+        <div id="panel-1" class="panel-item" style="position: relative; display: flex; flex-direction: column; overflow: hidden;">
+          <div class="w2ui-panel-title">
+            <span class="panel-path" style="font-weight: bold; font-size: 12px;"></span>
+            <div style="float: right;">
+              <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
+              <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
+              <button class="btn-panel-categories" style="padding: 4px 8px; margin-right: 5px;">Categories</button>
+              <button id="btn-view" style="padding: 4px 8px;">View</button>
+            </div>
+          </div>
+          <div class="panel-grid" style="width: 100%; height: calc(100% - 50px); position: relative;"></div>
+        </div>
+
+        <!-- Panel 2 (hidden by default) -->
+        <div id="panel-2" class="panel-item" style="display: none; position: relative; flex-direction: column; overflow: hidden;">
+          <div class="w2ui-panel-title">
+            <span class="panel-path" style="font-weight: bold; font-size: 12px;"></span>
+            <div style="float: right;">
+              <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
+              <button class="btn-panel-refresh" style="padding: 4px 8px;">Refresh</button>
+            </div>
+          </div>
+          <div class="panel-content" style="width: 100%; height: calc(100% - 50px); position: relative; display: flex; flex-direction: column;">
+            <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px;">
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px;">Select</button><button class="btn-panel-open-main" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">Open as main</button></div>
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
+            </div>
+            <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
+            <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
+              <div style="padding: 10px; background: #f0f0f0; border-bottom: 1px solid #ddd;"><button class="btn-notes-edit" style="padding: 6px 12px; background: #2196F3; color: white; border: none; cursor: pointer;">Edit</button>&nbsp;<button class="btn-notes-back" style="padding: 6px 12px; cursor: pointer;">Back</button></div>
+              <textarea class="notes-content" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none;" readonly></textarea>
+            </div>
           </div>
         </div>
-        <div id="grid" style="width: 100%; height: calc(100% - 50px);"></div>
+
+        <!-- Panel 3 (hidden by default) -->
+        <div id="panel-3" class="panel-item" style="display: none; position: relative; flex-direction: column; overflow: hidden;">
+          <div class="w2ui-panel-title">
+            <span class="panel-path" style="font-weight: bold; font-size: 12px;"></span>
+            <div style="float: right;">
+              <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
+              <button class="btn-panel-refresh" style="padding: 4px 8px;">Refresh</button>
+            </div>
+          </div>
+          <div class="panel-content" style="width: 100%; height: calc(100% - 50px); position: relative; display: flex; flex-direction: column;">
+            <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px;">
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px;">Select</button><button class="btn-panel-open-main" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">Open as main</button></div>
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
+            </div>
+            <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
+            <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
+              <div style="padding: 10px; background: #f0f0f0; border-bottom: 1px solid #ddd;"><button class="btn-notes-edit" style="padding: 6px 12px; background: #2196F3; color: white; border: none; cursor: pointer;">Edit</button>&nbsp;<button class="btn-notes-back" style="padding: 6px 12px; cursor: pointer;">Back</button></div>
+              <textarea class="notes-content" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none;" readonly></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel 4 (hidden by default) -->
+        <div id="panel-4" class="panel-item" style="display: none; position: relative; flex-direction: column; overflow: hidden;">
+          <div class="w2ui-panel-title">
+            <span class="panel-path" style="font-weight: bold; font-size: 12px;"></span>
+            <div style="float: right;">
+              <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
+              <button class="btn-panel-refresh" style="padding: 4px 8px;">Refresh</button>
+            </div>
+          </div>
+          <div class="panel-content" style="width: 100%; height: calc(100% - 50px); position: relative; display: flex; flex-direction: column;">
+            <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px;">
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px;">Select</button><button class="btn-panel-open-main" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">Open as main</button></div>
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
+            </div>
+            <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
+            <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
+              <div style="padding: 10px; background: #f0f0f0; border-bottom: 1px solid #ddd;"><button class="btn-notes-edit" style="padding: 6px 12px; background: #2196F3; color: white; border: none; cursor: pointer;">Edit</button>&nbsp;<button class="btn-notes-back" style="padding: 6px 12px; cursor: pointer;">Back</button></div>
+              <textarea class="notes-content" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none;" readonly></textarea>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -76,6 +145,55 @@
       </div>
 
       <button id="btn-modal-close" style="width: 100%; padding: 10px; margin-top: 20px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+    </div>
+  </div>
+
+  <!-- Layout Configuration Modal -->
+  <div id="layout-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; width: 500px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+      <h2 style="margin-top: 0; margin-bottom: 20px;">Panel Layout</h2>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+        <!-- 1 Panel Option -->
+        <button class="layout-option" data-layout="1" style="padding: 30px; border: 2px solid #ddd; border-radius: 8px; background: white; cursor: pointer; font-size: 14px; font-weight: bold; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: all 0.2s ease;">
+          <div style="width: 100%; height: 80px; border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+          <span>1 Panel</span>
+        </button>
+
+        <!-- 2 Panels Side by Side -->
+        <button class="layout-option" data-layout="2" style="padding: 30px; border: 2px solid #ddd; border-radius: 8px; background: white; cursor: pointer; font-size: 14px; font-weight: bold; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: all 0.2s ease;">
+          <div style="width: 100%; height: 80px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+            <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+            <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+          </div>
+          <span>2 Panels (Side by Side)</span>
+        </button>
+
+        <!-- 3 Panels -->
+        <button class="layout-option" data-layout="3" style="padding: 30px; border: 2px solid #ddd; border-radius: 8px; background: white; cursor: pointer; font-size: 14px; font-weight: bold; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: all 0.2s ease;">
+          <div style="width: 100%; height: 80px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+            <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+            <div style="display: grid; grid-template-rows: 1fr 1fr; gap: 4px;">
+              <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+              <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+            </div>
+          </div>
+          <span>3 Panels (L + R/R)</span>
+        </button>
+
+        <!-- 4 Panels Quadrants -->
+        <button class="layout-option" data-layout="4" style="padding: 30px; border: 2px solid #ddd; border-radius: 8px; background: white; cursor: pointer; font-size: 14px; font-weight: bold; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: all 0.2s ease;">
+          <div style="width: 100%; height: 80px; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 4px;">
+            <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+            <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+            <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+            <div style="border: 1px solid #999; border-radius: 4px; background: #f0f0f0;"></div>
+          </div>
+          <span>4 Panels (Quadrants)</span>
+        </button>
+      </div>
+
+      <button id="btn-layout-close" style="width: 100%; padding: 10px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
     </div>
   </div>
 

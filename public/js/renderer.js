@@ -12,12 +12,18 @@ window.addEventListener('unhandledrejection', (event) => {
   console.error('Unhandled promise rejection:', event.reason);
 });
 
-let currentPath = '';
-let currentCategory = null;
+// Panel state - tracks each panel's directory, grid, and navigation
+let panelState = {
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false }
+};
+
+let activePanelId = 1;
 let allCategories = {};
-let fileGridData = [];
-let navigationHistory = [];
-let navigationIndex = -1;
+let currentLayout = 1;
+let notesEditMode = false;
 
 /**
  * Initialize the application
@@ -33,8 +39,8 @@ async function initialize() {
     
     console.log('electronAPI available:', Object.keys(window.electronAPI));
 
-    // Initialize w2ui grid
-    await initializeGrid();
+    // Initialize grids for all panels
+    await initializeAllGrids();
 
     // Get settings and navigate to home directory
     const settings = await window.electronAPI.getSettings();
@@ -42,8 +48,11 @@ async function initialize() {
     
     const homePath = settings.home_directory;
 
+    // Set initial layout to 1 panel
+    switchLayout(1);
+
     if (homePath) {
-      await navigateToDirectory(homePath);
+      await navigateToDirectory(homePath, 1);
     }
 
     // Load categories
@@ -60,20 +69,25 @@ async function initialize() {
 }
 
 /**
- * Navigate to a directory
+ * Navigate to a directory in a specific panel
  */
-async function navigateToDirectory(dirPath, addToHistory = true) {
+async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
   try {
-    console.log('Navigating to:', dirPath);
-    currentPath = dirPath;
+    console.log(`Navigating panel ${panelId} to:`, dirPath);
+    
+    const state = panelState[panelId];
+    state.currentPath = dirPath;
+    
     // Update navigation history
     if (addToHistory) {
-      navigationHistory = navigationHistory.slice(0, navigationIndex + 1);
-      navigationHistory.push(dirPath);
-      navigationIndex = navigationHistory.length - 1;
+      state.navigationHistory = state.navigationHistory.slice(0, state.navigationIndex + 1);
+      state.navigationHistory.push(dirPath);
+      state.navigationIndex = state.navigationHistory.length - 1;
     }
-    // Update current path display in title
-    $('#current-path-title').text(dirPath);
+    
+    // Update panel path display
+    const $panel = $(`#panel-${panelId}`);
+    $panel.find('.panel-path').text(dirPath);
 
     // Scan directory and populate files
     const scanResult = await window.electronAPI.scanDirectory(dirPath);
@@ -82,10 +96,10 @@ async function navigateToDirectory(dirPath, addToHistory = true) {
     // Get category for this directory
     const category = await window.electronAPI.getCategoryForDirectory(dirPath);
     console.log('Category for directory:', category);
-    currentCategory = category;
+    state.currentCategory = category;
 
-    // Update window icon
-    if (category) {
+    // Update window icon if this is the active panel
+    if (panelId === activePanelId && category) {
       await window.electronAPI.updateWindowIcon(category.name);
     }
 
@@ -93,8 +107,8 @@ async function navigateToDirectory(dirPath, addToHistory = true) {
     const entries = await window.electronAPI.readDirectory(dirPath);
     console.log('Entries count:', entries ? entries.length : 0);
 
-    // Populate file grid (now with both folders and files)
-    populateFileGrid(entries, category);
+    // Populate file grid for this panel
+    await populateFileGrid(entries, category, panelId);
   } catch (err) {
     console.error('Error navigating to directory:', err);
     alert('Error accessing directory: ' + err.message);
@@ -102,54 +116,83 @@ async function navigateToDirectory(dirPath, addToHistory = true) {
 }
 
 /**
- * Initialize w2ui grid
+ * Initialize w2ui grids for all panels
  */
-async function initializeGrid() {
-  if (w2ui && w2ui.grid) {
-    w2ui.grid.destroy();
+async function initializeAllGrids() {
+  for (let panelId = 1; panelId <= 4; panelId++) {
+    await initializeGridForPanel(panelId);
+  }
+}
+
+/**
+ * Initialize w2ui grid for a specific panel
+ */
+async function initializeGridForPanel(panelId) {
+  const gridName = `grid-panel-${panelId}`;
+  
+  // Destroy existing grid if present
+  if (w2ui && w2ui[gridName]) {
+    w2ui[gridName].destroy();
   }
 
   // Use w2grid constructor directly
-  w2ui.grid = new w2grid({
-    name: 'grid',
+  w2ui[gridName] = new w2grid({
+    name: gridName,
     show: {
       header: false,
       toolbar: false,
       footer: false
     },
     columns: [
-      { field: 'icon', text: 'Icon', size: '40px', resizable: false, sortable: false },
+      { field: 'icon', text: '', size: '40px', resizable: false, sortable: false },
       { field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true },
       { field: 'size', text: 'Size', size: '120px', resizable: true, sortable: true, align: 'right' },
       { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true }
     ],
     records: [],
+    onClick: function(event) {
+      // Single click handling for select mode
+      if (panelState[panelId].selectMode && event.detail.recid) {
+        const record = this.records[event.detail.recid - 1];
+        if (record && record.isFolder) {
+          setActivePanelId(panelId);
+          navigateToDirectory(record.path, panelId);
+        }
+      }
+    },
     onDblClick: function(event) {
       const record = this.records[event.detail.recid - 1];
       if (record && record.isFolder) {
-        navigateToDirectory(record.path);
+        navigateToDirectory(record.path, panelId);
       }
     },
     onContextMenu: function(event) {
       if (event.detail.recid) {
         const record = this.records[event.detail.recid - 1];
         if (record && record.isFolder) {
+          setActivePanelId(panelId);
           showFolderContextMenu(event.detail.originalEvent, record.path);
         }
       }
     }
   });
 
-  w2ui.grid.render('#grid');
+  // Render grid in the panel's grid container
+  const $gridContainer = $(`#panel-${panelId} .panel-grid`);
+  w2ui[gridName].render($gridContainer[0]);
+  
+  // Store reference in panelState
+  panelState[panelId].w2uiGrid = w2ui[gridName];
 }
 
 /**
- * Populate the grid with files and folders
+ * Populate the grid with files and folders for a specific panel
  */
-async function populateFileGrid(entries, currentDirCategory) {
-  fileGridData = entries;
-  console.log('Populating grid with', entries.length, 'entries');
+async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {
+  console.log(`Populating grid for panel ${panelId} with ${entries.length} entries`);
 
+  const state = panelState[panelId];
+  
   // Separate folders and files
   const folders = entries.filter(e => e.isDirectory);
   const files = entries.filter(e => !e.isDirectory);
@@ -186,10 +229,13 @@ async function populateFileGrid(entries, currentDirCategory) {
     });
   }
 
-  // Update grid records
-  w2ui.grid.records = records;
-  w2ui.grid.refresh();
-  console.log('Grid populated with', records.length, 'rows');
+  // Update grid records for this panel
+  const grid = state.w2uiGrid;
+  if (grid) {
+    grid.records = records;
+    grid.refresh();
+    console.log(`Grid for panel ${panelId} populated with ${records.length} rows`);
+  }
 }
 
 
@@ -292,8 +338,9 @@ async function showFolderContextMenu(event, folderPath) {
     console.log('Selected category:', categoryName);
     try {
       await window.electronAPI.assignCategoryToDirectory(folderPath, categoryName);
-      // Refresh the grid to show updated icon
-      await navigateToDirectory(currentPath);
+      // Refresh the grid for active panel to show updated icon
+      const state = panelState[activePanelId];
+      await navigateToDirectory(state.currentPath, activePanelId);
     } catch (err) {
       alert('Error assigning category: ' + err.message);
     }
@@ -307,22 +354,173 @@ async function showFolderContextMenu(event, folderPath) {
 }
 
 /**
- * Navigate to previous directory in history
+ * Set which panel is currently active
  */
-function navigateBack() {
-  if (navigationIndex > 0) {
-    navigationIndex--;
-    navigateToDirectory(navigationHistory[navigationIndex], false);
+function setActivePanelId(panelId) {
+  if (panelId >= 1 && panelId <= 4) {
+    activePanelId = panelId;
+    console.log('Active panel set to:', panelId);
   }
 }
 
 /**
- * Navigate to next directory in history
+ * Navigate to previous directory in history for active panel
+ */
+function navigateBack() {
+  const state = panelState[activePanelId];
+  if (state.navigationIndex > 0) {
+    state.navigationIndex--;
+    navigateToDirectory(state.navigationHistory[state.navigationIndex], activePanelId, false);
+  }
+}
+
+/**
+ * Navigate to next directory in history for active panel
  */
 function navigateForward() {
-  if (navigationIndex < navigationHistory.length - 1) {
-    navigationIndex++;
-    navigateToDirectory(navigationHistory[navigationIndex], false);
+  const state = panelState[activePanelId];
+  if (state.navigationIndex < state.navigationHistory.length - 1) {
+    state.navigationIndex++;
+    navigateToDirectory(state.navigationHistory[state.navigationIndex], activePanelId, false);
+  }
+}
+
+/**
+ * Switch to a different panel layout (1, 2, 3, or 4 panels)
+ */
+async function switchLayout(layoutNumber) {
+  currentLayout = layoutNumber;
+  console.log('Switching to layout:', layoutNumber);
+  
+  const $container = $('#panel-container');
+  
+  // Remove existing layout class and add new one
+  $container.removeClass('layout-1 layout-2 layout-3 layout-4');
+  $container.addClass(`layout-${layoutNumber}`);
+  
+  // Ensure grids are properly sized after layout switch
+  setTimeout(() => {
+    for (let panelId = 1; panelId <= 4; panelId++) {
+      const grid = panelState[panelId].w2uiGrid;
+      if (grid) {
+        grid.resize();
+      }
+    }
+  }, 100);
+}
+
+/**
+ * Show layout configuration modal
+ */
+function showLayoutModal() {
+  $('#layout-modal').show();
+}
+
+/**
+ * Hide layout configuration modal
+ */
+function hideLayoutModal() {
+  $('#layout-modal').hide();
+}
+
+/**
+ * Toggle select mode for a panel
+ */
+function toggleSelectMode(panelId) {
+  const state = panelState[panelId];
+  state.selectMode = !state.selectMode;
+  
+  const $selectBtn = $(`#panel-${panelId} .btn-panel-select`);
+  
+  if (state.selectMode) {
+    // Show grid, hide landing page
+    $selectBtn.addClass('panel-select-active');
+    $(`#panel-${panelId} .panel-landing-page`).hide();
+    $(`#panel-${panelId} .panel-grid`).show();
+  } else {
+    // Hide grid, show landing page
+    $selectBtn.removeClass('panel-select-active');
+    $(`#panel-${panelId} .panel-landing-page`).show();
+    $(`#panel-${panelId} .panel-grid`).hide();
+  }
+}
+
+/**
+ * Show notes view for a panel
+ */
+async function showNotesView(panelId) {
+  const notesPath = panelState[panelId].currentPath + '\\notes.txt';
+  const $notesView = $(`#panel-${panelId} .panel-notes-view`);
+  const $notesContent = $notesView.find('.notes-content');
+  
+  try {
+    // Try to read notes.txt
+    const content = await window.electronAPI.readNotesFile(notesPath);
+    $notesContent.val(content);
+    $notesContent.prop('readonly', true);
+    
+    // Hide landing page and grid, show notes view
+    $(`#panel-${panelId} .panel-landing-page`).hide();
+    $(`#panel-${panelId} .panel-grid`).hide();
+    $notesView.show();
+    
+    notesEditMode = false;
+  } catch (err) {
+    // File doesn't exist, create empty notes
+    $notesContent.val('');
+    $notesContent.prop('readonly', false);
+    
+    $(`#panel-${panelId} .panel-landing-page`).hide();
+    $(`#panel-${panelId} .panel-grid`).hide();
+    $notesView.show();
+    
+    notesEditMode = true;
+  }
+  
+  setActivePanelId(panelId);
+}
+
+/**
+ * Hide notes view and return to landing page
+ */
+function hideNotesView(panelId) {
+  const $notesView = $(`#panel-${panelId} .panel-notes-view`);
+  const $notesContent = $notesView.find('.notes-content');
+  
+  $notesContent.prop('readonly', true);
+  $notesView.hide();
+  $(`#panel-${panelId} .panel-landing-page`).show();
+  
+  notesEditMode = false;
+}
+
+/**
+ * Toggle edit mode for notes
+ */
+async function toggleNotesEditMode(panelId) {
+  const $notesContent = $(`#panel-${panelId} .panel-notes-view .notes-content`);
+  const $editBtn = $(`#panel-${panelId} .btn-notes-edit`);
+  
+  if ($notesContent.prop('readonly')) {
+    // Enter edit mode
+    $notesContent.prop('readonly', false);
+    $notesContent.focus();
+    $editBtn.text('Save');
+    $editBtn.css('background', '#4CAF50');
+  } else {
+    // Save and exit edit mode
+    const content = $notesContent.val();
+    const notesPath = panelState[panelId].currentPath + '\\notes.txt';
+    
+    try {
+      await window.electronAPI.writeNotesFile(notesPath, content);
+      $notesContent.prop('readonly', true);
+      $editBtn.text('Edit');
+      $editBtn.css('background', '#2196F3');
+      notesEditMode = false;
+    } catch (err) {
+      alert('Error saving notes: ' + err.message);
+    }
   }
 }
 
@@ -344,25 +542,96 @@ function attachEventListeners() {
     }
   });
 
-  // Parent folder button
-  $('#btn-parent-folder').click(function() {
-    if (currentPath && currentPath.length > 3) {
-      const parentPath = currentPath.substring(0, currentPath.lastIndexOf('\\'));
-      if (parentPath.length >= 2) {
-        navigateToDirectory(parentPath);
-      }
+  // View button - show layout modal
+  $('#btn-view').click(function() {
+    showLayoutModal();
+  });
+
+  // Layout option buttons
+  $('.layout-option').click(function() {
+    const layoutNumber = parseInt($(this).data('layout'));
+    switchLayout(layoutNumber);
+    hideLayoutModal();
+  });
+
+  // Layout modal close button and overlay
+  $('#btn-layout-close').click(function() {
+    hideLayoutModal();
+  });
+
+  $('#layout-modal').click(function(e) {
+    if (e.target === this) {
+      hideLayoutModal();
     }
   });
 
-  // Refresh button
-  $('#btn-refresh').click(function() {
-    navigateToDirectory(currentPath);
-  });
+  // Panel button handlers - add click listeners for all panels
+  for (let panelId = 1; panelId <= 4; panelId++) {
+    const $panel = $(`#panel-${panelId}`);
+    
+    // Set active panel when clicking on title
+    $panel.find('.w2ui-panel-title').click(function() {
+      setActivePanelId(panelId);
+    });
+    
+    // Parent folder button
+    $panel.find('.btn-panel-parent').click(function() {
+      setActivePanelId(panelId);
+      const state = panelState[panelId];
+      if (state.currentPath && state.currentPath.length > 3) {
+        const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
+        if (parentPath.length >= 2) {
+          navigateToDirectory(parentPath, panelId);
+        }
+      }
+    });
 
-  // Categories button
-  $('#btn-categories').click(function() {
-    showCategoryModal();
-  });
+    // Refresh button
+    $panel.find('.btn-panel-refresh').click(function() {
+      setActivePanelId(panelId);
+      navigateToDirectory(panelState[panelId].currentPath, panelId);
+    });
+
+    // Categories button (only for panel 1)
+    if (panelId === 1) {
+      $panel.find('.btn-panel-categories').click(function() {
+        setActivePanelId(panelId);
+        showCategoryModal();
+      });
+    }
+    
+    // Select button (panels 2-4 only)
+    if (panelId > 1) {
+      $panel.find('.btn-panel-select').click(function() {
+        setActivePanelId(panelId);
+        toggleSelectMode(panelId);
+      });
+      
+      // Open as main button
+      $panel.find('.btn-panel-open-main').click(function() {
+        setActivePanelId(panelId);
+        const state = panelState[panelId];
+        if (state.currentPath) {
+          navigateToDirectory(state.currentPath, 1);
+        }
+      });
+      
+      // Notes button
+      $panel.find('.btn-panel-notes').click(async function() {
+        await showNotesView(panelId);
+      });
+      
+      // Notes edit button
+      $panel.find('.btn-notes-edit').click(async function() {
+        await toggleNotesEditMode(panelId);
+      });
+      
+      // Notes back button
+      $panel.find('.btn-notes-back').click(function() {
+        hideNotesView(panelId);
+      });
+    }
+  }
 
   // Modal close button
   $('#btn-modal-close').click(function() {
@@ -517,9 +786,10 @@ function editCategory(name, category) {
       loadCategories();
       refreshCategoriesList();
 
-      // Update current view if editing the current category
-      if (currentCategory && currentCategory.name === name) {
-        navigateToDirectory(currentPath);
+      // Update current view if editing a category of the active panel
+      const activeState = panelState[activePanelId];
+      if (activeState.currentCategory && activeState.currentCategory.name === name) {
+        navigateToDirectory(activeState.currentPath, activePanelId);
       }
 
       alert('Category updated!');
