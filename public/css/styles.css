@@ -226,12 +226,14 @@ button:active {
 
 /* Modal */
 #category-modal,
-#layout-modal {
+#layout-modal,
+#settings-modal {
   z-index: 1000;
   animation: fadeIn 0.2s ease;
 }
 
-#layout-modal > div {
+#layout-modal > div,
+#settings-modal > div {
   animation: slideUp 0.2s ease;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
@@ -444,6 +446,152 @@ hr {
   border: none;
   border-top: 1px solid #d0d0d0;
   margin: 12px 0;
+}
+
+/* Settings Modal Specific Styles */
+#settings-modal {
+  display: none;
+}
+
+#category-divider {
+  width: 4px;
+  background: #ddd;
+  cursor: col-resize;
+  user-select: none;
+  transition: background 0.2s ease;
+}
+
+#category-divider:hover {
+  background: #999;
+}
+
+.settings-tab-btn {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-tab-content {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+}
+
+#categories-grid {
+  width: 100%;
+  height: 100%;
+}
+
+#categories-form {
+  width: 100%;
+}
+
+/* w2ui Form Field Styling */
+.w2ui-form-field {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+  align-items: center;
+}
+
+.w2ui-form-field label {
+  margin: 0;
+  text-align: right;
+  font-size: 12px;
+}
+
+.w2ui-form-field input,
+.w2ui-form-field textarea,
+.w2ui-form-field select {
+  width: 100%;
+  padding: 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.w2ui-form-field textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+
+.w2ui-form-field input[type="color"] {
+  height: 36px;
+  cursor: pointer;
+}
+
+/* w2ui Grid Header */
+.w2ui-grid .w2ui-grid-header {
+  background: #f9f9f9;
+  border-bottom: 1px solid #ddd;
+  padding: 0;
+}
+
+.w2ui-grid .w2ui-grid-title {
+  font-size: 13px;
+  font-weight: bold;
+  padding: 10px 15px;
+  background: #f9f9f9;
+}
+
+.w2ui-grid .w2ui-col-header {
+  background: #f0f0f0;
+  font-weight: bold;
+  font-size: 12px;
+  padding: 8px 4px;
+  border-bottom: 1px solid #ddd;
+}
+
+/* w2ui Grid Rows */
+.w2ui-grid .w2ui-grid-body {
+  overflow-y: auto;
+}
+
+.w2ui-grid .w2ui-grid-row {
+  background: white;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  font-size: 12px;
+  height: 28px;
+  line-height: 28px;
+}
+
+.w2ui-grid .w2ui-grid-row:hover {
+  background: #f5f5f5;
+}
+
+.w2ui-grid .w2ui-grid-row.w2ui-selected {
+  background: #e3f2fd;
+  color: #1976d2;
+}
+
+.w2ui-grid .w2ui-grid-cell {
+  padding: 0 4px;
+}
+
+/* Settings Button Styles */
+#btn-cat-save,
+#btn-cat-clear,
+#btn-cat-delete {
+  cursor: pointer;
+  font-size: 12px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+#btn-cat-save:hover {
+  background: #45a049 !important;
+}
+
+#btn-cat-clear:hover {
+  background: #0b7dda !important;
+}
+
+#btn-cat-delete:hover {
+  background: #da190b !important;
 }
 
 /* Text utilities */

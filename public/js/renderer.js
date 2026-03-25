@@ -646,11 +646,11 @@ function attachPanelEventListeners(panelId) {
     navigateToDirectory(panelState[panelId].currentPath, panelId);
   });
 
-  // Categories button (only for panel 1)
+  // Settings button (only for panel 1)
   if (panelId === 1) {
-    $panel.find('.btn-panel-categories').click(function() {
+    $panel.find('.btn-panel-settings').click(function() {
       setActivePanelId(panelId);
-      showCategoryModal();
+      showSettingsModal();
     });
   }
   
@@ -785,63 +785,120 @@ function attachEventListeners() {
     attachPanelEventListeners(panelId);
   }
 
-  // Modal close button
-  $('#btn-modal-close').click(function() {
-    hideModal();
+  // Settings modal close button
+  $('#btn-settings-close').click(function() {
+    hideSettingsModal();
   });
 
-  // Modal create category button
-  $('#btn-modal-create-category').click(async function() {
-    const name = $('#modal-cat-name').val().trim();
-    const bgColor = $('#modal-cat-bg').val();
-    const textColor = $('#modal-cat-text').val();
-    const patternsStr = $('#modal-cat-patterns').val().trim();
-
-    if (!name) {
-      alert('Please enter a category name');
-      return;
-    }
-
-    const patterns = patternsStr ? patternsStr.split(',').map(p => p.trim()) : [];
-
-    try {
-      await window.electronAPI.createCategory(name, `rgb${rgbToString(bgColor)}`, `rgb${rgbToString(textColor)}`, patterns);
-      await loadCategories();
-
-      // Clear form
-      $('#modal-cat-name').val('');
-      $('#modal-cat-patterns').val('');
-
-      // Refresh categories list
-      refreshCategoriesList();
-
-      alert('Category created successfully!');
-    } catch (err) {
-      alert('Error creating category: ' + err.message);
-    }
-  });
-
-  // Modal close on overlay click
-  $('#category-modal').click(function(e) {
+  // Settings modal overlay click to close
+  $('#settings-modal').click(function(e) {
     if (e.target === this) {
-      hideModal();
+      hideSettingsModal();
+    }
+  });
+
+  // Settings tab buttons
+  $('.settings-tab-btn').click(function() {
+    const tabName = $(this).data('tab');
+    switchSettingsTab(tabName);
+  });
+
+  // Category form save button
+  $('#btn-cat-save').click(async function() {
+    await saveCategoryFromForm();
+  });
+
+  // Category form clear/new button
+  $('#btn-cat-clear').click(function() {
+    clearCategoryForm();
+  });
+
+  // Category form delete button
+  $('#btn-cat-delete').click(async function() {
+    await deleteCategoryFromForm();
+  });
+}
+
+/**
+ * Setup resizable divider between grid and form
+ */
+function setupResizableDivider() {
+  const divider = $('#category-divider');
+  const formPanel = $('#category-form-panel');
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  divider.mousedown(function(e) {
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = formPanel.width();
+    $(document).css('user-select', 'none');
+  });
+
+  $(document).mousemove(function(e) {
+    if (!isResizing) return;
+    
+    const deltaX = e.clientX - startX;
+    const newWidth = Math.max(250, startWidth - deltaX); // Minimum 250px width
+    formPanel.css('flex', `0 0 ${newWidth}px`);
+  });
+
+  $(document).mouseup(function() {
+    if (isResizing) {
+      isResizing = false;
+      $(document).css('user-select', '');
     }
   });
 }
 
 /**
- * Show category manager modal
+ * Show settings modal
  */
-async function showCategoryModal() {
-  $('#category-modal').show();
-  await refreshCategoriesList();
+async function showSettingsModal() {
+  // Initialize grid and form
+  await initializeCategoriesGrid();
+  await initializeCategoriesForm();
+  
+  // Setup resizable divider
+  setupResizableDivider();
+  
+  // Show modal
+  $('#settings-modal').show();
+  
+  // Ensure Category Settings tab is active
+  switchSettingsTab('category');
 }
 
 /**
- * Hide category manager modal
+ * Hide settings modal
  */
-function hideModal() {
-  $('#category-modal').hide();
+function hideSettingsModal() {
+  $('#settings-modal').hide();
+  // Destroy w2ui grid
+  if (w2ui['categories-grid']) {
+    w2ui['categories-grid'].destroy();
+  }
+}
+
+/**
+ * Switch between settings tabs
+ */
+function switchSettingsTab(tabName) {
+  // Hide all tabs
+  $('.settings-tab-content').hide();
+  // Show selected tab
+  $(`#tab-${tabName}`).show();
+  
+  // Update tab button styles
+  $('.settings-tab-btn').each(function() {
+    const btn = $(this);
+    if (btn.data('tab') === tabName) {
+      btn.css('border-bottom-color', '#2196F3').css('color', '#2196F3');
+    } else {
+      btn.css('border-bottom-color', 'transparent').css('color', '#666');
+    }
+  });
 }
 
 /**
@@ -971,6 +1028,311 @@ function formatBytes(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+}
+
+// ==================== Settings Modal & Categories Management ====================
+
+// State for category form editing
+let categoryFormState = {
+  editingName: null
+};
+
+/**
+ * Convert HEX color to RGB string format
+ */
+function hexToRgb(hex) {
+  if (hex.startsWith('rgb')) return hex; // Already RGB
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return 'rgb(0, 0, 0)';
+  const r = parseInt(result[1], 16);
+  const g = parseInt(result[2], 16);
+  const b = parseInt(result[3], 16);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/**
+ * Convert RGB string to HEX format
+ */
+function rgbToHex(rgb) {
+  if (rgb.startsWith('#')) return rgb; // Already HEX
+  const match = rgb.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  if (!match) return '#000000';
+  const r = parseInt(match[1]).toString(16).padStart(2, '0');
+  const g = parseInt(match[2]).toString(16).padStart(2, '0');
+  const b = parseInt(match[3]).toString(16).padStart(2, '0');
+  return `#${r}${g}${b}`;
+}
+
+/**
+ * Initialize w2ui grid for categories
+ */
+async function initializeCategoriesGrid() {
+  const gridName = 'categories-grid';
+  
+  // Destroy existing grid if present
+  if (w2ui && w2ui[gridName]) {
+    w2ui[gridName].destroy();
+  }
+
+  // Get categories list from IPC
+  const categoriesData = await window.electronAPI.getCategoriesList();
+  
+  // Build grid records from categories
+  const records = categoriesData.map((cat, index) => ({
+    recid: index,
+    name: cat.name,
+    description: cat.description || '',
+    bgColor: cat.bgColor,
+    textColor: cat.textColor,
+    categoryName: cat.name,
+    iconUrl: null  // Will be populated before render
+  }));
+
+  // Generate all icons in parallel BEFORE creating grid
+  try {
+    const iconPromises = records.map(record =>
+      window.electronAPI.generateFolderIcon(record.bgColor, record.textColor)
+        .then(iconUrl => {
+          if (iconUrl) {
+            record.iconUrl = iconUrl;
+            console.log(`Icon generated for "${record.name}"`);
+          } else {
+            console.warn(`Icon generation returned null for "${record.name}" with colors bg=${record.bgColor}, outline=${record.textColor}`);
+          }
+          return iconUrl;
+        })
+        .catch(err => {
+          console.error(`Failed to generate icon for "${record.name}":`, err);
+          return null;
+        })
+    );
+    
+    // Wait for ALL icons to generate before rendering grid
+    await Promise.all(iconPromises);
+    console.log('All icons generated, rendering grid');
+  } catch (err) {
+    console.error('Error generating icons:', err);
+  }
+
+  // Create w2grid instance with icons already in records
+  w2ui[gridName] = new w2grid({
+    name: gridName,
+    show: {
+      header: false,
+      toolbar: false,
+      footer: false
+    },
+    columns: [
+      { field: 'icon', text: '', size: '40px', resizable: false, sortable: false, render: (record) => {
+        if (record.iconUrl) {
+          return `<div style="width: 30px; height: 20px; display: inline-flex; align-items: center; justify-content: center;"><img src="${record.iconUrl}" style="width: 20px; height: 20px; object-fit: contain;"></div>`;
+        }
+        // Fallback (shouldn't happen if all icons generated before render)
+        return `<div style="width: 30px; height: 20px; background: ${record.bgColor}; border: 1px solid ${record.textColor}; border-radius: 3px;"></div>`;
+      }},
+      { field: 'name', text: 'Name', size: '100px', resizable: true, sortable: true },
+      { field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
+    ],
+    records: records,
+    onClick: function(event) {
+      event.onComplete = function() {
+        const grid = this;
+        const sel = grid.getSelection();
+        if (sel.length > 0) {
+          const recid = sel[0];
+          const record = grid.records.find(r => r.recid === recid);
+          if (record) {
+            populateCategoryForm(record);
+          }
+        }
+      };
+    }
+  });
+
+  // Render grid in container (icons already present)
+  w2ui[gridName].render('#categories-grid');
+}
+
+/**
+ * Initialize form elements for category editing
+ */
+async function initializeCategoriesForm() {
+  // Form is already rendered in HTML, just clear it for new entry
+  clearCategoryForm();
+}
+
+/**
+ * Populate form with category data when grid row is clicked
+ */
+function populateCategoryForm(record) {
+  categoryFormState.editingName = record.categoryName;
+  $('#form-cat-name').val(record.name);
+  $('#form-cat-bgColor').val(rgbToHex(record.bgColor));
+  $('#form-cat-textColor').val(rgbToHex(record.textColor));
+  $('#form-cat-description').val(record.description || '');
+}
+
+/**
+ * Clear category form and reset to new mode
+ */
+function clearCategoryForm() {
+  categoryFormState.editingName = null;
+  $('#form-cat-name').val('');
+  $('#form-cat-bgColor').val('#efe4b0');
+  $('#form-cat-textColor').val('#000000');
+  $('#form-cat-description').val('');
+  
+  // Clear grid selection
+  const grid = w2ui['categories-grid'];
+  if (grid) {
+    grid.selectNone();
+  }
+}
+
+/**
+ * Update grid after category save (selective update, no grid destruction)
+ * @param {object} updatedCategory - The category that was saved/updated
+ * @param {boolean} isNew - Whether this is a new category or update
+ * @param {string} oldName - The old category name (for renames), null if new
+ */
+async function updateGridAfterSave(updatedCategory, isNew = false, oldName = null) {
+  const gridName = 'categories-grid';
+  if (!w2ui || !w2ui[gridName]) {
+    // Grid not initialized, reinitialize
+    await initializeCategoriesGrid();
+    return;
+  }
+
+  const grid = w2ui[gridName];
+  
+  try {
+    // Generate icon for the updated category
+    const iconUrl = await window.electronAPI.generateFolderIcon(
+      updatedCategory.bgColor,
+      updatedCategory.textColor
+    );
+    
+    if (isNew) {
+      // NEW CATEGORY: Add new record to grid
+      const newRecid = Math.max(...grid.records.map(r => r.recid), -1) + 1;
+      const newRecord = {
+        recid: newRecid,
+        name: updatedCategory.name,
+        description: updatedCategory.description || '',
+        bgColor: updatedCategory.bgColor,
+        textColor: updatedCategory.textColor,
+        categoryName: updatedCategory.name,
+        iconUrl: iconUrl
+      };
+      grid.add(newRecord);
+      console.log(`Added new category "${updatedCategory.name}" to grid`);
+    } else {
+      // EXISTING CATEGORY: Find and update record
+      const recordIndex = grid.records.findIndex(r => r.categoryName === oldName);
+      if (recordIndex >= 0) {
+        const record = grid.records[recordIndex];
+        // Update all fields
+        record.name = updatedCategory.name;
+        record.description = updatedCategory.description || '';
+        record.bgColor = updatedCategory.bgColor;
+        record.textColor = updatedCategory.textColor;
+        record.categoryName = updatedCategory.name;
+        record.iconUrl = iconUrl;
+        
+        grid.refreshRow(record.recid);
+        console.log(`Updated category "${updatedCategory.name}" in grid`);
+      }
+    }
+  } catch (err) {
+    console.error('Error updating grid after save:', err);
+    // Fallback: reinitialize entire grid if update fails
+    await initializeCategoriesGrid();
+  }
+}
+
+/**
+ * Save category from form (create or update)
+ */
+async function saveCategoryFromForm() {
+  const name = $('#form-cat-name').val().trim();
+  const bgColorHex = $('#form-cat-bgColor').val();
+  const textColorHex = $('#form-cat-textColor').val();
+  const description = $('#form-cat-description').val().trim();
+
+  if (!name) {
+    alert('Please enter a category name');
+    return;
+  }
+
+  try {
+    // Convert HEX to RGB for storage
+    const categoryData = {
+      name: name,
+      bgColor: hexToRgb(bgColorHex),
+      textColor: hexToRgb(textColorHex),
+      description: description
+    };
+
+    const isNew = !categoryFormState.editingName;
+    const oldName = categoryFormState.editingName;
+
+    if (isNew) {
+      // Create new category
+      await window.electronAPI.saveCategory(categoryData);
+    } else {
+      // Update existing category
+      categoryData.oldName = oldName;
+      await window.electronAPI.updateCategory(oldName, categoryData);
+    }
+
+    // Update grid selectively instead of reinitializing
+    await updateGridAfterSave(categoryData, isNew, oldName);
+    clearCategoryForm();
+    
+    alert(isNew ? 'Category created successfully!' : 'Category updated successfully!');
+  } catch (err) {
+    alert('Error saving category: ' + err.message);
+  }
+}
+
+/**
+ * Delete category from form
+ */
+async function deleteCategoryFromForm() {
+  if (!categoryFormState.editingName) {
+    alert('Please select a category to delete');
+    return;
+  }
+
+  if (categoryFormState.editingName === 'Default') {
+    alert('Cannot delete the Default category');
+    return;
+  }
+
+  if (!confirm(`Are you sure you want to delete the "${categoryFormState.editingName}" category?`)) {
+    return;
+  }
+
+  try {
+    const grid = w2ui['categories-grid'];
+    const categoryToDelete = categoryFormState.editingName;
+    
+    await window.electronAPI.deleteCategory(categoryToDelete);
+    
+    // Remove from grid selectively if grid exists
+    if (grid) {
+      const recordIndex = grid.records.findIndex(r => r.categoryName === categoryToDelete);
+      if (recordIndex >= 0) {
+        grid.remove(grid.records[recordIndex].recid);
+        console.log(`Removed category "${categoryToDelete}" from grid`);
+      }
+    }
+    
+    clearCategoryForm();
+    alert('Category deleted successfully!');
+  } catch (err) {
+    alert('Error deleting category: ' + err.message);
+  }
 }
 
 // Initialize on document ready

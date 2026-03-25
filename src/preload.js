@@ -11,10 +11,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Category operations
   loadCategories: () => ipcRenderer.invoke('load-categories'),
   getCategory: (name) => ipcRenderer.invoke('get-category', name),
+  getCategoriesList: () => ipcRenderer.invoke('get-categories-list'),
   createCategory: (name, bgColor, textColor, patterns) =>
     ipcRenderer.invoke('create-category', { name, bgColor, textColor, patterns }),
-  updateCategory: (name, bgColor, textColor, patterns) =>
-    ipcRenderer.invoke('update-category', { name, bgColor, textColor, patterns }),
+  updateCategory: (name, categoryData) =>
+    ipcRenderer.invoke('update-category', { name, ...categoryData }),
+  saveCategory: (categoryData) =>
+    ipcRenderer.invoke('save-category', categoryData),
   deleteCategory: (name) => ipcRenderer.invoke('delete-category', name),
   
   // Directory assignments

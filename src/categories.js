@@ -26,7 +26,8 @@ class CategoryService {
         name: 'Default',
         bgColor: 'rgb(239, 228, 176)',
         textColor: 'rgb(0, 0, 0)',
-        patterns: []
+        patterns: [],
+        description: ''
       };
       fs.writeFileSync(defaultCategoryPath, JSON.stringify(defaultCategory, null, 2));
     }
@@ -46,6 +47,10 @@ class CategoryService {
           const filePath = path.join(CATEGORIES_DIR, file);
           const content = fs.readFileSync(filePath, 'utf8');
           const category = JSON.parse(content);
+          // Ensure backward compatibility: add description if missing
+          if (!category.description) {
+            category.description = '';
+          }
           categories[category.name] = category;
         }
       }
@@ -67,7 +72,7 @@ class CategoryService {
   /**
    * Create a new category
    */
-  createCategory(name, bgColor, textColor, patterns = []) {
+  createCategory(name, bgColor, textColor, patterns = [], description = '') {
     if (name === 'Default') {
       throw new Error('Cannot create a category named "Default" - it already exists');
     }
@@ -76,7 +81,8 @@ class CategoryService {
       name,
       bgColor,
       textColor,
-      patterns
+      patterns,
+      description
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
@@ -88,12 +94,13 @@ class CategoryService {
   /**
    * Update an existing category
    */
-  updateCategory(name, bgColor, textColor, patterns = []) {
+  updateCategory(name, bgColor, textColor, patterns = [], description = '') {
     const category = {
       name,
       bgColor,
       textColor,
-      patterns
+      patterns,
+      description
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);

@@ -99,33 +99,42 @@ ipcMain.handle('read-directory', (event, dirPath) => {
  */
 ipcMain.handle('scan-directory', (event, dirPath) => {
   try {
-    const entries = fs.readDirectory(dirPath);
-    
-    // Clear existing entries for this directory
-    db.clearDirectory(dirPath);
+    // Get directory inode to track the directory itself
+    const dirStats = fs.getStats(dirPath);
+    if (!dirStats) {
+      return { success: false, error: 'Unable to read directory stats' };
+    }
+
+    const dirInode = dirStats.inode;
 
     // Get category for this directory
     const category = categories.getCategoryForDirectory(dirPath);
     const categoryName = category ? category.name : 'Default';
 
-    // Upsert all entries
+    // Create or get the directory entry (returns dir_id)
+    const dirId = db.getOrCreateDirectory(dirPath, dirInode, categoryName);
+
+    // Clear existing file entries for this directory
+    db.clearDirectory(dirPath);
+
+    // Read and upsert files
+    const entries = fs.readDirectory(dirPath);
     for (const entry of entries) {
       if (!entry.isDirectory) { // Only index files
         db.upsertFile({
           inode: entry.inode,
-          dirname: dirPath,
+          dir_id: dirId,
           filename: entry.filename,
           dateModified: entry.dateModified,
           dateCreated: entry.dateCreated,
-          size: entry.size,
-          categoryName
+          size: entry.size
         });
       }
     }
 
     return {
       success: true,
-      count: entries.length,
+      count: entries.filter(e => !e.isDirectory).length,
       category: categoryName
     };
   } catch (err) {
@@ -183,18 +192,6 @@ ipcMain.handle('create-category', (event, { name, bgColor, textColor, patterns }
 });
 
 /**
- * Categories: Update category
- */
-ipcMain.handle('update-category', (event, { name, bgColor, textColor, patterns }) => {
-  try {
-    return categories.updateCategory(name, bgColor, textColor, patterns);
-  } catch (err) {
-    console.error('Error updating category:', err);
-    return { error: err.message };
-  }
-});
-
-/**
  * Categories: Delete category
  */
 ipcMain.handle('delete-category', (event, name) => {
@@ -204,6 +201,65 @@ ipcMain.handle('delete-category', (event, name) => {
   } catch (err) {
     console.error('Error deleting category:', err);
     return { error: err.message };
+  }
+});
+
+/**
+ * Categories: Get categories list as array (for Settings modal grid)
+ */
+ipcMain.handle('get-categories-list', () => {
+  try {
+    const categoriesObj = categories.loadCategories();
+    // Convert object to array
+    return Object.values(categoriesObj);
+  } catch (err) {
+    console.error('Error getting categories list:', err);
+    return [];
+  }
+});
+
+/**
+ * Categories: Save category (create or update)
+ */
+ipcMain.handle('save-category', (event, categoryData) => {
+  try {
+    const { name, bgColor, textColor, description, patterns } = categoryData;
+    
+    // Check if category exists
+    const existing = categories.getCategory(name);
+    
+    if (existing) {
+      // Update existing
+      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '');
+    } else {
+      // Create new
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '');
+    }
+  } catch (err) {
+    console.error('Error saving category:', err);
+    throw err;
+  }
+});
+
+/**
+ * Categories: Update category (with new schema including description)
+ */
+ipcMain.handle('update-category', (event, categoryData) => {
+  try {
+    const { name, oldName, bgColor, textColor, patterns, description } = categoryData;
+    const updateName = name || oldName;
+    
+    // If name changed, delete old and create new
+    if (oldName && name && oldName !== name) {
+      categories.deleteCategory(oldName);
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '');
+    } else {
+      // Just update
+      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '');
+    }
+  } catch (err) {
+    console.error('Error updating category:', err);
+    throw err;
   }
 });
 
