@@ -24,6 +24,7 @@ let activePanelId = 1;
 let allCategories = {};
 let currentLayout = 1;
 let notesEditMode = false;
+let visiblePanels = 1;
 
 /**
  * Initialize the application
@@ -449,9 +450,11 @@ function toggleSelectMode(panelId) {
  * Show notes view for a panel
  */
 async function showNotesView(panelId) {
-  const notesPath = panelState[panelId].currentPath + '\\notes.txt';
+  const notesPath = panelState[1].currentPath + '\\notes.txt';
   const $notesView = $(`#panel-${panelId} .panel-notes-view`);
   const $notesContent = $notesView.find('.notes-content');
+  const $panelToolbar = $(`#panel-${panelId} > .w2ui-panel-title`);
+  const $notesToolbar = $notesView.find('.w2ui-panel-title');
   
   try {
     // Try to read notes.txt
@@ -464,6 +467,15 @@ async function showNotesView(panelId) {
     $(`#panel-${panelId} .panel-grid`).hide();
     $notesView.show();
     
+    // Update toolbar with notes path
+    $notesToolbar.find('.notes-path').text(notesPath);
+    $notesToolbar.show();
+    $panelToolbar.hide();
+    
+    // Reset buttons
+    $notesToolbar.find('.btn-notes-edit').show().text('Edit').css('background', '#2196F3');
+    $notesToolbar.find('.btn-notes-save').hide();
+    
     notesEditMode = false;
   } catch (err) {
     // File doesn't exist, create empty notes
@@ -473,6 +485,15 @@ async function showNotesView(panelId) {
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
     $notesView.show();
+    
+    // Update toolbar with notes path
+    $notesToolbar.find('.notes-path').text(notesPath);
+    $notesToolbar.show();
+    $panelToolbar.hide();
+    
+    // Show Save button for new file
+    $notesToolbar.find('.btn-notes-edit').hide();
+    $notesToolbar.find('.btn-notes-save').show();
     
     notesEditMode = true;
   }
@@ -486,9 +507,13 @@ async function showNotesView(panelId) {
 function hideNotesView(panelId) {
   const $notesView = $(`#panel-${panelId} .panel-notes-view`);
   const $notesContent = $notesView.find('.notes-content');
+  const $panelToolbar = $(`#panel-${panelId} > .w2ui-panel-title`);
+  const $notesToolbar = $notesView.find('.w2ui-panel-title');
   
   $notesContent.prop('readonly', true);
   $notesView.hide();
+  $notesToolbar.hide();
+  $panelToolbar.show();
   $(`#panel-${panelId} .panel-landing-page`).show();
   
   notesEditMode = false;
@@ -498,25 +523,27 @@ function hideNotesView(panelId) {
  * Toggle edit mode for notes
  */
 async function toggleNotesEditMode(panelId) {
-  const $notesContent = $(`#panel-${panelId} .panel-notes-view .notes-content`);
-  const $editBtn = $(`#panel-${panelId} .btn-notes-edit`);
+  const $notesView = $(`#panel-${panelId} .panel-notes-view`);
+  const $notesContent = $notesView.find('.notes-content');
+  const $editBtn = $notesView.find('.btn-notes-edit');
+  const $saveBtn = $notesView.find('.btn-notes-save');
   
   if ($notesContent.prop('readonly')) {
     // Enter edit mode
     $notesContent.prop('readonly', false);
     $notesContent.focus();
-    $editBtn.text('Save');
-    $editBtn.css('background', '#4CAF50');
+    $editBtn.hide();
+    $saveBtn.show();
   } else {
     // Save and exit edit mode
     const content = $notesContent.val();
-    const notesPath = panelState[panelId].currentPath + '\\notes.txt';
+    const notesPath = panelState[1].currentPath + '\\notes.txt';
     
     try {
       await window.electronAPI.writeNotesFile(notesPath, content);
       $notesContent.prop('readonly', true);
-      $editBtn.text('Edit');
-      $editBtn.css('background', '#2196F3');
+      $editBtn.show().text('Edit').css('background', '#2196F3');
+      $saveBtn.hide();
       notesEditMode = false;
     } catch (err) {
       alert('Error saving notes: ' + err.message);
@@ -525,11 +552,157 @@ async function toggleNotesEditMode(panelId) {
 }
 
 /**
+ * Update panel layout based on visible panels count
+ */
+function updatePanelLayout() {
+  const $container = $('#panel-container');
+  $container.removeClass('layout-1 layout-2 layout-3 layout-4').addClass(`layout-${visiblePanels}`);
+}
+
+/**
+ * Remove a panel and shift higher-numbered panels down
+ */
+function removePanel(panelId) {
+  if (panelId === 1 || visiblePanels === 1) {
+    alert('Cannot remove the last panel');
+    return;
+  }
+  
+  // Hide this panel and clear its state
+  $(`#panel-${panelId}`).hide();
+  clearPanelState(panelId);
+  
+  // Shift all higher-numbered panels down
+  for (let i = panelId; i < visiblePanels; i++) {
+    shiftPanelDown(i);
+  }
+  
+  visiblePanels--;
+  activePanelId = 1; // Reset to panel 1 after removal
+  updatePanelLayout();
+}
+
+/**
+ * Shift a panel's content and state down by one position
+ */
+function shiftPanelDown(panelId) {
+  const nextPanelId = panelId + 1;
+  
+  // Copy state from next panel to current panel
+  panelState[panelId] = { ...panelState[nextPanelId] };
+  
+  // Swap grid references
+  const $currentGrid = $(`#panel-${panelId} .panel-grid`);
+  const $nextGrid = $(`#panel-${nextPanelId} .panel-grid`);
+  
+  if (panelState[panelId].w2uiGrid) {
+    panelState[panelId].w2uiGrid.render($currentGrid[0]);
+  }
+  
+  // Update path display
+  $(`#panel-${panelId} .panel-path`).text(panelState[panelId].currentPath);
+}
+
+/**
+ * Clear a panel's state
+ */
+function clearPanelState(panelId) {
+  panelState[panelId] = {
+    currentPath: '',
+    w2uiGrid: null,
+    navigationHistory: [],
+    navigationIndex: -1,
+    currentCategory: null,
+    selectMode: false
+  };
+}
+
+/**
+ * Attach event listeners to a specific panel (with proper closure)
+ */
+function attachPanelEventListeners(panelId) {
+  const $panel = $(`#panel-${panelId}`);
+  
+  // Set active panel when clicking on title
+  $panel.find('.w2ui-panel-title').click(function() {
+    setActivePanelId(panelId);
+  });
+  
+  // Parent folder button
+  $panel.find('.btn-panel-parent').click(function() {
+    setActivePanelId(panelId);
+    const state = panelState[panelId];
+    if (state.currentPath && state.currentPath.length > 3) {
+      const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
+      if (parentPath.length >= 2) {
+        navigateToDirectory(parentPath, panelId);
+      }
+    }
+  });
+
+  // Refresh button
+  $panel.find('.btn-panel-refresh').click(function() {
+    setActivePanelId(panelId);
+    navigateToDirectory(panelState[panelId].currentPath, panelId);
+  });
+
+  // Categories button (only for panel 1)
+  if (panelId === 1) {
+    $panel.find('.btn-panel-categories').click(function() {
+      setActivePanelId(panelId);
+      showCategoryModal();
+    });
+  }
+  
+  // Select button (panels 2-4 only)
+  if (panelId > 1) {
+    $panel.find('.btn-panel-select').click(function() {
+      setActivePanelId(panelId);
+      toggleSelectMode(panelId);
+    });
+    
+    // Open as main button
+    $panel.find('.btn-panel-open-main').click(function() {
+      setActivePanelId(panelId);
+      const state = panelState[panelId];
+      if (state.currentPath) {
+        navigateToDirectory(state.currentPath, 1);
+      }
+    });
+    
+    // Notes button
+    $panel.find('.btn-panel-notes').click(async function() {
+      await showNotesView(panelId);
+    });
+    
+    // Notes edit button
+    $panel.find('.btn-notes-edit').click(async function() {
+      await toggleNotesEditMode(panelId);
+    });
+    
+    // Notes save button
+    $panel.find('.btn-notes-save').click(async function() {
+      await toggleNotesEditMode(panelId);
+    });
+    
+    // Notes back button
+    $panel.find('.btn-notes-back').click(function() {
+      hideNotesView(panelId);
+    });
+    
+    // Panel remove button (panels 2-4 only)
+    $panel.find('.btn-panel-remove').click(function() {
+      removePanel(panelId);
+    });
+  }
+}
+
+/**
  * Attach event listeners to buttons and grid
  */
 function attachEventListeners() {
   // Keyboard shortcuts for Back/Forward
-  $(document).keydown(function(event) {
+  $(document).keydown(async function(event) {
     // Alt+Left for back
     if (event.altKey && event.key === 'ArrowLeft') {
       event.preventDefault();
@@ -540,11 +713,53 @@ function attachEventListeners() {
       event.preventDefault();
       navigateForward();
     }
+    // Alt+Up for parent directory
+    if (event.altKey && event.key === 'ArrowUp') {
+      event.preventDefault();
+      const state = panelState[activePanelId];
+      if (state.currentPath && state.currentPath.length > 3) {
+        const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
+        if (parentPath.length >= 2) {
+          navigateToDirectory(parentPath, activePanelId);
+        }
+      }
+    }
+    // F2 to begin edit mode in notes
+    if (event.key === 'F2') {
+      const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
+      if ($notesView.is(':visible')) {
+        event.preventDefault();
+        const $notesContent = $notesView.find('.notes-content');
+        if ($notesContent.prop('readonly')) {
+          await toggleNotesEditMode(activePanelId);
+        }
+      }
+    }
+    // Ctrl+Enter to save in notes edit mode
+    if (event.ctrlKey && event.key === 'Enter') {
+      const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
+      if ($notesView.is(':visible')) {
+        const $notesContent = $notesView.find('.notes-content');
+        if (!$notesContent.prop('readonly')) {
+          event.preventDefault();
+          await toggleNotesEditMode(activePanelId);
+        }
+      }
+    }
   });
 
   // View button - show layout modal
   $('#btn-view').click(function() {
     showLayoutModal();
+  });
+
+  // Add panel button
+  $('#btn-add-panel').click(function() {
+    if (visiblePanels < 4) {
+      visiblePanels++;
+      $(`#panel-${visiblePanels}`).show();
+      updatePanelLayout();
+    }
   });
 
   // Layout option buttons
@@ -567,70 +782,7 @@ function attachEventListeners() {
 
   // Panel button handlers - add click listeners for all panels
   for (let panelId = 1; panelId <= 4; panelId++) {
-    const $panel = $(`#panel-${panelId}`);
-    
-    // Set active panel when clicking on title
-    $panel.find('.w2ui-panel-title').click(function() {
-      setActivePanelId(panelId);
-    });
-    
-    // Parent folder button
-    $panel.find('.btn-panel-parent').click(function() {
-      setActivePanelId(panelId);
-      const state = panelState[panelId];
-      if (state.currentPath && state.currentPath.length > 3) {
-        const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
-        if (parentPath.length >= 2) {
-          navigateToDirectory(parentPath, panelId);
-        }
-      }
-    });
-
-    // Refresh button
-    $panel.find('.btn-panel-refresh').click(function() {
-      setActivePanelId(panelId);
-      navigateToDirectory(panelState[panelId].currentPath, panelId);
-    });
-
-    // Categories button (only for panel 1)
-    if (panelId === 1) {
-      $panel.find('.btn-panel-categories').click(function() {
-        setActivePanelId(panelId);
-        showCategoryModal();
-      });
-    }
-    
-    // Select button (panels 2-4 only)
-    if (panelId > 1) {
-      $panel.find('.btn-panel-select').click(function() {
-        setActivePanelId(panelId);
-        toggleSelectMode(panelId);
-      });
-      
-      // Open as main button
-      $panel.find('.btn-panel-open-main').click(function() {
-        setActivePanelId(panelId);
-        const state = panelState[panelId];
-        if (state.currentPath) {
-          navigateToDirectory(state.currentPath, 1);
-        }
-      });
-      
-      // Notes button
-      $panel.find('.btn-panel-notes').click(async function() {
-        await showNotesView(panelId);
-      });
-      
-      // Notes edit button
-      $panel.find('.btn-notes-edit').click(async function() {
-        await toggleNotesEditMode(panelId);
-      });
-      
-      // Notes back button
-      $panel.find('.btn-notes-back').click(function() {
-        hideNotesView(panelId);
-      });
-    }
+    attachPanelEventListeners(panelId);
   }
 
   // Modal close button

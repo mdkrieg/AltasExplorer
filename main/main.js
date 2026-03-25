@@ -25,6 +25,10 @@ function createWindow() {
       }
     });
 
+    // Hide the menu bar by default
+    mainWindow.setAutoHideMenuBar(true);
+    mainWindow.setMenuBarVisibility(false);
+
     const indexPath = path.join(__dirname, '..', 'public', 'index.html');
     console.log('Loading index from:', indexPath);
     mainWindow.loadFile(indexPath);

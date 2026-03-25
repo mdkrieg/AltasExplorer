@@ -33,29 +33,39 @@
               <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
               <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
               <button class="btn-panel-categories" style="padding: 4px 8px; margin-right: 5px;">Categories</button>
-              <button id="btn-view" style="padding: 4px 8px;">View</button>
+              <button id="btn-view" style="padding: 4px 8px; margin-right: 5px;">View</button>
+              <button id="btn-add-panel" style="padding: 4px 8px; background: #4CAF50; color: white; border: none; font-weight: bold;">+</button>
             </div>
           </div>
-          <div class="panel-grid" style="width: 100%; height: calc(100% - 50px); position: relative;"></div>
+          <div class="panel-grid" style="width: 100%; height: 100%; position: relative;"></div>
         </div>
 
         <!-- Panel 2 (hidden by default) -->
         <div id="panel-2" class="panel-item" style="display: none; position: relative; flex-direction: column; overflow: hidden;">
-          <div class="w2ui-panel-title">
+          <div class="w2ui-panel-title" style="display: none;">
             <span class="panel-path" style="font-weight: bold; font-size: 12px;"></span>
             <div style="float: right;">
               <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-              <button class="btn-panel-refresh" style="padding: 4px 8px;">Refresh</button>
+              <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
+              <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
             </div>
           </div>
-          <div class="panel-content" style="width: 100%; height: calc(100% - 50px); position: relative; display: flex; flex-direction: column;">
+          <div class="panel-content" style="width: 100%; height: 100%; position: relative; display: flex; flex-direction: column;">
             <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px;">
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px;">Select</button><button class="btn-panel-open-main" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">Open as main</button></div>
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
             <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
-              <div style="padding: 10px; background: #f0f0f0; border-bottom: 1px solid #ddd;"><button class="btn-notes-edit" style="padding: 6px 12px; background: #2196F3; color: white; border: none; cursor: pointer;">Edit</button>&nbsp;<button class="btn-notes-back" style="padding: 6px 12px; cursor: pointer;">Back</button></div>
+              <div class="w2ui-panel-title" style="display: none;">
+                <span class="notes-path" style="font-weight: bold; font-size: 12px;"></span>
+                <div style="float: right;">
+                  <button class="btn-notes-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
+                  <button class="btn-notes-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
+                  <button class="btn-notes-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
+                  <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
+                </div>
+              </div>
               <textarea class="notes-content" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none;" readonly></textarea>
             </div>
           </div>
@@ -63,21 +73,30 @@
 
         <!-- Panel 3 (hidden by default) -->
         <div id="panel-3" class="panel-item" style="display: none; position: relative; flex-direction: column; overflow: hidden;">
-          <div class="w2ui-panel-title">
+          <div class="w2ui-panel-title" style="display: none;">
             <span class="panel-path" style="font-weight: bold; font-size: 12px;"></span>
             <div style="float: right;">
               <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-              <button class="btn-panel-refresh" style="padding: 4px 8px;">Refresh</button>
+              <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
+              <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
             </div>
           </div>
-          <div class="panel-content" style="width: 100%; height: calc(100% - 50px); position: relative; display: flex; flex-direction: column;">
+          <div class="panel-content" style="width: 100%; height: 100%; position: relative; display: flex; flex-direction: column;">
             <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px;">
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px;">Select</button><button class="btn-panel-open-main" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">Open as main</button></div>
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
             <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
-              <div style="padding: 10px; background: #f0f0f0; border-bottom: 1px solid #ddd;"><button class="btn-notes-edit" style="padding: 6px 12px; background: #2196F3; color: white; border: none; cursor: pointer;">Edit</button>&nbsp;<button class="btn-notes-back" style="padding: 6px 12px; cursor: pointer;">Back</button></div>
+              <div class="w2ui-panel-title" style="display: none;">
+                <span class="notes-path" style="font-weight: bold; font-size: 12px;"></span>
+                <div style="float: right;">
+                  <button class="btn-notes-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
+                  <button class="btn-notes-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
+                  <button class="btn-notes-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
+                  <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
+                </div>
+              </div>
               <textarea class="notes-content" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none;" readonly></textarea>
             </div>
           </div>
@@ -85,21 +104,30 @@
 
         <!-- Panel 4 (hidden by default) -->
         <div id="panel-4" class="panel-item" style="display: none; position: relative; flex-direction: column; overflow: hidden;">
-          <div class="w2ui-panel-title">
+          <div class="w2ui-panel-title" style="display: none;">
             <span class="panel-path" style="font-weight: bold; font-size: 12px;"></span>
             <div style="float: right;">
               <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-              <button class="btn-panel-refresh" style="padding: 4px 8px;">Refresh</button>
+              <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
+              <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
             </div>
           </div>
-          <div class="panel-content" style="width: 100%; height: calc(100% - 50px); position: relative; display: flex; flex-direction: column;">
+          <div class="panel-content" style="width: 100%; height: 100%; position: relative; display: flex; flex-direction: column;">
             <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px;">
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px;">Select</button><button class="btn-panel-open-main" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">Open as main</button></div>
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
             <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
-              <div style="padding: 10px; background: #f0f0f0; border-bottom: 1px solid #ddd;"><button class="btn-notes-edit" style="padding: 6px 12px; background: #2196F3; color: white; border: none; cursor: pointer;">Edit</button>&nbsp;<button class="btn-notes-back" style="padding: 6px 12px; cursor: pointer;">Back</button></div>
+              <div class="w2ui-panel-title" style="display: none;">
+                <span class="notes-path" style="font-weight: bold; font-size: 12px;"></span>
+                <div style="float: right;">
+                  <button class="btn-notes-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
+                  <button class="btn-notes-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
+                  <button class="btn-notes-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
+                  <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
+                </div>
+              </div>
               <textarea class="notes-content" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none;" readonly></textarea>
             </div>
           </div>
