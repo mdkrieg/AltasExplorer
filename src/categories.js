@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const logger = require('./logger');
 
 const CATEGORIES_DIR = path.join(os.homedir(), '.bestexplorer', 'categories');
 const SETTINGS_PATH = path.join(os.homedir(), '.bestexplorer', 'settings.json');
@@ -60,7 +61,7 @@ class CategoryService {
         }
       }
     } catch (err) {
-      console.error('Error loading categories:', err.message);
+      logger.error('Error loading categories:', err.message);
     }
 
     return categories;

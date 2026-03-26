@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 
 // Import service modules
+const logger = require('../src/logger');
 const db = require('../src/db');
 const fs = require('../src/filesystem');
 const categories = require('../src/categories');
@@ -31,22 +32,22 @@ function createWindow() {
     mainWindow.setMenuBarVisibility(false);
 
     const indexPath = path.join(__dirname, '..', 'public', 'index.html');
-    console.log('Loading index from:', indexPath);
+    logger.info('Loading index from:', indexPath);
     mainWindow.loadFile(indexPath);
 
     mainWindow.webContents.on('crashed', () => {
-      console.error('Renderer process crashed');
+      logger.error('Renderer process crashed');
     });
 
     mainWindow.webContents.on('unresponsive', () => {
-      console.warn('Renderer process became unresponsive');
+      logger.warn('Renderer process became unresponsive');
     });
 
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
   } catch (err) {
-    console.error('Error creating window:', err);
+    logger.error('Error creating window:', err.message);
     app.quit();
   }
 }
@@ -55,6 +56,7 @@ function createWindow() {
  * Initialize the application
  */
 function initialize() {
+  logger.info('Initializing application');
   db.initialize();
   
   // Load default window icon
@@ -75,7 +77,7 @@ async function updateWindowIcon(category) {
       mainWindow.setIcon(nimg);
     }
   } catch (err) {
-    console.error('Error updating window icon:', err);
+    logger.error('Error updating window icon:', err.message);
   }
 }
 
@@ -90,7 +92,7 @@ ipcMain.handle('read-directory', (event, dirPath) => {
   try {
     return fs.readDirectory(dirPath);
   } catch (err) {
-    console.error('Error reading directory:', err);
+    logger.error('Error reading directory:', err.message);
     return [];
   }
 });
@@ -139,7 +141,7 @@ ipcMain.handle('scan-directory', (event, dirPath) => {
       category: categoryName
     };
   } catch (err) {
-    console.error('Error scanning directory:', err);
+    logger.error('Error scanning directory:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -151,7 +153,7 @@ ipcMain.handle('get-files-in-directory', (event, dirPath) => {
   try {
     return db.getFilesInDirectory(dirPath);
   } catch (err) {
-    console.error('Error getting files:', err);
+    logger.error('Error getting files:', err.message);
     return [];
   }
 });
@@ -163,7 +165,7 @@ ipcMain.handle('load-categories', () => {
   try {
     return categories.loadCategories();
   } catch (err) {
-    console.error('Error loading categories:', err);
+    logger.error('Error loading categories:', err.message);
     return {};
   }
 });
@@ -175,7 +177,7 @@ ipcMain.handle('get-category', (event, name) => {
   try {
     return categories.getCategory(name);
   } catch (err) {
-    console.error('Error getting category:', err);
+    logger.error('Error getting category:', err.message);
     return null;
   }
 });
@@ -187,7 +189,7 @@ ipcMain.handle('create-category', (event, { name, bgColor, textColor, patterns }
   try {
     return categories.createCategory(name, bgColor, textColor, patterns);
   } catch (err) {
-    console.error('Error creating category:', err);
+    logger.error('Error creating category:', err.message);
     return { error: err.message };
   }
 });
@@ -200,7 +202,7 @@ ipcMain.handle('delete-category', (event, name) => {
     categories.deleteCategory(name);
     return { success: true };
   } catch (err) {
-    console.error('Error deleting category:', err);
+    logger.error('Error deleting category:', err.message);
     return { error: err.message };
   }
 });
@@ -214,7 +216,7 @@ ipcMain.handle('get-categories-list', () => {
     // Convert object to array
     return Object.values(categoriesObj);
   } catch (err) {
-    console.error('Error getting categories list:', err);
+    logger.error('Error getting categories list:', err.message);
     return [];
   }
 });
@@ -237,7 +239,7 @@ ipcMain.handle('save-category', (event, categoryData) => {
       return categories.createCategory(name, bgColor, textColor, patterns || [], description || '');
     }
   } catch (err) {
-    console.error('Error saving category:', err);
+    logger.error('Error saving category:', err.message);
     throw err;
   }
 });
@@ -259,7 +261,7 @@ ipcMain.handle('update-category', (event, categoryData) => {
       return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '');
     }
   } catch (err) {
-    console.error('Error updating category:', err);
+    logger.error('Error updating category:', err.message);
     throw err;
   }
 });
@@ -272,7 +274,7 @@ ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName }
     categories.assignCategoryToDirectory(dirPath, categoryName);
     return { success: true };
   } catch (err) {
-    console.error('Error assigning category:', err);
+    logger.error('Error assigning category:', err.message);
     return { error: err.message };
   }
 });
@@ -284,7 +286,7 @@ ipcMain.handle('get-directory-assignment', (event, dirPath) => {
   try {
     return categories.getDirectoryAssignment(dirPath);
   } catch (err) {
-    console.error('Error getting assignment:', err);
+    logger.error('Error getting assignment:', err.message);
     return null;
   }
 });
@@ -297,7 +299,7 @@ ipcMain.handle('remove-directory-assignment', (event, dirPath) => {
     categories.removeDirectoryAssignment(dirPath);
     return { success: true };
   } catch (err) {
-    console.error('Error removing assignment:', err);
+    logger.error('Error removing assignment:', err.message);
     return { error: err.message };
   }
 });
@@ -309,7 +311,7 @@ ipcMain.handle('get-category-for-directory', (event, dirPath) => {
   try {
     return categories.getCategoryForDirectory(dirPath);
   } catch (err) {
-    console.error('Error getting category for directory:', err);
+    logger.error('Error getting category for directory:', err.message);
     return categories.createDefaultCategory();
   }
 });
@@ -321,7 +323,7 @@ ipcMain.handle('get-settings', () => {
   try {
     return categories.getSettings();
   } catch (err) {
-    console.error('Error getting settings:', err);
+    logger.error('Error getting settings:', err.message);
     return {};
   }
 });
@@ -338,7 +340,7 @@ ipcMain.handle('update-window-icon', async (event, categoryName) => {
     }
     return { error: 'Category not found' };
   } catch (err) {
-    console.error('Error updating window icon:', err);
+    logger.error('Error updating window icon:', err.message);
     return { error: err.message };
   }
 });
@@ -355,7 +357,7 @@ ipcMain.handle('generate-folder-icon', async (event, { bgColor, textColor }) => 
     }
     return null;
   } catch (err) {
-    console.error('Error generating folder icon:', err);
+    logger.error('Error generating folder icon:', err.message);
     return null;
   }
 });
@@ -372,7 +374,7 @@ ipcMain.handle('read-notes-file', async (event, notesPath) => {
       throw new Error('File does not exist');
     }
   } catch (err) {
-    console.error('Error reading notes file:', err);
+    logger.error('Error reading notes file:', err.message);
     throw err;
   }
 });
@@ -386,7 +388,7 @@ ipcMain.handle('write-notes-file', async (event, { notesPath, content }) => {
     fsSync.writeFileSync(notesPath, content, 'utf-8');
     return { success: true };
   } catch (err) {
-    console.error('Error writing notes file:', err);
+    logger.error('Error writing notes file:', err.message);
     throw err;
   }
 });
@@ -404,7 +406,7 @@ ipcMain.handle('render-markdown', async (event, content) => {
     });
     return md.render(content);
   } catch (err) {
-    console.error('Error rendering markdown:', err);
+    logger.error('Error rendering markdown:', err.message);
     throw err;
   }
 });
@@ -501,7 +503,7 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
       categoryData: category
     };
   } catch (err) {
-    console.error('Error scanning directory with comparison:', err);
+    logger.error('Error scanning directory with comparison:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -534,7 +536,7 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
       error: null 
     };
   } catch (err) {
-    console.error('Error calculating file checksum:', err);
+    logger.error('Error calculating file checksum:', err.message);
     db.updateFileChecksum(inode, dirId, null, 'error');
     return { 
       success: false, 
@@ -561,6 +563,18 @@ ipcMain.handle('update-file-modification-date', (event, { dirPath, inode, newDat
   } catch (err) {
     console.error('Error updating file modification date:', err);
     return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Logging: Capture browser console output and write to log file
+ * Uses ipcMain.on for fire-and-forget logging (no response needed)
+ */
+ipcMain.on('log-to-file', (event, { level, message, args }) => {
+  try {
+    logger.rendererLog(level, message, ...(args || []));
+  } catch (err) {
+    logger.error('Error logging from renderer:', err.message);
   }
 });
 

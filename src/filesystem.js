@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const logger = require('./logger');
 
 class FilesystemService {
   /**
@@ -32,7 +33,7 @@ class FilesystemService {
           files.push(fileInfo);
         }
       } catch (err) {
-        console.error(`Error reading ${entry}:`, err.message);
+        logger.warn(`Error reading ${entry}:`, err.message);
       }
     }
 
@@ -55,7 +56,7 @@ class FilesystemService {
         path: filePath
       };
     } catch (err) {
-      console.error(`Error getting stats for ${filePath}:`, err.message);
+      logger.warn(`Error getting stats for ${filePath}:`, err.message);
       return null;
     }
   }

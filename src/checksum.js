@@ -1,5 +1,6 @@
 const fs = require('fs');
 const crypto = require('crypto');
+const logger = require('./logger');
 
 class ChecksumService {
   /**
@@ -25,11 +26,11 @@ class ChecksumService {
         });
 
         stream.on('error', (err) => {
-          console.error(`Error reading file for checksum: ${filePath}`, err.message);
+          logger.warn(`Error reading file for checksum: ${filePath}`, err.message);
           resolve({ value: null, error: err.message });
         });
       } catch (err) {
-        console.error(`Error calculating checksum: ${filePath}`, err.message);
+        logger.error(`Error calculating checksum: ${filePath}`, err.message);
         resolve({ value: null, error: err.message });
       }
     });

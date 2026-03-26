@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const logger = require('./logger');
 
 const DB_PATH = path.join(os.homedir(), '.bestexplorer', 'data.sqlite');
 const CONFIG_DIR = path.join(os.homedir(), '.bestexplorer');
@@ -75,16 +76,16 @@ class DatabaseService {
       this.db.prepare('SELECT previousDateModified FROM files LIMIT 0').all();
     } catch (err) {
       // Columns don't exist, add them
-      console.log('Migrating database schema: adding new columns to files table');
+      logger.info('Migrating database schema: adding new columns to files table');
       try {
         this.db.exec(`
           ALTER TABLE files ADD COLUMN previousDateModified INTEGER;
           ALTER TABLE files ADD COLUMN checksumValue TEXT;
           ALTER TABLE files ADD COLUMN checksumStatus TEXT;
         `);
-        console.log('Migration completed successfully');
+        logger.info('Migration completed successfully');
       } catch (migrationErr) {
-        console.warn('Migration warning:', migrationErr.message);
+        logger.warn('Migration warning:', migrationErr.message);
       }
     }
   }

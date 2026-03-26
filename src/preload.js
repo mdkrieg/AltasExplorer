@@ -1,5 +1,43 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+/**
+ * Console Bridging
+ * Capture all console.log, console.warn, and console.error calls
+ * and send them to the main process for file logging
+ * 
+ * This ensures browser console output also appears in the persisted log file
+ */
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+console.log = (...args) => {
+  originalLog(...args);  // Still show in DevTools
+  ipcRenderer.send('log-to-file', {
+    level: 'INFO',
+    message: args[0],
+    args: args.slice(1)
+  });
+};
+
+console.warn = (...args) => {
+  originalWarn(...args);  // Still show in DevTools
+  ipcRenderer.send('log-to-file', {
+    level: 'WARN',
+    message: args[0],
+    args: args.slice(1)
+  });
+};
+
+console.error = (...args) => {
+  originalError(...args);  // Still show in DevTools
+  ipcRenderer.send('log-to-file', {
+    level: 'ERROR',
+    message: args[0],
+    args: args.slice(1)
+  });
+};
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // File system operations
   readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
