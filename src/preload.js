@@ -6,7 +6,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Database operations
   scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
+  scanDirectoryWithComparison: (dirPath) => ipcRenderer.invoke('scan-directory-with-comparison', dirPath),
   getFilesInDirectory: (dirPath) => ipcRenderer.invoke('get-files-in-directory', dirPath),
+
+  // File change detection
+  calculateFileChecksum: (filePath, inode, dirId) => 
+    ipcRenderer.invoke('calculate-file-checksum', { filePath, inode, dirId }),
+  updateFileModificationDate: (dirPath, inode, newDateModified) => 
+    ipcRenderer.invoke('update-file-modification-date', { dirPath, inode, newDateModified }),
 
   // Category operations
   loadCategories: () => ipcRenderer.invoke('load-categories'),

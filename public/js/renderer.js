@@ -14,11 +14,15 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false }
 };
+
+// Track directory selection from panel-1 for use in panels 2-4
+let panel1SelectedDirectoryPath = null;
+let panel1SelectedDirectoryName = null;
 
 let activePanelId = 1;
 let allCategories = {};
@@ -91,7 +95,7 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     $panel.find('.panel-path').text(dirPath);
 
     // Scan directory and populate files
-    const scanResult = await window.electronAPI.scanDirectory(dirPath);
+    const scanResult = await window.electronAPI.scanDirectoryWithComparison(dirPath);
     console.log('Scan result:', scanResult);
 
     // Get category for this directory
@@ -104,12 +108,29 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       await window.electronAPI.updateWindowIcon(category.name);
     }
 
-    // Read directory to get folder structure
-    const entries = await window.electronAPI.readDirectory(dirPath);
+    // Use entries from scan result (already has changeState metadata)
+    const entries = scanResult.success ? scanResult.entries : [];
     console.log('Entries count:', entries ? entries.length : 0);
 
     // Populate file grid for this panel
     await populateFileGrid(entries, category, panelId);
+
+    // Show the toolbar when displaying the grid (for all panels)
+    $panel.find('.w2ui-panel-title').show();
+
+    // Start async checksum calculation if category has it enabled
+    if (category && category.enableChecksum) {
+      // Collect files that need checksum calculation
+      const grid = panelState[panelId].w2uiGrid;
+      const filesToChecksum = grid.records.filter(r => 
+        !r.isFolder && r.changeState === 'checksumPending'
+      );
+      
+      if (filesToChecksum.length > 0) {
+        console.log(`Starting checksum calculation for ${filesToChecksum.length} files`);
+        startChecksumQueue(filesToChecksum, panelId, dirPath);
+      }
+    }
   } catch (err) {
     console.error('Error navigating to directory:', err);
     alert('Error accessing directory: ' + err.message);
@@ -152,8 +173,25 @@ async function initializeGridForPanel(panelId) {
     ],
     records: [],
     onClick: function(event) {
-      // Single click handling for select mode
-      if (panelState[panelId].selectMode && event.detail.recid) {
+      // For panel-1, detect directory selection for use by panels 2-4
+      if (panelId === 1 && event.detail.recid) {
+        const record = this.records[event.detail.recid - 1];
+        if (record) {
+          if (record.isFolder) {
+            // Select this directory for panels 2-4 to use
+            handlePanel1DirectorySelection(record.path, record.filename);
+          } else {
+            // If a file is selected, reset the button state
+            panel1SelectedDirectoryPath = null;
+            panel1SelectedDirectoryName = null;
+            updatePanelSelectButtons();
+          }
+          // Let w2ui handle the row highlighting naturally
+        }
+      }
+      
+      // Single click handling for other panels in select mode
+      if (panelId > 1 && panelState[panelId].selectMode && event.detail.recid) {
         const record = this.records[event.detail.recid - 1];
         if (record && record.isFolder) {
           setActivePanelId(panelId);
@@ -163,8 +201,23 @@ async function initializeGridForPanel(panelId) {
     },
     onDblClick: function(event) {
       const record = this.records[event.detail.recid - 1];
+      
+      // Check if this is a folder double-click (navigate)
       if (record && record.isFolder) {
         navigateToDirectory(record.path, panelId);
+        return;
+      }
+      
+      // Check if this is a dateModified cell double-click for a file with date modification
+      if (record && !record.isFolder && record.changeState === 'dateModified') {
+        const columnIndex = event.detail.column;
+        const columns = ['icon', 'filename', 'size', 'dateModified'];
+        const columnField = columns[columnIndex];
+        
+        if (columnField === 'dateModified') {
+          const inode = record.inode;
+          acknowledgeFileModification(inode, panelId);
+        }
       }
     },
     onContextMenu: function(event) {
@@ -201,32 +254,51 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
   const records = [];
   let recordId = 1;
 
+  // Helper function to apply CSS class to cell content
+  function applyClass(content, className) {
+    if (!className) return content;
+    return `<div class="${className}">${content}</div>`;
+  }
+
   // Add folders first
   for (const folder of folders) {
     const category = await window.electronAPI.getCategoryForDirectory(folder.path);
     const iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor);
     
+    // Use the same getRowClassName function for consistency with files
+    const className = getRowClassName(folder.changeState);
+    
     records.push({
       recid: recordId++,
-      icon: `<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain;">`,
-      filename: folder.filename,
-      size: '-',
-      dateModified: new Date(folder.dateModified).toLocaleDateString(),
+      icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain;">`, className),
+      filename: applyClass(folder.filename, className),
+      size: applyClass('-', className),
+      dateModified: applyClass(new Date(folder.dateModified).toLocaleDateString(), className),
       isFolder: true,
-      path: folder.path
+      path: folder.path,
+      changeState: folder.changeState,
+      inode: folder.inode,
+      dir_id: null // Will be set from DB if needed
     });
   }
 
   // Then add files
   for (const file of files) {
+    const className = getRowClassName(file.changeState);
+    const dateModifiedContent = getDateModifiedCell(file, file.changeState);
+    
     records.push({
       recid: recordId++,
-      icon: '📄',
-      filename: file.filename,
-      size: formatBytes(file.size),
-      dateModified: new Date(file.dateModified).toLocaleDateString(),
+      icon: applyClass('📄', className),
+      filename: applyClass(file.filename, className),
+      size: applyClass(formatBytes(file.size), className),
+      dateModified: dateModifiedContent,
+      dateModifiedRaw: file.dateModified, // Store raw timestamp for acknowledgment
       isFolder: false,
-      path: file.path
+      path: file.path,
+      changeState: file.changeState,
+      inode: file.inode,
+      dir_id: null // Will be set from DB if needed
     });
   }
 
@@ -236,6 +308,156 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     grid.records = records;
     grid.refresh();
     console.log(`Grid for panel ${panelId} populated with ${records.length} rows`);
+  }
+}
+
+/**
+ * Get CSS class name for a file row based on change state
+ */
+function getRowClassName(changeState) {
+  switch (changeState) {
+    case 'new':
+      return 'file-new';
+    case 'checksumChanged':
+      return 'file-checksum-changed';
+    default:
+      return '';
+  }
+}
+
+/**
+ * Get formatted date modified cell with appropriate styling
+ */
+function getDateModifiedCell(file, changeState) {
+  const dateStr = new Date(file.dateModified).toLocaleDateString();
+  
+  if (changeState === 'new') {
+    return `<div class="file-new">${dateStr}</div>`;
+  } else if (changeState === 'dateModified') {
+    return `<div class="file-date-modified">${dateStr}</div>`;
+  } else if (changeState === 'checksumPending') {
+    return `<div class="file-checksum-pending">Pending...</div>`;
+  } else if (changeState === 'checksumChanged') {
+    return `<div class="file-checksum-changed">${dateStr}</div>`;
+  }
+  
+  return dateStr;
+}
+
+/**
+ * Acknowledge file modification (double-click on date modified cell)
+ */
+async function acknowledgeFileModification(inode, panelId) {
+  try {
+    const state = panelState[panelId];
+    const currentPath = state.currentPath;
+    
+    // Get the record to find the current dateModified value
+    const grid = state.w2uiGrid;
+    const record = grid.records.find(r => r.inode === inode);
+    
+    if (!record) {
+      console.error('Record not found:', inode);
+      return;
+    }
+
+    // Call IPC to update database with raw timestamp
+    const result = await window.electronAPI.updateFileModificationDate(
+      currentPath,
+      inode,
+      record.dateModifiedRaw
+    );
+
+    if (result.success) {
+      // Update record's changeState
+      record.changeState = 'unchanged';
+      
+      // Rebuild the dateModified cell content (remove styling)
+      record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
+      
+      // Refresh grid
+      grid.refresh();
+      console.log('File modification acknowledged:', inode);
+    } else {
+      console.error('Error acknowledging file modification:', result.error);
+      alert('Error: ' + result.error);
+    }
+  } catch (err) {
+    console.error('Error in acknowledgeFileModification:', err);
+    alert('Error acknowledging modification: ' + err.message);
+  }
+}
+
+/**
+ * Start checksum calculation queue for a panel
+ */
+async function startChecksumQueue(filesToChecksum, panelId, dirPath) {
+  const state = panelState[panelId];
+  state.checksumQueue = filesToChecksum;
+  state.checksumQueueIndex = 0;
+  state.checksumCancelled = false;
+
+  // Process each file sequentially
+  while (state.checksumQueueIndex < state.checksumQueue.length && !state.checksumCancelled) {
+    const file = state.checksumQueue[state.checksumQueueIndex];
+    await calculateChecksumForFile(file, panelId, dirPath);
+    state.checksumQueueIndex++;
+  }
+
+  if (state.checksumCancelled) {
+    console.log('Checksum queue cancelled for panel', panelId);
+  } else {
+    console.log('Checksum queue completed for panel', panelId);
+  }
+}
+
+/**
+ * Calculate checksum for a single file and update grid
+ */
+async function calculateChecksumForFile(record, panelId, dirPath) {
+  try {
+    const result = await window.electronAPI.calculateFileChecksum(
+      record.path,
+      record.inode,
+      null // dir_id not needed in renderer
+    );
+
+    if (result.success) {
+      // Update record's changeState based on comparison result
+      // For now, we mark it as checksumChanged to show it was calculated
+      // In the future, we could store previous checksum and compare
+      record.changeState = 'checksumChanged';
+      record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
+    } else {
+      // Mark as error
+      record.dateModified = `<div style="color: #f00;">Error</div>`;
+    }
+
+    // Refresh the specific record in grid
+    const grid = panelState[panelId].w2uiGrid;
+    if (grid) {
+      grid.refresh();
+    }
+
+    console.log('Checksum calculated for:', record.filename, result);
+  } catch (err) {
+    console.error('Error calculating checksum:', err);
+    record.dateModified = `<div style="color: #f00;">Error</div>`;
+    const grid = panelState[panelId].w2uiGrid;
+    if (grid) {
+      grid.refresh();
+    }
+  }
+}
+
+/**
+ * Cancel checksum queue for a panel (called when navigating away)
+ */
+function cancelChecksumQueue(panelId) {
+  const state = panelState[panelId];
+  if (state.checksumQueue) {
+    state.checksumCancelled = true;
+    console.log('Checksum queue cancelled for panel', panelId);
   }
 }
 
@@ -447,6 +669,42 @@ function toggleSelectMode(panelId) {
 }
 
 /**
+ * Update the state of Select buttons based on whether a directory is selected in panel-1
+ */
+function updatePanelSelectButtons() {
+  // Update all panel 2-4 Select buttons
+  for (let panelId = 2; panelId <= 4; panelId++) {
+    const $selectBtn = $(`#panel-${panelId} .btn-panel-select`);
+    
+    if (panel1SelectedDirectoryPath && panel1SelectedDirectoryName) {
+      // Enable button and show directory name
+      $selectBtn.prop('disabled', false);
+      $selectBtn.text(panel1SelectedDirectoryName);
+      $selectBtn.css('background-color', '');
+      $selectBtn.css('color', '');
+      $selectBtn.css('cursor', 'pointer');
+    } else {
+      // Disable button and show placeholder
+      $selectBtn.prop('disabled', true);
+      $selectBtn.text('Select directory');
+      $selectBtn.css('background-color', '#ccc');
+      $selectBtn.css('color', '#666');
+      $selectBtn.css('cursor', 'not-allowed');
+    }
+  }
+}
+
+/**
+ * Handle directory selection in panel-1 grid
+ */
+function handlePanel1DirectorySelection(dirPath, dirName) {
+  panel1SelectedDirectoryPath = dirPath;
+  panel1SelectedDirectoryName = dirName;
+  updatePanelSelectButtons();
+  console.log(`Panel-1 directory selected: ${dirName} (${dirPath})`);
+}
+
+/**
  * Show notes view for a panel
  */
 async function showNotesView(panelId) {
@@ -637,6 +895,13 @@ function clearPanelState(panelId) {
     currentCategory: null,
     selectMode: false
   };
+  
+  // Hide the toolbar when clearing panel state
+  const $panel = $(`#panel-${panelId}`);
+  $panel.find('.w2ui-panel-title').hide();
+  $panel.find('.panel-landing-page').show();
+  $panel.find('.panel-grid').hide();
+  $panel.find('.panel-notes-view').hide();
 }
 
 /**
@@ -680,15 +945,12 @@ function attachPanelEventListeners(panelId) {
   if (panelId > 1) {
     $panel.find('.btn-panel-select').click(function() {
       setActivePanelId(panelId);
-      toggleSelectMode(panelId);
-    });
-    
-    // Open as main button
-    $panel.find('.btn-panel-open-main').click(function() {
-      setActivePanelId(panelId);
-      const state = panelState[panelId];
-      if (state.currentPath) {
-        navigateToDirectory(state.currentPath, 1);
+      // If a directory is selected from panel-1, navigate to it and hide landing page
+      if (panel1SelectedDirectoryPath) {
+        navigateToDirectory(panel1SelectedDirectoryPath, panelId);
+        // Hide landing page and show grid
+        $panel.find('.panel-landing-page').hide();
+        $panel.find('.panel-grid').show();
       }
     });
     

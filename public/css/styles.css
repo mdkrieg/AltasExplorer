@@ -699,6 +699,24 @@ hr {
   color: #333;
 }
 
+/* File Change State Styles */
+.file-new {
+  color: #00F;
+}
+
+.file-date-modified {
+  color: #00F;
+}
+
+.file-checksum-pending {
+  background-color: #DDD;
+  color: #666;
+}
+
+.file-checksum-changed {
+  color: #00F;
+}
+
 .notes-content-view blockquote {
   border-left: 4px solid #ddd;
   padding: 0 12px;

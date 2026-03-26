@@ -24,8 +24,6 @@ class DatabaseService {
 
   createSchema() {
     const schema = `
-      DROP TABLE IF EXISTS files;
-
       CREATE TABLE IF NOT EXISTS dirs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         inode TEXT NOT NULL,
@@ -42,19 +40,53 @@ class DatabaseService {
         dir_id INTEGER NOT NULL,
         filename TEXT NOT NULL,
         dateModified INTEGER,
+        previousDateModified INTEGER,
         dateCreated INTEGER,
         size INTEGER,
+        checksumValue TEXT,
+        checksumStatus TEXT,
         tags TEXT,
         FOREIGN KEY (dir_id) REFERENCES dirs(id),
         UNIQUE(inode, dir_id)
       );
 
+      CREATE TABLE IF NOT EXISTS file_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inode TEXT NOT NULL,
+        dir_id INTEGER NOT NULL,
+        changeType TEXT NOT NULL,
+        detectedAt INTEGER,
+        acknowledgedAt INTEGER,
+        FOREIGN KEY (dir_id) REFERENCES dirs(id),
+        UNIQUE(inode, dir_id, changeType)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_dirs_dirname ON dirs(dirname);
       CREATE INDEX IF NOT EXISTS idx_files_dir_id ON files(dir_id);
       CREATE INDEX IF NOT EXISTS idx_files_inode ON files(inode);
+      CREATE INDEX IF NOT EXISTS idx_file_changes_inode ON file_changes(inode);
     `;
 
     this.db.exec(schema);
+
+    // Migration: Add new columns to files table if they don't exist
+    try {
+      // Try to read from the new columns to see if they exist
+      this.db.prepare('SELECT previousDateModified FROM files LIMIT 0').all();
+    } catch (err) {
+      // Columns don't exist, add them
+      console.log('Migrating database schema: adding new columns to files table');
+      try {
+        this.db.exec(`
+          ALTER TABLE files ADD COLUMN previousDateModified INTEGER;
+          ALTER TABLE files ADD COLUMN checksumValue TEXT;
+          ALTER TABLE files ADD COLUMN checksumStatus TEXT;
+        `);
+        console.log('Migration completed successfully');
+      } catch (migrationErr) {
+        console.warn('Migration warning:', migrationErr.message);
+      }
+    }
   }
 
   /**
@@ -127,6 +159,80 @@ class DatabaseService {
       fileData.size || 0,
       fileData.tags || null
     );
+  }
+
+  /**
+   * Get all files in a directory by dir_id (before clearing)
+   */
+  getFilesByDirId(dir_id) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM files WHERE dir_id = ?
+    `);
+    return stmt.all(dir_id);
+  }
+
+  /**
+   * Get a file by inode and dir_id
+   */
+  getFileByInode(inode, dir_id) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM files WHERE inode = ? AND dir_id = ?
+    `);
+    return stmt.get(inode, dir_id);
+  }
+
+  /**
+   * Compare file state and return change metadata
+   */
+  compareFileState(currentEntry, dir_id) {
+    const existingFile = this.getFileByInode(currentEntry.inode, dir_id);
+    let changeState = 'unchanged';
+    let previousDateModified = null;
+
+    if (!existingFile) {
+      // New file
+      changeState = 'new';
+    } else if (existingFile.dateModified !== currentEntry.dateModified) {
+      // Date modified changed
+      changeState = 'dateModified';
+      previousDateModified = existingFile.dateModified;
+    }
+
+    return {
+      changeState,
+      previousDateModified
+    };
+  }
+
+  /**
+   * Update file modification date (for acknowledging changes)
+   */
+  updateFileModificationDate(inode, dir_id, newDateModified) {
+    const stmt = this.db.prepare(`
+      UPDATE files SET dateModified = ?, previousDateModified = dateModified WHERE inode = ? AND dir_id = ?
+    `);
+    return stmt.run(newDateModified, inode, dir_id);
+  }
+
+  /**
+   * Update file checksum value and status
+   */
+  updateFileChecksum(inode, dir_id, checksumValue, checksumStatus) {
+    const stmt = this.db.prepare(`
+      UPDATE files SET checksumValue = ?, checksumStatus = ? WHERE inode = ? AND dir_id = ?
+    `);
+    return stmt.run(checksumValue, checksumStatus, inode, dir_id);
+  }
+
+  /**
+   * Get previous checksum for a file
+   */
+  getFileChecksum(inode, dir_id) {
+    const stmt = this.db.prepare(`
+      SELECT checksumValue FROM files WHERE inode = ? AND dir_id = ?
+    `);
+    const result = stmt.get(inode, dir_id);
+    return result ? result.checksumValue : null;
   }
 
   /**

@@ -27,7 +27,8 @@ class CategoryService {
         bgColor: 'rgb(239, 228, 176)',
         textColor: 'rgb(0, 0, 0)',
         patterns: [],
-        description: ''
+        description: '',
+        enableChecksum: false
       };
       fs.writeFileSync(defaultCategoryPath, JSON.stringify(defaultCategory, null, 2));
     }
@@ -51,6 +52,10 @@ class CategoryService {
           if (!category.description) {
             category.description = '';
           }
+          // Ensure backward compatibility: add enableChecksum if missing
+          if (category.enableChecksum === undefined) {
+            category.enableChecksum = false;
+          }
           categories[category.name] = category;
         }
       }
@@ -72,7 +77,7 @@ class CategoryService {
   /**
    * Create a new category
    */
-  createCategory(name, bgColor, textColor, patterns = [], description = '') {
+  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false) {
     if (name === 'Default') {
       throw new Error('Cannot create a category named "Default" - it already exists');
     }
@@ -82,7 +87,8 @@ class CategoryService {
       bgColor,
       textColor,
       patterns,
-      description
+      description,
+      enableChecksum
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
@@ -94,13 +100,18 @@ class CategoryService {
   /**
    * Update an existing category
    */
-  updateCategory(name, bgColor, textColor, patterns = [], description = '') {
+  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null) {
+    // Get existing category to preserve enableChecksum if not specified
+    const existingCategory = this.getCategory(name);
+    const checksumSetting = enableChecksum !== null ? enableChecksum : (existingCategory?.enableChecksum || false);
+
     const category = {
       name,
       bgColor,
       textColor,
       patterns,
-      description
+      description,
+      enableChecksum: checksumSetting
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);

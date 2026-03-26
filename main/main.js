@@ -7,6 +7,7 @@ const db = require('../src/db');
 const fs = require('../src/filesystem');
 const categories = require('../src/categories');
 const icons = require('../src/icons');
+const checksum = require('../src/checksum');
 
 let mainWindow;
 
@@ -405,6 +406,161 @@ ipcMain.handle('render-markdown', async (event, content) => {
   } catch (err) {
     console.error('Error rendering markdown:', err);
     throw err;
+  }
+});
+
+/**
+ * File Change Detection: Scan directory with comparison
+ */
+ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
+  try {
+    // Get directory inode to track the directory itself
+    const dirStats = fs.getStats(dirPath);
+    if (!dirStats) {
+      return { success: false, error: 'Unable to read directory stats' };
+    }
+
+    const dirInode = dirStats.inode;
+
+    // Get category for this directory
+    const category = categories.getCategoryForDirectory(dirPath);
+    const categoryName = category ? category.name : 'Default';
+
+    // Create or get the directory entry (returns dir_id)
+    const dirId = db.getOrCreateDirectory(dirPath, dirInode, categoryName);
+
+    // IMPORTANT: Get existing database records BEFORE clearing
+    const existingDbFiles = db.getFilesByDirId(dirId);
+    const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
+
+    // Read all filesystem entries (folders + files)
+    const entries = fs.readDirectory(dirPath);
+    const entriesWithChanges = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory) {
+        // For files, determine change state
+        const dbFile = dbFileMap.get(entry.inode);
+        let changeState = 'unchanged';
+        let previousDateModified = null;
+
+        if (!dbFile) {
+          // New file
+          changeState = 'new';
+        } else if (dbFile.dateModified !== entry.dateModified) {
+          // Date modified changed
+          changeState = 'dateModified';
+          previousDateModified = dbFile.dateModified;
+        }
+
+        entriesWithChanges.push({
+          ...entry,
+          changeState,
+          previousDateModified
+        });
+      } else {
+        // For directories, check if they're new
+        const existingDir = db.getDirectory(entry.path);
+        let changeState = 'unchanged';
+
+        if (!existingDir) {
+          // New directory - create entry in dirs table
+          changeState = 'new';
+          db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
+        }
+
+        entriesWithChanges.push({
+          ...entry,
+          changeState
+        });
+      }
+    }
+
+    // Now clear existing file entries for this directory
+    db.clearDirectory(dirPath);
+
+    // Upsert all files with their new data
+    for (const entry of entriesWithChanges) {
+      if (!entry.isDirectory) {
+        db.upsertFile({
+          inode: entry.inode,
+          dir_id: dirId,
+          filename: entry.filename,
+          dateModified: entry.dateModified,
+          dateCreated: entry.dateCreated,
+          size: entry.size
+        });
+      }
+    }
+
+    return {
+      success: true,
+      count: entriesWithChanges.filter(e => !e.isDirectory).length,
+      entries: entriesWithChanges,
+      category: categoryName,
+      categoryData: category
+    };
+  } catch (err) {
+    console.error('Error scanning directory with comparison:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * File Change Detection: Calculate checksum for a file
+ */
+ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId }) => {
+  try {
+    const result = await checksum.calculateMD5(filePath);
+
+    if (result.error) {
+      // Update with error status
+      db.updateFileChecksum(inode, dirId, null, 'error');
+      return { 
+        success: false, 
+        checksum: null, 
+        status: 'error',
+        error: result.error 
+      };
+    }
+
+    // Update database with calculated checksum
+    db.updateFileChecksum(inode, dirId, result.value, 'calculated');
+
+    return { 
+      success: true, 
+      checksum: result.value, 
+      status: 'calculated',
+      error: null 
+    };
+  } catch (err) {
+    console.error('Error calculating file checksum:', err);
+    db.updateFileChecksum(inode, dirId, null, 'error');
+    return { 
+      success: false, 
+      checksum: null, 
+      status: 'error',
+      error: err.message 
+    };
+  }
+});
+
+/**
+ * File Change Detection: Update file modification date (acknowledge change)
+ */
+ipcMain.handle('update-file-modification-date', (event, { dirPath, inode, newDateModified }) => {
+  try {
+    // Get the directory to find its dir_id
+    const dir = db.getDirectory(dirPath);
+    if (!dir) {
+      return { success: false, error: 'Directory not found in database' };
+    }
+
+    db.updateFileModificationDate(inode, dir.id, newDateModified);
+    return { success: true };
+  } catch (err) {
+    console.error('Error updating file modification date:', err);
+    return { success: false, error: err.message };
   }
 });
 
