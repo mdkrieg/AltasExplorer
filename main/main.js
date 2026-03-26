@@ -390,6 +390,24 @@ ipcMain.handle('write-notes-file', async (event, { notesPath, content }) => {
   }
 });
 
+/**
+ * Markdown: Render markdown to HTML
+ */
+ipcMain.handle('render-markdown', async (event, content) => {
+  try {
+    const MarkdownIt = require('markdown-it');
+    const md = new MarkdownIt({
+      html: true,
+      linkify: true,
+      typographer: true
+    });
+    return md.render(content);
+  } catch (err) {
+    console.error('Error rendering markdown:', err);
+    throw err;
+  }
+});
+
 // ============================================
 // App lifecycle
 // ============================================

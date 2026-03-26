@@ -9,7 +9,11 @@
     "build": "electron-builder",
     "postinstall": "npm rebuild better-sqlite3 --build-from-source"
   },
-  "keywords": ["file", "explorer", "electron"],
+  "keywords": [
+    "file",
+    "explorer",
+    "electron"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
@@ -18,8 +22,9 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
-    "sharp": "^0.33.1",
     "jquery": "^3.7.1",
+    "markdown-it": "^14.1.1",
+    "sharp": "^0.33.1",
     "w2ui": "^2.0.0"
   }
 }

@@ -452,20 +452,28 @@ function toggleSelectMode(panelId) {
 async function showNotesView(panelId) {
   const notesPath = panelState[1].currentPath + '\\notes.txt';
   const $notesView = $(`#panel-${panelId} .panel-notes-view`);
-  const $notesContent = $notesView.find('.notes-content');
+  const $notesContentEdit = $notesView.find('.notes-content-edit');
+  const $notesContentView = $notesView.find('.notes-content-view');
   const $panelToolbar = $(`#panel-${panelId} > .w2ui-panel-title`);
   const $notesToolbar = $notesView.find('.w2ui-panel-title');
   
   try {
     // Try to read notes.txt
     const content = await window.electronAPI.readNotesFile(notesPath);
-    $notesContent.val(content);
-    $notesContent.prop('readonly', true);
+    $notesContentEdit.val(content);
+    
+    // Render markdown to HTML
+    const htmlContent = await window.electronAPI.renderMarkdown(content);
+    $notesContentView.html(htmlContent);
     
     // Hide landing page and grid, show notes view
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
     $notesView.show();
+    
+    // Show view mode by default, hide edit mode
+    $notesContentView.show();
+    $notesContentEdit.hide();
     
     // Update toolbar with notes path
     $notesToolbar.find('.notes-path').text(notesPath);
@@ -479,12 +487,16 @@ async function showNotesView(panelId) {
     notesEditMode = false;
   } catch (err) {
     // File doesn't exist, create empty notes
-    $notesContent.val('');
-    $notesContent.prop('readonly', false);
+    $notesContentEdit.val('');
+    $notesContentView.html('');
     
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
     $notesView.show();
+    
+    // Start in edit mode for new file
+    $notesContentEdit.show();
+    $notesContentView.hide();
     
     // Update toolbar with notes path
     $notesToolbar.find('.notes-path').text(notesPath);
@@ -506,13 +518,15 @@ async function showNotesView(panelId) {
  */
 function hideNotesView(panelId) {
   const $notesView = $(`#panel-${panelId} .panel-notes-view`);
-  const $notesContent = $notesView.find('.notes-content');
+  const $notesContentEdit = $notesView.find('.notes-content-edit');
+  const $notesContentView = $notesView.find('.notes-content-view');
   const $panelToolbar = $(`#panel-${panelId} > .w2ui-panel-title`);
   const $notesToolbar = $notesView.find('.w2ui-panel-title');
   
-  $notesContent.prop('readonly', true);
   $notesView.hide();
   $notesToolbar.hide();
+  $notesContentEdit.hide();
+  $notesContentView.hide();
   $panelToolbar.show();
   $(`#panel-${panelId} .panel-landing-page`).show();
   
@@ -524,24 +538,32 @@ function hideNotesView(panelId) {
  */
 async function toggleNotesEditMode(panelId) {
   const $notesView = $(`#panel-${panelId} .panel-notes-view`);
-  const $notesContent = $notesView.find('.notes-content');
+  const $notesContentEdit = $notesView.find('.notes-content-edit');
+  const $notesContentView = $notesView.find('.notes-content-view');
   const $editBtn = $notesView.find('.btn-notes-edit');
   const $saveBtn = $notesView.find('.btn-notes-save');
   
-  if ($notesContent.prop('readonly')) {
+  if (notesEditMode === false) {
     // Enter edit mode
-    $notesContent.prop('readonly', false);
-    $notesContent.focus();
+    $notesContentView.hide();
+    $notesContentEdit.show().focus();
     $editBtn.hide();
     $saveBtn.show();
+    notesEditMode = true;
   } else {
     // Save and exit edit mode
-    const content = $notesContent.val();
+    const content = $notesContentEdit.val();
     const notesPath = panelState[1].currentPath + '\\notes.txt';
     
     try {
       await window.electronAPI.writeNotesFile(notesPath, content);
-      $notesContent.prop('readonly', true);
+      
+      // Render markdown to HTML and show view
+      const htmlContent = await window.electronAPI.renderMarkdown(content);
+      $notesContentView.html(htmlContent);
+      $notesContentEdit.hide();
+      $notesContentView.show();
+      
       $editBtn.show().text('Edit').css('background', '#2196F3');
       $saveBtn.hide();
       notesEditMode = false;
