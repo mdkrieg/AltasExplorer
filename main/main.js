@@ -280,6 +280,28 @@ ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName }
 });
 
 /**
+ * Directory Assignments: Assign category to multiple directories (bulk operation)
+ */
+ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryName }) => {
+  try {
+    const results = [];
+    for (const dirPath of dirPaths) {
+      try {
+        categories.assignCategoryToDirectory(dirPath, categoryName);
+        results.push({ path: dirPath, success: true });
+      } catch (err) {
+        logger.error(`Error assigning category to ${dirPath}:`, err.message);
+        results.push({ path: dirPath, success: false, error: err.message });
+      }
+    }
+    return { success: true, results };
+  } catch (err) {
+    logger.error('Error in bulk category assignment:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * Directory Assignments: Get assignment
  */
 ipcMain.handle('get-directory-assignment', (event, dirPath) => {
