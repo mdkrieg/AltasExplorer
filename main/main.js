@@ -249,16 +249,16 @@ ipcMain.handle('save-category', (event, categoryData) => {
  */
 ipcMain.handle('update-category', (event, categoryData) => {
   try {
-    const { name, oldName, bgColor, textColor, patterns, description } = categoryData;
+    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum } = categoryData;
     const updateName = name || oldName;
     
     // If name changed, delete old and create new
     if (oldName && name && oldName !== name) {
       categories.deleteCategory(oldName);
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '');
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false);
     } else {
       // Just update
-      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '');
+      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum);
     }
   } catch (err) {
     logger.error('Error updating category:', err.message);
@@ -475,6 +475,11 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
           // Date modified changed
           changeState = 'dateModified';
           previousDateModified = dbFile.dateModified;
+        }
+
+        // If category has checksum enabled, mark file for checksum calculation
+        if (category && category.enableChecksum) {
+          changeState = 'checksumPending';
         }
 
         entriesWithChanges.push({

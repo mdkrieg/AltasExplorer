@@ -4,8 +4,8 @@ const os = require('os');
 const fs = require('fs');
 const logger = require('./logger');
 
-const DB_PATH = path.join(os.homedir(), '.bestexplorer', 'data.sqlite');
-const CONFIG_DIR = path.join(os.homedir(), '.bestexplorer');
+const DB_PATH = path.join(os.homedir(), '.atlasexplorer', 'data.sqlite');
+const CONFIG_DIR = path.join(os.homedir(), '.atlasexplorer');
 
 class DatabaseService {
   constructor() {

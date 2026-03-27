@@ -1,7 +1,7 @@
 /**
  * Jest Configuration
  * 
- * This file configures Jest for testing the BestExplorer application.
+ * This file configures Jest for testing the AtlasExplorer application.
  * Key settings:
  * - testEnvironment: 'node' for Node.js (not browser) testing
  * - testMatch: Pattern to find test files (__tests__ directories or .test.js files)

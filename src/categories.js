@@ -3,8 +3,8 @@ const path = require('path');
 const os = require('os');
 const logger = require('./logger');
 
-const CATEGORIES_DIR = path.join(os.homedir(), '.bestexplorer', 'categories');
-const SETTINGS_PATH = path.join(os.homedir(), '.bestexplorer', 'settings.json');
+const CATEGORIES_DIR = path.join(os.homedir(), '.atlasexplorer', 'categories');
+const SETTINGS_PATH = path.join(os.homedir(), '.atlasexplorer', 'settings.json');
 
 class CategoryService {
   constructor() {

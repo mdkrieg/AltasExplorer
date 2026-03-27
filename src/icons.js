@@ -1,10 +1,76 @@
+const fs = require('fs');
 const sharp = require('sharp');
 const path = require('path');
 const os = require('os');
+const logger = require('./logger');
 
-const ICON_SOURCE = path.join(os.homedir(), '.bestexplorer', 'icons', 'folder.png');
+const USER_ICONS_DIR = path.join(os.homedir(), '.atlasexplorer', 'icons');
+const ICON_SOURCE = path.join(USER_ICONS_DIR, 'folder.png');
 
 class IconService {
+  constructor() {
+    this.ensureIconAssets();
+  }
+
+  /**
+   * Resolve where bundled icon assets live.
+   * Supports both dev mode and packaged Electron builds.
+   */
+  resolveBundledIconsDir() {
+    const candidates = [
+      process.resourcesPath ? path.join(process.resourcesPath, 'icons') : null,
+      process.resourcesPath ? path.join(process.resourcesPath, 'resources', 'icons') : null,
+      path.join(__dirname, '..', 'resources', 'icons')
+    ].filter(Boolean);
+
+    for (const dir of candidates) {
+      if (!fs.existsSync(dir)) {
+        continue;
+      }
+
+      const files = fs.readdirSync(dir);
+      if (files.length > 0) {
+        return dir;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Ensure ~/.atlasexplorer/icons exists and contains bundled icon files.
+   * Existing user files are preserved; only missing files are copied.
+   */
+  ensureIconAssets() {
+    try {
+      const sourceDir = this.resolveBundledIconsDir();
+      if (!sourceDir) {
+        logger.warn('No bundled icons directory found; skipping icon asset bootstrap');
+        return;
+      }
+
+      if (!fs.existsSync(USER_ICONS_DIR)) {
+        fs.mkdirSync(USER_ICONS_DIR, { recursive: true });
+      }
+
+      const sourceEntries = fs.readdirSync(sourceDir, { withFileTypes: true });
+      for (const entry of sourceEntries) {
+        if (!entry.isFile()) {
+          continue;
+        }
+
+        const sourcePath = path.join(sourceDir, entry.name);
+        const targetPath = path.join(USER_ICONS_DIR, entry.name);
+
+        if (!fs.existsSync(targetPath)) {
+          fs.copyFileSync(sourcePath, targetPath);
+        }
+      }
+    } catch (err) {
+      logger.error('Error ensuring icon assets:', err.message);
+    }
+  }
+
   /**
    * Parse RGB color string to object
    * Input: "rgb(255, 0, 0)" -> { r: 255, g: 0, b: 0 }
@@ -31,6 +97,11 @@ class IconService {
    */
   async generateWindowIcon(bgColor, textColor) {
     try {
+      if (!fs.existsSync(ICON_SOURCE)) {
+        logger.warn('Icon source file not found:', ICON_SOURCE);
+        return null;
+      }
+
       const bgRGB = this.parseRGB(bgColor);
       const textRGB = this.parseRGB(textColor);
 
@@ -95,7 +166,7 @@ class IconService {
 
       return iconPng;
     } catch (err) {
-      console.error('Error generating window icon:', err);
+      logger.error('Error generating window icon:', err.message);
       return null;
     }
   }

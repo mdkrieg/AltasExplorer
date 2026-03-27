@@ -1,4 +1,4 @@
-/* BestExplorer Custom Styles */
+/* AtlasExplorer Custom Styles */
 
 * {
   box-sizing: border-box;
@@ -697,6 +697,12 @@ hr {
   background: none;
   padding: 0;
   color: #333;
+}
+
+/* Checksum Calculation Animation */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* File Change State Styles */

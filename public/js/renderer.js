@@ -1,5 +1,5 @@
 /**
- * BestExplorer Renderer Logic
+ * AtlasExplorer Renderer Logic
  * Handles all UI interactions and IPC calls
  */
 
@@ -169,7 +169,8 @@ async function initializeGridForPanel(panelId) {
       { field: 'icon', text: '', size: '40px', resizable: false, sortable: false },
       { field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true },
       { field: 'size', text: 'Size', size: '120px', resizable: true, sortable: true, align: 'right' },
-      { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true }
+      { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true },
+      { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false }
     ],
     records: [],
     onClick: function(event) {
@@ -211,7 +212,7 @@ async function initializeGridForPanel(panelId) {
       // Check if this is a dateModified cell double-click for a file with date modification
       if (record && !record.isFolder && record.changeState === 'dateModified') {
         const columnIndex = event.detail.column;
-        const columns = ['icon', 'filename', 'size', 'dateModified'];
+        const columns = ['icon', 'filename', 'size', 'dateModified', 'checksum'];
         const columnField = columns[columnIndex];
         
         if (columnField === 'dateModified') {
@@ -285,6 +286,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       filename: applyClass(folder.filename, className),
       size: applyClass('-', className),
       dateModified: applyClass(new Date(folder.dateModified).toLocaleDateString(), className),
+      checksum: applyClass('—', className),
       isFolder: true,
       path: folder.path,
       changeState: folder.changeState,
@@ -297,6 +299,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
   for (const file of files) {
     const className = getRowClassName(file.changeState);
     const dateModifiedContent = getDateModifiedCell(file, file.changeState);
+    const checksumCell = getChecksumCell(file, file.changeState);
     
     records.push({
       recid: recordId++,
@@ -305,6 +308,9 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       size: applyClass(formatBytes(file.size), className),
       dateModified: dateModifiedContent,
       dateModifiedRaw: file.dateModified, // Store raw timestamp for acknowledgment
+      checksum: checksumCell,
+      checksumStatus: null, // Will store 'pending', 'calculated', 'error'
+      checksumValue: null, // Will store the actual hash
       isFolder: false,
       path: file.path,
       changeState: file.changeState,
@@ -353,6 +359,25 @@ function getDateModifiedCell(file, changeState) {
   }
   
   return dateStr;
+}
+
+/**
+ * Get formatted checksum cell with appropriate styling based on state
+ */
+function getChecksumCell(file, changeState) {
+  // For folders and files without checksum tracking, show dash
+  if (file.isFolder) {
+    return '—';
+  }
+  
+  // Show pending status while checksum is being calculated
+  if (changeState === 'checksumPending') {
+    return '<div class="file-checksum-pending"><span style="animation: spin 1s linear infinite;">⟳</span> Pending</div>';
+  }
+  
+  // Show checksum value if available (checksumValue should be set after calculation)
+  // For now, show dash as placeholder - will be updated by calculateChecksumForFile
+  return '—';
 }
 
 /**
@@ -407,7 +432,7 @@ async function startChecksumQueue(filesToChecksum, panelId, dirPath) {
   state.checksumQueue = filesToChecksum;
   state.checksumQueueIndex = 0;
   state.checksumCancelled = false;
-
+  console.log(`Checksum queue started for panel ${panelId} with ${filesToChecksum.length} files`);
   // Process each file sequentially
   while (state.checksumQueueIndex < state.checksumQueue.length && !state.checksumCancelled) {
     const file = state.checksumQueue[state.checksumQueueIndex];
@@ -434,14 +459,20 @@ async function calculateChecksumForFile(record, panelId, dirPath) {
     );
 
     if (result.success) {
+      // Update record with checksum data
+      record.checksumStatus = 'calculated';
+      record.checksumValue = result.checksum; // Store the full hash
+      // Display first 12 characters of hash as a short representation
+      const shortHash = result.checksum ? result.checksum.substring(0, 12) + '...' : '—';
+      record.checksum = `<span title="${result.checksum || ''}" style="cursor: help;">${shortHash}</span>`;
+      
       // Update record's changeState based on comparison result
-      // For now, we mark it as checksumChanged to show it was calculated
-      // In the future, we could store previous checksum and compare
       record.changeState = 'checksumChanged';
       record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
     } else {
       // Mark as error
-      record.dateModified = `<div style="color: #f00;">Error</div>`;
+      record.checksumStatus = 'error';
+      record.checksum = '<span style="color: #f00;">Error</span>';
     }
 
     // Refresh the specific record in grid
@@ -453,7 +484,8 @@ async function calculateChecksumForFile(record, panelId, dirPath) {
     console.log('Checksum calculated for:', record.filename, result);
   } catch (err) {
     console.error('Error calculating checksum:', err);
-    record.dateModified = `<div style="color: #f00;">Error</div>`;
+    record.checksumStatus = 'error';
+    record.checksum = '<span style="color: #f00;">Error</span>';
     const grid = panelState[panelId].w2uiGrid;
     if (grid) {
       grid.refresh();
@@ -1505,6 +1537,7 @@ async function initializeCategoriesGrid() {
     bgColor: cat.bgColor,
     textColor: cat.textColor,
     categoryName: cat.name,
+    enableChecksum: cat.enableChecksum || false,
     iconUrl: null  // Will be populated before render
   }));
 
@@ -1590,6 +1623,7 @@ function populateCategoryForm(record) {
   $('#form-cat-bgColor').val(rgbToHex(record.bgColor));
   $('#form-cat-textColor').val(rgbToHex(record.textColor));
   $('#form-cat-description').val(record.description || '');
+  $('#form-cat-enableChecksum').prop('checked', record.enableChecksum || false);
 }
 
 /**
@@ -1601,6 +1635,7 @@ function clearCategoryForm() {
   $('#form-cat-bgColor').val('#efe4b0');
   $('#form-cat-textColor').val('#000000');
   $('#form-cat-description').val('');
+  $('#form-cat-enableChecksum').prop('checked', false);
   
   // Clear grid selection
   const grid = w2ui['categories-grid'];
@@ -1642,6 +1677,7 @@ async function updateGridAfterSave(updatedCategory, isNew = false, oldName = nul
         bgColor: updatedCategory.bgColor,
         textColor: updatedCategory.textColor,
         categoryName: updatedCategory.name,
+        enableChecksum: updatedCategory.enableChecksum || false,
         iconUrl: iconUrl
       };
       grid.add(newRecord);
@@ -1657,6 +1693,7 @@ async function updateGridAfterSave(updatedCategory, isNew = false, oldName = nul
         record.bgColor = updatedCategory.bgColor;
         record.textColor = updatedCategory.textColor;
         record.categoryName = updatedCategory.name;
+        record.enableChecksum = updatedCategory.enableChecksum || false;
         record.iconUrl = iconUrl;
         
         grid.refreshRow(record.recid);
@@ -1690,7 +1727,8 @@ async function saveCategoryFromForm() {
       name: name,
       bgColor: hexToRgb(bgColorHex),
       textColor: hexToRgb(textColorHex),
-      description: description
+      description: description,
+      enableChecksum: $('#form-cat-enableChecksum').prop('checked')
     };
 
     const isNew = !categoryFormState.editingName;
