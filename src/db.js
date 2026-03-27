@@ -29,7 +29,7 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         inode TEXT NOT NULL,
         dirname TEXT NOT NULL UNIQUE,
-        categoryName TEXT DEFAULT 'Default',
+        category TEXT DEFAULT 'Default',
         description VARCHAR(256),
         initials VARCHAR(8),
         tags TEXT
@@ -70,6 +70,22 @@ class DatabaseService {
 
     this.db.exec(schema);
 
+    // Migration: Rename categoryName to category if it exists
+    try {
+      this.db.prepare('SELECT category FROM dirs LIMIT 0').all();
+    } catch (err) {
+      // category column doesn't exist, need to migrate from categoryName
+      logger.info('Migrating database schema: renaming categoryName column to category');
+      try {
+        this.db.exec(`
+          ALTER TABLE dirs RENAME COLUMN categoryName TO category;
+        `);
+        logger.info('Column migration completed successfully');
+      } catch (migrationErr) {
+        logger.warn('Migration warning - categoryName may not exist or already migrated:', migrationErr.message);
+      }
+    }
+
     // Migration: Add new columns to files table if they don't exist
     try {
       // Try to read from the new columns to see if they exist
@@ -93,25 +109,25 @@ class DatabaseService {
   /**
    * Upsert a directory entry
    */
-  upsertDirectory(dirname, inode, categoryName = 'Default', description = null, initials = null, tags = null) {
+  upsertDirectory(dirname, inode, category = 'Default', description = null, initials = null, tags = null) {
     const stmt = this.db.prepare(`
-      INSERT INTO dirs (dirname, inode, categoryName, description, initials, tags)
+      INSERT INTO dirs (dirname, inode, category, description, initials, tags)
       VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(dirname) DO UPDATE SET
         inode = excluded.inode,
-        categoryName = excluded.categoryName,
+        category = excluded.category,
         description = excluded.description,
         initials = excluded.initials,
         tags = excluded.tags
     `);
 
-    return stmt.run(dirname, inode, categoryName, description, initials, tags);
+    return stmt.run(dirname, inode, category, description, initials, tags);
   }
 
   /**
    * Get or create a directory, returning its id
    */
-  getOrCreateDirectory(dirname, inode, categoryName = 'Default', description = null, initials = null) {
+  getOrCreateDirectory(dirname, inode, category = 'Default', description = null, initials = null) {
     // First, try to get existing directory
     const getStmt = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?');
     const existing = getStmt.get(dirname);
@@ -121,7 +137,7 @@ class DatabaseService {
     }
 
     // Create new directory
-    this.upsertDirectory(dirname, inode, categoryName, description, initials);
+    this.upsertDirectory(dirname, inode, category, description, initials);
     
     // Return the id of the newly created directory
     const result = getStmt.get(dirname);
@@ -241,7 +257,7 @@ class DatabaseService {
    */
   getFilesInDirectory(dirname) {
     const stmt = this.db.prepare(`
-      SELECT f.*, d.categoryName 
+      SELECT f.*, d.category 
       FROM files f
       JOIN dirs d ON f.dir_id = d.id
       WHERE d.dirname = ?
@@ -265,7 +281,7 @@ class DatabaseService {
    */
   getFile(inode, dirname) {
     const stmt = this.db.prepare(`
-      SELECT f.*, d.categoryName 
+      SELECT f.*, d.category 
       FROM files f
       JOIN dirs d ON f.dir_id = d.id
       WHERE f.inode = ? AND d.dirname = ?
@@ -274,11 +290,20 @@ class DatabaseService {
   }
 
   /**
-   * Batch update category for a directory
+   * Set category for a directory
    */
-  updateCategoryForDirectory(dirname, categoryName) {
-    const stmt = this.db.prepare('UPDATE dirs SET categoryName = ? WHERE dirname = ?');
-    return stmt.run(categoryName, dirname);
+  setCategoryForDirectory(dirname, category) {
+    const stmt = this.db.prepare('UPDATE dirs SET category = ? WHERE dirname = ?');
+    return stmt.run(category, dirname);
+  }
+
+  /**
+   * Get category for a directory
+   */
+  getCategoryForDirectory(dirname) {
+    const stmt = this.db.prepare('SELECT category FROM dirs WHERE dirname = ?');
+    const result = stmt.get(dirname);
+    return result ? result.category : null;
   }
 
   /**

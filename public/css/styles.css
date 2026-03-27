@@ -238,59 +238,6 @@ button:active {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
-/* Context Menu */
-#context-menu {
-  font-size: 12px;
-  font-family: inherit;
-}
-
-#context-menu > div {
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  position: relative;
-}
-
-#context-menu > div:hover {
-  background: #f0f0f0;
-}
-
-#context-menu .submenu-arrow {
-  position: absolute;
-  right: 8px;
-  color: #999;
-}
-
-#context-menu .submenu {
-  display: none;
-  position: absolute;
-  left: 100%;
-  top: 0;
-  background: white;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-  min-width: 180px;
-  margin-left: 4px;
-  z-index: 10001;
-}
-
-#context-menu > div:hover > .submenu {
-  display: block;
-}
-
-#context-menu .submenu > div {
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-}
-
-#context-menu .submenu > div:hover {
-  background: #f0f0f0;
-}
-
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }

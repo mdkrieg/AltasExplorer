@@ -271,7 +271,7 @@ ipcMain.handle('update-category', (event, categoryData) => {
  */
 ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName }) => {
   try {
-    categories.assignCategoryToDirectory(dirPath, categoryName);
+    categories.setCategoryForDirectory(dirPath, categoryName);
     return { success: true };
   } catch (err) {
     logger.error('Error assigning category:', err.message);
@@ -287,7 +287,7 @@ ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryNam
     const results = [];
     for (const dirPath of dirPaths) {
       try {
-        categories.assignCategoryToDirectory(dirPath, categoryName);
+        categories.setCategoryForDirectory(dirPath, categoryName);
         results.push({ path: dirPath, success: true });
       } catch (err) {
         logger.error(`Error assigning category to ${dirPath}:`, err.message);
@@ -306,7 +306,7 @@ ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryNam
  */
 ipcMain.handle('get-directory-assignment', (event, dirPath) => {
   try {
-    return categories.getDirectoryAssignment(dirPath);
+    return categories.getCategoryFromDatabase(dirPath);
   } catch (err) {
     logger.error('Error getting assignment:', err.message);
     return null;
@@ -318,7 +318,7 @@ ipcMain.handle('get-directory-assignment', (event, dirPath) => {
  */
 ipcMain.handle('remove-directory-assignment', (event, dirPath) => {
   try {
-    categories.removeDirectoryAssignment(dirPath);
+    categories.setCategoryForDirectory(dirPath, 'Default');
     return { success: true };
   } catch (err) {
     logger.error('Error removing assignment:', err.message);

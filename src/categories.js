@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const logger = require('./logger');
+const db = require('./db');
 
 const CATEGORIES_DIR = path.join(os.homedir(), '.atlasexplorer', 'categories');
 const SETTINGS_PATH = path.join(os.homedir(), '.atlasexplorer', 'settings.json');
@@ -9,6 +10,7 @@ const SETTINGS_PATH = path.join(os.homedir(), '.atlasexplorer', 'settings.json')
 class CategoryService {
   constructor() {
     this.ensureDirectories();
+    this.migrateSettingsToDatabase();
   }
 
   /**
@@ -32,6 +34,38 @@ class CategoryService {
         enableChecksum: false
       };
       fs.writeFileSync(defaultCategoryPath, JSON.stringify(defaultCategory, null, 2));
+    }
+  }
+
+  /**
+   * Migrate directory assignments from settings.json to database
+   */
+  migrateSettingsToDatabase() {
+    try {
+      const settings = this.getSettings();
+      
+      // Check if there are any directoryPaths to migrate
+      if (settings.directoryPaths && Object.keys(settings.directoryPaths).length > 0) {
+        logger.info('Migrating directory assignments from settings.json to database...');
+        
+        // Migrate each path
+        for (const [dirPath, categoryName] of Object.entries(settings.directoryPaths)) {
+          try {
+            db.setCategoryForDirectory(dirPath, categoryName);
+            logger.info(`Migrated assignment: ${dirPath} => ${categoryName}`);
+          } catch (err) {
+            logger.warn(`Failed to migrate assignment for ${dirPath}:`, err.message);
+          }
+        }
+        
+        // Remove directoryPaths from settings.json
+        delete settings.directoryPaths;
+        this.saveSettings(settings);
+        
+        logger.info('Migration completed: directoryPaths removed from settings.json');
+      }
+    } catch (err) {
+      logger.warn('Error during settings migration:', err.message);
     }
   }
 
@@ -134,8 +168,9 @@ class CategoryService {
       fs.unlinkSync(filePath);
     }
 
-    // Remove from per-directory assignments if present
-    this.removeDirectoryAssignments(name);
+    // Note: Directories that had this category assigned will remain in the database with that category name.
+    // On next scan, if the category doesn't exist in the category files, the directory will fall back
+    // to pattern matching or the Default category.
   }
 
   /**
@@ -149,11 +184,15 @@ class CategoryService {
       if (!settings.home_directory) {
         settings.home_directory = os.homedir();
       }
+      // Ensure notes_format exists with default
+      if (!settings.notes_format) {
+        settings.notes_format = 'Markdown';
+      }
       return settings;
     } catch {
       return { 
-        directoryPaths: {},
-        home_directory: os.homedir()
+        home_directory: os.homedir(),
+        notes_format: 'Markdown'
       };
     }
   }
@@ -166,58 +205,17 @@ class CategoryService {
   }
 
   /**
-   * Assign a category to a directory
+   * Set category assignment for a directory in the database
    */
-  assignCategoryToDirectory(dirPath, categoryName) {
-    const settings = this.getSettings();
-    if (!settings.directoryPaths) {
-      settings.directoryPaths = {};
-    }
-
-    settings.directoryPaths[dirPath] = categoryName;
-    this.saveSettings(settings);
+  setCategoryForDirectory(dirPath, categoryName) {
+    db.setCategoryForDirectory(dirPath, categoryName);
   }
 
   /**
-   * Get category assignment for a directory
+   * Get category assignment for a directory from the database
    */
-  getDirectoryAssignment(dirPath) {
-    const settings = this.getSettings();
-    return settings.directoryPaths?.[dirPath] || null;
-  }
-
-  /**
-   * Get all per-directory assignments
-   */
-  getAllDirectoryAssignments() {
-    const settings = this.getSettings();
-    return settings.directoryPaths || {};
-  }
-
-  /**
-   * Remove a directory assignment
-   */
-  removeDirectoryAssignment(dirPath) {
-    const settings = this.getSettings();
-    if (settings.directoryPaths?.[dirPath]) {
-      delete settings.directoryPaths[dirPath];
-      this.saveSettings(settings);
-    }
-  }
-
-  /**
-   * Remove all assignments for a category
-   */
-  removeDirectoryAssignments(categoryName) {
-    const settings = this.getSettings();
-    if (settings.directoryPaths) {
-      for (const [dirPath, catName] of Object.entries(settings.directoryPaths)) {
-        if (catName === categoryName) {
-          delete settings.directoryPaths[dirPath];
-        }
-      }
-      this.saveSettings(settings);
-    }
+  getCategoryFromDatabase(dirPath) {
+    return db.getCategoryForDirectory(dirPath);
   }
 
   /**
@@ -235,13 +233,13 @@ class CategoryService {
 
   /**
    * Get the applicable category for a directory
-   * Priority: 1) Per-directory assignment, 2) Pattern matching, 3) Default
+   * Priority: 1) Per-directory assignment (from database), 2) Pattern matching, 3) Default
    */
   getCategoryForDirectory(dirPath) {
     const categories = this.loadCategories();
 
-    // 1. Check per-directory assignment
-    const assignment = this.getDirectoryAssignment(dirPath);
+    // 1. Check per-directory assignment in database
+    const assignment = this.getCategoryFromDatabase(dirPath);
     if (assignment && categories[assignment]) {
       return categories[assignment];
     }

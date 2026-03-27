@@ -8,6 +8,9 @@
   <!-- w2ui CSS -->
   <link rel="stylesheet" type="text/css" href="../node_modules/w2ui/w2ui-2.0.min.css">
   
+  <!-- Monaco Editor -->
+  <script src="../node_modules/monaco-editor/min/vs/loader.js"></script>
+  
   <!-- Custom styles -->
   <link rel="stylesheet" type="text/css" href="css/styles.css">
 </head>
@@ -66,7 +69,7 @@
                   <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
                 </div>
               </div>
-              <textarea class="notes-content-edit" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none; display: none;"></textarea>
+              <div class="notes-editor-container" style="flex: 1; display: none;"></div>
               <div class="notes-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
             </div>
           </div>
@@ -98,7 +101,7 @@
                   <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
                 </div>
               </div>
-              <textarea class="notes-content-edit" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none; display: none;"></textarea>
+              <div class="notes-editor-container" style="flex: 1; display: none;"></div>
               <div class="notes-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
             </div>
           </div>
@@ -130,7 +133,7 @@
                   <button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">✕</button>
                 </div>
               </div>
-              <textarea class="notes-content-edit" style="flex: 1; padding: 10px; border: none; font-family: monospace; resize: none; display: none;"></textarea>
+              <div class="notes-editor-container" style="flex: 1; display: none;"></div>
               <div class="notes-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
             </div>
           </div>
@@ -138,9 +141,6 @@
       </div>
     </div>
   </div>
-
-  <!-- Context Menu -->
-  <div id="context-menu" style="display: none; position: fixed; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); z-index: 10000; overflow: hidden; min-width: 200px;"></div>
 
   <!-- Settings Modal -->
   <div id="settings-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
@@ -210,13 +210,27 @@
         
         <!-- Browser Settings Tab -->
         <div id="tab-browser" class="settings-tab-content" style="display: none; flex-direction: column; overflow: hidden; flex: 1; padding: 20px;">
-          <div style="max-width: 620px; display: flex; flex-direction: column; gap: 10px;">
-            <div style="font-weight: bold; font-size: 13px;">Home Directory</div>
-            <input id="browser-home-directory" type="text" placeholder="Enter home directory path" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;">
-            <div id="browser-home-warning" style="display: none; color: #c62828; font-size: 12px;">Warning: Directory does not exist. You can still save this setting.</div>
-            <div style="display: flex; gap: 10px; align-items: center;">
-              <button id="btn-browser-save-home" style="padding: 8px 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save Home Directory</button>
-              <span style="color: #666; font-size: 12px;">This value is used on startup for the initial panel path.</span>
+          <div style="max-width: 620px; display: flex; flex-direction: column; gap: 20px;">
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="font-weight: bold; font-size: 13px;">Home Directory</div>
+              <input id="browser-home-directory" type="text" placeholder="Enter home directory path" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;">
+              <div id="browser-home-warning" style="display: none; color: #c62828; font-size: 12px;">Warning: Directory does not exist. You can still save this setting.</div>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <button id="btn-browser-save-home" style="padding: 8px 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save Home Directory</button>
+                <span style="color: #666; font-size: 12px;">This value is used on startup for the initial panel path.</span>
+              </div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="font-weight: bold; font-size: 13px;">Notes Format</div>
+              <select id="browser-notes-format" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;">
+                <option value="PlainText">PlainText - Natural line breaking, no formatting</option>
+                <option value="Extended">Extended - Plain text with hyperlink formatting</option>
+                <option value="Markdown" selected>Markdown - Full markdown rendering</option>
+              </select>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <button id="btn-browser-save-notes-format" style="padding: 8px 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save Notes Format</button>
+                <span style="color: #666; font-size: 12px;">Changes how notes are displayed and edited.</span>
+              </div>
             </div>
           </div>
         </div>

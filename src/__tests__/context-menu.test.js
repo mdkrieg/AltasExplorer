@@ -1,174 +1,259 @@
 /**
  * Context Menu Tests
- * Tests for context menu option generation and multi-select handling
+ * Tests for w2ui context menu generation
  */
 
 // Mock renderer.js functions for testing
-function generateContextMenuOptions(selectedRecords, visiblePanelCount = 1) {
+const allCategories = {
+  'Default': { name: 'Default', color: '#000000', icon: 'default.png' },
+  'Project': { name: 'Project', color: '#FF0000', icon: 'project.png' },
+  'Test': { name: 'Test', color: '#00FF00', icon: 'test.png' }
+};
+
+function generateW2UIContextMenu(selectedRecords, visiblePanelCount = 1) {
   const isMultiSelect = selectedRecords.length > 1;
-  const hasDirectories = selectedRecords.some(record => record.isFolder);
-  const hasFiles = selectedRecords.some(record => !record.isFolder);
   
-  // Available panels: current visible panels plus one more if not at max (4)
+  // Store context for onMenuClick handler
+  panelContextMenuState = {
+    selectedRecords: selectedRecords,
+    isMultiSelect: isMultiSelect,
+    selectedPaths: selectedRecords.map(r => r.path)
+  };
+  
+  // Build "Open In" menu items for each available panel
   const availablePanels = [];
   for (let i = 1; i <= Math.min(visiblePanelCount + 1, 4); i++) {
     availablePanels.push(i);
   }
   
-  return {
-    isMultiSelect,
-    hasDirectories,
-    hasFiles,
-    availablePanels,
-    // Can apply bulk operations to directories in multi-select
-    canApplyBulkOps: hasDirectories,
-    // Send To is available for single-select OR multi-select with all directories
-    canSendTo: !hasFiles || !isMultiSelect
-  };
+  const openInItems = availablePanels.map(panelNum => ({
+    id: `open-in-${panelNum}`,
+    text: `Panel ${panelNum}`,
+    icon: 'fa fa-folder-open'
+  }));
+  
+  // Build "Set Category" menu items for each category
+  const categoryItems = Object.keys(allCategories).map(categoryName => ({
+    id: `set-category-${categoryName}`,
+    text: categoryName,
+    icon: 'fa fa-tag'
+  }));
+  
+  // Flatten into single menu array with separators
+  const contextMenu = [];
+  
+  // Add "Open In" section
+  contextMenu.push(...openInItems);
+  
+  // Separator
+  contextMenu.push({ id: 'sep1', text: '-' });
+  
+  // Add "Set Category" section
+  if (isMultiSelect) {
+    contextMenu.push({
+      id: 'set-category-label',
+      text: 'Set Category (applies to all)',
+      icon: 'fa fa-tags'
+    });
+  } else {
+    contextMenu.push({
+      id: 'set-category-label',
+      text: 'Set Category',
+      icon: 'fa fa-tag'
+    });
+  }
+  
+  // Add category items
+  contextMenu.push(...categoryItems);
+  
+  return contextMenu;
 }
 
-describe('Context Menu Options Generation', () => {
+// Mock state
+let panelContextMenuState = {};
+
+describe('w2ui Context Menu Generation', () => {
+  describe('Menu Structure', () => {
+    test('should return flat array of menu items', () => {
+      const records = [{ path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' }];
+      const menu = generateW2UIContextMenu(records, 1);
+      
+      expect(Array.isArray(menu)).toBe(true);
+      expect(menu.length).toBeGreaterThan(0);
+    });
+
+    test('should have proper menu item structure with id and text', () => {
+      const records = [{ path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' }];
+      const menu = generateW2UIContextMenu(records, 1);
+      
+      menu.forEach(item => {
+        expect(item).toHaveProperty('id');
+        expect(item).toHaveProperty('text');
+      });
+    });
+
+    test('should include separator', () => {
+      const records = [{ path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' }];
+      const menu = generateW2UIContextMenu(records, 1);
+      
+      const hasSeparator = menu.some(item => item.text === '-');
+      expect(hasSeparator).toBe(true);
+    });
+
+    test('should have "Open In" panel items', () => {
+      const records = [{ path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' }];
+      const menu = generateW2UIContextMenu(records, 1);
+      
+      const panelItems = menu.filter(item => item.id.startsWith('open-in-'));
+      expect(panelItems.length).toBeGreaterThan(0);
+      expect(panelItems[0].text).toContain('Panel');
+    });
+
+    test('should have "Set Category" items', () => {
+      const records = [{ path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' }];
+      const menu = generateW2UIContextMenu(records, 1);
+      
+      const categoryItems = menu.filter(item => item.id.startsWith('set-category-') && item.id !== 'set-category-label');
+      expect(categoryItems.length).toBeGreaterThan(0);
+    });
+  });
+
   describe('Single Directory Selection', () => {
-    test('should show options for single directory', () => {
-      const records = [
-        { path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' }
-      ];
-      const options = generateContextMenuOptions(records, 1);
+    test('should show correct menu text for single selection', () => {
+      const records = [{ path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' }];
+      const menu = generateW2UIContextMenu(records, 1);
       
-      expect(options.isMultiSelect).toBe(false);
-      expect(options.hasDirectories).toBe(true);
-      expect(options.hasFiles).toBe(false);
-      expect(options.canApplyBulkOps).toBe(true);
-      expect(options.canSendTo).toBe(true);
+      const categoryLabel = menu.find(item => item.id === 'set-category-label');
+      expect(categoryLabel.text).toBe('Set Category');
+      expect(categoryLabel.text).not.toContain('applies to all');
     });
 
-    test('should provide correct available panels when 1 panel visible', () => {
+    test('should generate correct number of panel options for 1 visible panel', () => {
       const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
-      const options = generateContextMenuOptions(records, 1);
+      const menu = generateW2UIContextMenu(records, 1);
       
-      expect(options.availablePanels).toEqual([1, 2]);
+      const openInItems = menu.filter(item => item.id.startsWith('open-in-'));
+      expect(openInItems.length).toBe(2); // Panels 1 and 2
     });
 
-    test('should provide correct available panels when 2 panels visible', () => {
+    test('should generate correct panel options for 2 visible panels', () => {
       const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
-      const options = generateContextMenuOptions(records, 2);
+      const menu = generateW2UIContextMenu(records, 2);
       
-      expect(options.availablePanels).toEqual([1, 2, 3]);
+      const openInItems = menu.filter(item => item.id.startsWith('open-in-'));
+      expect(openInItems.length).toBe(3); // Panels 1, 2, and 3
+    });
+
+    test('should generate correct panel options for 3 visible panels', () => {
+      const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
+      const menu = generateW2UIContextMenu(records, 3);
+      
+      const openInItems = menu.filter(item => item.id.startsWith('open-in-'));
+      expect(openInItems.length).toBe(4); // Panels 1, 2, 3, and 4
     });
 
     test('should not exceed 4 available panels', () => {
       const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
-      const options = generateContextMenuOptions(records, 4);
+      const menu = generateW2UIContextMenu(records, 4);
       
-      expect(options.availablePanels).toEqual([1, 2, 3, 4]);
-      expect(options.availablePanels.length).toBe(4);
+      const openInItems = menu.filter(item => item.id.startsWith('open-in-'));
+      expect(openInItems.length).toBe(4); // Max is 4
+      expect(openInItems.every((item, i) => item.text === `Panel ${i + 1}`)).toBe(true);
+    });
+
+    test('should include all available categories', () => {
+      const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
+      const menu = generateW2UIContextMenu(records, 1);
+      
+      const categoryItems = menu.filter(item => item.id.startsWith('set-category-') && item.id !== 'set-category-label');
+      const categoryTexts = categoryItems.map(item => item.text);
+      
+      expect(categoryTexts).toContain('Default');
+      expect(categoryTexts).toContain('Project');
+      expect(categoryTexts).toContain('Test');
     });
   });
 
   describe('Multi-Directory Selection', () => {
-    test('should identify multi-select correctly', () => {
+    test('should show "(applies to all)" text for multi-select', () => {
       const records = [
         { path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' },
         { path: 'C:\\test\\dir2', isFolder: true, filename: 'dir2' }
       ];
-      const options = generateContextMenuOptions(records, 1);
+      const menu = generateW2UIContextMenu(records, 1);
       
-      expect(options.isMultiSelect).toBe(true);
-      expect(options.hasDirectories).toBe(true);
-      expect(options.hasFiles).toBe(false);
-      expect(options.canApplyBulkOps).toBe(true);
-      expect(options.canSendTo).toBe(true);
+      const categoryLabel = menu.find(item => item.id === 'set-category-label');
+      expect(categoryLabel.text).toContain('applies to all');
     });
 
-    test('should handle 3+ directory selection', () => {
+    test('should work with 3+ directory selection', () => {
       const records = [
         { path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' },
         { path: 'C:\\test\\dir2', isFolder: true, filename: 'dir2' },
         { path: 'C:\\test\\dir3', isFolder: true, filename: 'dir3' }
       ];
-      const options = generateContextMenuOptions(records, 2);
+      const menu = generateW2UIContextMenu(records, 2);
       
-      expect(options.isMultiSelect).toBe(true);
-      expect(options.hasDirectories).toBe(true);
-      expect(options.canApplyBulkOps).toBe(true);
-    });
-  });
-
-  describe('Mixed Selection (Directories and Files)', () => {
-    test('should identify mixed selection', () => {
-      const records = [
-        { path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' },
-        { path: 'C:\\test\\file.txt', isFolder: false, filename: 'file.txt' }
-      ];
-      const options = generateContextMenuOptions(records, 1);
+      expect(Array.isArray(menu)).toBe(true);
+      expect(menu.length).toBeGreaterThan(0);
       
-      expect(options.isMultiSelect).toBe(true);
-      expect(options.hasDirectories).toBe(true);
-      expect(options.hasFiles).toBe(true);
-      expect(options.canApplyBulkOps).toBe(true);
-      // Send To should NOT be available when multi-select contains files
-      expect(options.canSendTo).toBe(false);
-    });
-
-    test('should disable Send To for mixed multi-select', () => {
-      const records = [
-        { path: 'C:\\test\\dir1', isFolder: true, filename: 'dir1' },
-        { path: 'C:\\test\\file1.txt', isFolder: false, filename: 'file1.txt' },
-        { path: 'C:\\test\\dir2', isFolder: true, filename: 'dir2' }
-      ];
-      const options = generateContextMenuOptions(records, 2);
-      
-      expect(options.canSendTo).toBe(false);
-      expect(options.canApplyBulkOps).toBe(true);
-    });
-  });
-
-  describe('File-Only Selection', () => {
-    test('should mark files in selection', () => {
-      const records = [
-        { path: 'C:\\test\\file.txt', isFolder: false, filename: 'file.txt' }
-      ];
-      const options = generateContextMenuOptions(records, 1);
-      
-      expect(options.hasFiles).toBe(true);
-      expect(options.hasDirectories).toBe(false);
-      expect(options.canApplyBulkOps).toBe(false);
-      // Send To available for single file (per original behavior)
-      expect(options.canSendTo).toBe(true);
-    });
-
-    test('should disable operations for file-only multi-select', () => {
-      const records = [
-        { path: 'C:\\test\\file1.txt', isFolder: false, filename: 'file1.txt' },
-        { path: 'C:\\test\\file2.txt', isFolder: false, filename: 'file2.txt' }
-      ];
-      const options = generateContextMenuOptions(records, 1);
-      
-      expect(options.isMultiSelect).toBe(true);
-      expect(options.hasDirectories).toBe(false);
-      expect(options.canApplyBulkOps).toBe(false);
-      expect(options.canSendTo).toBe(false);
+      const categoryLabel = menu.find(item => item.id === 'set-category-label');
+      expect(categoryLabel.text).toContain('applies to all');
     });
   });
 
   describe('Panel Availability', () => {
-    test('should show option to open in panel 5 is blocked at max (4)', () => {
+    test('should not offer panel 5 when max is 4', () => {
       const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
-      const options = generateContextMenuOptions(records, 3);
+      const menu = generateW2UIContextMenu(records, 3);
       
-      // With 3 visible, we should offer panels 1,2,3,4 (next available is 4)
-      expect(options.availablePanels).toEqual([1, 2, 3, 4]);
-      expect(options.availablePanels).not.toContain(5);
+      const openInItems = menu.filter(item => item.id.startsWith('open-in-'));
+      const panelTexts = openInItems.map(item => item.text);
+      
+      expect(panelTexts).toContain('Panel 4');
+      expect(panelTexts).not.toContain('Panel 5');
     });
 
     test('should provide sequential panel numbers', () => {
       const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
       
       for (let visible = 1; visible <= 3; visible++) {
-        const options = generateContextMenuOptions(records, visible);
-        const expected = Array.from({ length: visible + 1 }, (_, i) => i + 1);
-        expect(options.availablePanels).toEqual(expected);
+        const menu = generateW2UIContextMenu(records, visible);
+        const openInItems = menu.filter(item => item.id.startsWith('open-in-'));
+        const expectedLength = visible + 1;
+        
+        expect(openInItems.length).toBe(expectedLength);
+        openInItems.forEach((item, i) => {
+          expect(item.text).toBe(`Panel ${i + 1}`);
+        });
       }
     });
   });
+
+  describe('Category Items', () => {
+    test('should generate menu items for all categories', () => {
+      const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
+      const menu = generateW2UIContextMenu(records, 1);
+      
+      const categoryItems = menu.filter(item => item.id.startsWith('set-category-') && item.id !== 'set-category-label');
+      const categoryIds = categoryItems.map(item => item.id);
+      
+      expect(categoryIds).toContain('set-category-Default');
+      expect(categoryIds).toContain('set-category-Project');
+      expect(categoryIds).toContain('set-category-Test');
+    });
+
+    test('should have unique IDs for each category item', () => {
+      const records = [{ path: 'C:\\test\\dir', isFolder: true, filename: 'dir' }];
+      const menu = generateW2UIContextMenu(records, 1);
+      
+      const categoryItems = menu.filter(item => item.id.startsWith('set-category-'));
+      const categoryIds = categoryItems.map(item => item.id);
+      const uniqueIds = new Set(categoryIds);
+      
+      expect(uniqueIds.size).toBe(categoryIds.length);
+    });
+  });
 });
+
+

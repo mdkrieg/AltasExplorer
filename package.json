@@ -9,7 +9,7 @@
     "build": "electron-builder",
     "test": "jest --watch",
     "test:coverage": "jest --coverage",
-    "postinstall": "npm rebuild better-sqlite3 --build-from-source"
+    "postinstall": "electron-rebuild better-sqlite3 --build-from-source"
   },
   "build": {
     "appId": "com.mdkrieg.atlasexplorer",
@@ -35,7 +35,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^30.0.0",
+    "electron": "^33.0.0",
     "electron-builder": "^26.0.0",
     "jest": "^29.7.0"
   },
@@ -43,6 +43,7 @@
     "better-sqlite3": "^11.0.0",
     "jquery": "^3.7.1",
     "markdown-it": "^14.1.1",
+    "monaco-editor": "^0.47.0",
     "sharp": "^0.33.1",
     "w2ui": "^2.0.0"
   }
