@@ -346,7 +346,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain;">`, className),
       filename: applyClass(folder.filename, className),
       size: applyClass('-', className),
-      dateModified: applyClass(new Date(folder.dateModified).toLocaleDateString(), className),
+      dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
       checksum: applyClass('—', className),
       isFolder: true,
       path: folder.path,
@@ -407,7 +407,7 @@ function getRowClassName(changeState) {
  * Get formatted date modified cell with appropriate styling
  */
 function getDateModifiedCell(file, changeState) {
-  const dateStr = new Date(file.dateModified).toLocaleDateString();
+  const dateStr = new Date(file.dateModified).toLocaleString();
   
   if (changeState === 'new') {
     return `<div class="file-new">${dateStr}</div>`;
@@ -1198,6 +1198,15 @@ function attachEventListeners() {
       if ($notesView.is(':visible') && notesEditMode) {
         event.preventDefault();
         await toggleNotesEditMode(activePanelId);
+      }
+    }
+    // Ctrl+T to add a panel
+    if (event.ctrlKey && event.key === 't') {
+      event.preventDefault();
+      if (visiblePanels < 4) {
+        visiblePanels++;
+        $(`#panel-${visiblePanels}`).show();
+        updatePanelLayout();
       }
     }
   });
