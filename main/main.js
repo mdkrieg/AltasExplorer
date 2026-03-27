@@ -351,6 +351,31 @@ ipcMain.handle('get-settings', () => {
 });
 
 /**
+ * Settings: Save settings
+ */
+ipcMain.handle('save-settings', (event, settings) => {
+  try {
+    categories.saveSettings(settings);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error saving settings:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * File system: Check whether a path is an existing directory
+ */
+ipcMain.handle('is-directory', (event, dirPath) => {
+  try {
+    return fs.isDirectory(dirPath);
+  } catch (err) {
+    logger.error('Error checking directory:', err.message);
+    return false;
+  }
+});
+
+/**
  * Window Icon: Update icon for category
  */
 ipcMain.handle('update-window-icon', async (event, categoryName) => {

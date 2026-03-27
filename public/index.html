@@ -210,7 +210,15 @@
         
         <!-- Browser Settings Tab -->
         <div id="tab-browser" class="settings-tab-content" style="display: none; flex-direction: column; overflow: hidden; flex: 1; padding: 20px;">
-          <div style="color: #999; font-size: 14px;">Browser Settings - Coming soon</div>
+          <div style="max-width: 620px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="font-weight: bold; font-size: 13px;">Home Directory</div>
+            <input id="browser-home-directory" type="text" placeholder="Enter home directory path" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;">
+            <div id="browser-home-warning" style="display: none; color: #c62828; font-size: 12px;">Warning: Directory does not exist. You can still save this setting.</div>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <button id="btn-browser-save-home" style="padding: 8px 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save Home Directory</button>
+              <span style="color: #666; font-size: 12px;">This value is used on startup for the initial panel path.</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

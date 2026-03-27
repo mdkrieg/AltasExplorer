@@ -29,6 +29,7 @@ let allCategories = {};
 let currentLayout = 1;
 let notesEditMode = false;
 let visiblePanels = 1;
+const MISSING_DIRECTORY_LABEL = '(DIRECTORY DOES NOT EXIST)';
 
 /**
  * Initialize the application
@@ -94,9 +95,25 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     const $panel = $(`#panel-${panelId}`);
     $panel.find('.panel-path').text(dirPath);
 
+    // Handle non-existent paths without blocking user navigation history
+    const directoryExists = await window.electronAPI.isDirectory(dirPath);
+    if (!directoryExists) {
+      state.currentCategory = null;
+      setPanelPathValidity(panelId, false);
+      showMissingDirectoryRecord(panelId);
+      $panel.find('.w2ui-panel-title').show();
+      return;
+    }
+
+    setPanelPathValidity(panelId, true);
+
     // Scan directory and populate files
     const scanResult = await window.electronAPI.scanDirectoryWithComparison(dirPath);
     console.log('Scan result:', scanResult);
+
+    if (!scanResult.success) {
+      throw new Error(scanResult.error || 'Failed to scan directory');
+    }
 
     // Get category for this directory
     const category = await window.electronAPI.getCategoryForDirectory(dirPath);
@@ -135,6 +152,40 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     console.error('Error navigating to directory:', err);
     alert('Error accessing directory: ' + err.message);
   }
+}
+
+/**
+ * Colorize panel path when directory is invalid
+ */
+function setPanelPathValidity(panelId, isValid) {
+  const $path = $(`#panel-${panelId} .panel-path`);
+  if (isValid) {
+    $path.css('color', '');
+  } else {
+    $path.css('color', '#c62828');
+  }
+}
+
+/**
+ * Show a single grid row for missing directory state
+ */
+function showMissingDirectoryRecord(panelId) {
+  const grid = panelState[panelId].w2uiGrid;
+  if (!grid) return;
+
+  grid.records = [{
+    recid: 1,
+    icon: '-',
+    filename: MISSING_DIRECTORY_LABEL,
+    size: '-',
+    dateModified: '-',
+    checksum: '-',
+    isFolder: false,
+    path: '',
+    changeState: 'missing'
+  }];
+
+  grid.refresh();
 }
 
 /**
@@ -1042,6 +1093,7 @@ function clearPanelState(panelId) {
   // Hide the toolbar when clearing panel state
   const $panel = $(`#panel-${panelId}`);
   $panel.find('.w2ui-panel-title').hide();
+  setPanelPathValidity(panelId, true);
   $panel.find('.panel-landing-page').show();
   $panel.find('.panel-grid').hide();
   $panel.find('.panel-notes-view').hide();
@@ -1244,6 +1296,16 @@ function attachEventListeners() {
   $('#btn-cat-delete').click(async function() {
     await deleteCategoryFromForm();
   });
+
+  // Browser settings: save home directory
+  $('#btn-browser-save-home').click(async function() {
+    await saveHomeDirectoryFromBrowserSettings();
+  });
+
+  // Browser settings: validate directory while typing
+  $('#browser-home-directory').on('input', async function() {
+    await updateHomeDirectoryWarning($(this).val());
+  });
 }
 
 /**
@@ -1286,6 +1348,7 @@ async function showSettingsModal() {
   // Initialize grid and form
   await initializeCategoriesGrid();
   await initializeCategoriesForm();
+  await initializeBrowserSettingsForm();
   
   // Setup resizable divider
   setupResizableDivider();
@@ -1326,6 +1389,58 @@ function switchSettingsTab(tabName) {
       btn.css('border-bottom-color', 'transparent').css('color', '#666');
     }
   });
+}
+
+/**
+ * Initialize Browser Settings form values
+ */
+async function initializeBrowserSettingsForm() {
+  const settings = await window.electronAPI.getSettings();
+  const homeDirectory = settings.home_directory || '';
+  $('#browser-home-directory').val(homeDirectory);
+  await updateHomeDirectoryWarning(homeDirectory);
+}
+
+/**
+ * Show warning if configured home directory does not exist
+ */
+async function updateHomeDirectoryWarning(dirPath) {
+  const normalizedPath = (dirPath || '').trim();
+  const $warning = $('#browser-home-warning');
+
+  if (!normalizedPath) {
+    $warning.hide();
+    return;
+  }
+
+  const exists = await window.electronAPI.isDirectory(normalizedPath);
+  if (exists) {
+    $warning.hide();
+  } else {
+    $warning.show();
+  }
+}
+
+/**
+ * Save home directory setting from Browser Settings tab
+ */
+async function saveHomeDirectoryFromBrowserSettings() {
+  const homeDirectory = ($('#browser-home-directory').val() || '').trim();
+
+  try {
+    const settings = await window.electronAPI.getSettings();
+    settings.home_directory = homeDirectory;
+
+    const result = await window.electronAPI.saveSettings(settings);
+    if (!result || result.success === false) {
+      throw new Error(result?.error || 'Unable to save settings');
+    }
+
+    await updateHomeDirectoryWarning(homeDirectory);
+    alert('Home directory saved');
+  } catch (err) {
+    alert('Error saving home directory: ' + err.message);
+  }
 }
 
 /**

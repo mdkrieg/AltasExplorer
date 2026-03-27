@@ -1,9 +1,8 @@
 node_modules/
 dist/
-build/
 private/
 
 # Logs
 logs
 *.log
-
+*.code-workspace

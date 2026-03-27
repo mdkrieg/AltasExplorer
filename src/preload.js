@@ -79,6 +79,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+  isDirectory: (dirPath) => ipcRenderer.invoke('is-directory', dirPath),
   
   // Window icon update
   updateWindowIcon: (categoryName) =>

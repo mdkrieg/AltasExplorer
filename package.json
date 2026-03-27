@@ -11,6 +11,22 @@
     "test:coverage": "jest --coverage",
     "postinstall": "npm rebuild better-sqlite3 --build-from-source"
   },
+  "build": {
+    "appId": "com.mdkrieg.atlasexplorer",
+    "productName": "Atlas Explorer",
+    "directories": {
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
+    }
+  },
   "keywords": [
     "file",
     "explorer",
