@@ -247,7 +247,7 @@ async function initializeGridForPanel(panelId) {
         if (record) {
           if (record.isFolder) {
             // Select this directory for panels 2-4 to use
-            handlePanel1DirectorySelection(record.path, record.filename);
+            handlePanel1DirectorySelection(record.path, record.filenameRaw || record.filename);
           } else {
             // If a file is selected, reset the button state
             panel1SelectedDirectoryPath = null;
@@ -356,6 +356,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       recid: recordId++,
       icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain;">`, className),
       filename: applyClass(folder.filename, className),
+      filenameRaw: folder.filename,
       size: applyClass('-', className),
       dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
       checksum: applyClass('—', className),
@@ -377,6 +378,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       recid: recordId++,
       icon: applyClass('📄', className),
       filename: applyClass(file.filename, className),
+      filenameRaw: file.filename,
       size: applyClass(formatBytes(file.size), className),
       dateModified: dateModifiedContent,
       dateModifiedRaw: file.dateModified, // Store raw timestamp for acknowledgment
@@ -619,6 +621,39 @@ function navigateForward() {
   if (state.navigationIndex < state.navigationHistory.length - 1) {
     state.navigationIndex++;
     navigateToDirectory(state.navigationHistory[state.navigationIndex], activePanelId, false);
+  }
+}
+
+/**
+ * Activate path edit mode for a panel
+ */
+function activatePathEditMode(panelId) {
+  const $panel = $(`#panel-${panelId}`);
+  const $pathDisplay = $panel.find('.panel-path');
+  const $pathInput = $panel.find('.panel-path-input');
+  
+  const currentPath = panelState[panelId].currentPath;
+  
+  // Show input, hide display
+  $pathDisplay.hide();
+  $pathInput.val(currentPath).show().select().focus();
+}
+
+/**
+ * Deactivate path edit mode and optionally navigate
+ */
+async function deactivatePathEditMode(panelId, navigateToNewPath = false, newPath = '') {
+  const $panel = $(`#panel-${panelId}`);
+  const $pathDisplay = $panel.find('.panel-path');
+  const $pathInput = $panel.find('.panel-path-input');
+  
+  // Hide input, show display
+  $pathInput.hide();
+  $pathDisplay.show();
+  
+  // Navigate to new path if requested and path is not empty
+  if (navigateToNewPath && newPath && newPath !== panelState[panelId].currentPath) {
+    await navigateToDirectory(newPath, panelId);
   }
 }
 
@@ -1115,6 +1150,33 @@ function attachPanelEventListeners(panelId) {
     setActivePanelId(panelId);
   });
   
+  // Panel path - click to edit or press Ctrl+L
+  $panel.find('.panel-path').click(function() {
+    activatePathEditMode(panelId);
+  });
+
+  // Handle Ctrl+L globally for active panel
+  $(document).on('keydown.pathEdit' + panelId, function(e) {
+    if (e.ctrlKey && e.key === 'l' && activePanelId === panelId) {
+      e.preventDefault();
+      activatePathEditMode(panelId);
+    }
+  });
+
+  // Path input - handle Enter, Escape, and blur
+  $panel.find('.panel-path-input').on('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const newPath = $(this).val().trim();
+      deactivatePathEditMode(panelId, true, newPath);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      deactivatePathEditMode(panelId, false);
+    }
+  }).on('blur', function() {
+    deactivatePathEditMode(panelId, false);
+  });
+
   // Parent folder button
   $panel.find('.btn-panel-parent').click(function() {
     setActivePanelId(panelId);
@@ -1320,7 +1382,7 @@ function attachEventListeners() {
     await updateHomeDirectoryWarning($(this).val());
   });
 
-  // Developer: reinitialize database button
+  // Browser Settings - Advanced: reinitialize database button
   $('#btn-dev-reinitialize-db').click(async function() {
     if (!confirm('Are you sure you want to reinitialize the database? This will delete all file history and directory assignments. This cannot be undone.')) {
       return;
@@ -1430,38 +1492,42 @@ async function openHistoryModal(selectedRecord) {
     }
     
     // Update modal title
-    $('#history-modal-title').text(`History: ${selectedRecord.filename}`);
+    $('#history-modal-title').text(`History: ${selectedRecord.filenameRaw || selectedRecord.filename}`);
     
     // Destroy existing grid if it exists
     if (w2ui['history-grid']) {
       w2ui['history-grid'].destroy();
     }
     
+    // Build the complete file state from history
+    const fullState = buildCompleteFileState(result.data || [], selectedRecord);
+    
     // Initialize and populate history grid
-    const historyData = formatHistoryData(result.data || [], selectedRecord);
+    const historyData = formatHistoryData(result.data || [], fullState);
     
     const gridColumns = [
-      { field: 'detectedAt', caption: 'Detected At', size: '160px', resizable: true, sortable: true },
-      { field: 'changeValue', caption: 'Change', size: '200px', resizable: true, sortable: true },
-      { field: 'path', caption: 'Path', size: '100%', resizable: true, sortable: true }
+      { field: 'detectedAt', text: 'Detected At', size: '160px', resizable: true, sortable: true },
+      { field: 'changeValue', text: 'Change', size: '200px', resizable: true, sortable: true },
+      { field: 'path', text: 'Path', size: '100%', resizable: true, sortable: true }
     ];
     
     $('#history-grid').w2grid({
       name: 'history-grid',
       columns: gridColumns,
       records: historyData,
-      show: { header: true, toolbar: true, footer: true },
-      toolbar: {
-        items: [
-          { type: 'button', id: 'btn-refresh-history', text: 'Refresh', icon: 'fa fa-refresh' }
-        ],
-        onClick: function(event) {
-          if (event.item.id === 'btn-refresh-history') {
-            openHistoryModal(selectedRecord);
-          }
+      show: { header: true, toolbar: false, footer: true },
+      onClick: function(event) {
+        // Update summary when a row is clicked
+        if (event.detail && event.detail.recid) {
+          const selectedIndex = event.detail.recid - 1;
+          console.log('Grid row clicked, index:', selectedIndex);
+          updateHistoryChangeSummary(fullState, selectedIndex);
         }
       }
     });
+    
+    // Create summary view below grid with initial selection (first/newest record)
+    createHistorySummaryView(fullState, 0);
     
     // Show modal
     $('#history-modal').show();
@@ -1473,9 +1539,9 @@ async function openHistoryModal(selectedRecord) {
 
 /**
  * Format history data for display in grid
- * Implements priority-based key extraction and displays full file path
+ * Shows only the key that changed (or "INITIAL" for first entry)
  */
-function formatHistoryData(historyRecords, selectedRecord) {
+function formatHistoryData(historyRecords, fullState) {
   // Priority order for change keys (lower number = higher priority)
   const KEY_PRIORITY = {
     'checksumValue': 1,
@@ -1487,63 +1553,190 @@ function formatHistoryData(historyRecords, selectedRecord) {
   };
   
   return historyRecords.map((record, index) => {
-    let changeValueDisplay = '-';
-    let additionalKeys = 0;
+    let changeKeyDisplay = '-';
     
     try {
-      // Parse changeValue JSON if it's a string
-      const parsed = typeof record.changeValue === 'string' ? 
-        JSON.parse(record.changeValue) : record.changeValue;
-      
-      if (parsed && typeof parsed === 'object') {
-        // Extract all keys and sort by priority
-        const keys = Object.keys(parsed);
-        const sortedKeys = keys.sort((a, b) => {
-          const priorityA = KEY_PRIORITY[a] ?? 999;
-          const priorityB = KEY_PRIORITY[b] ?? 999;
-          return priorityA - priorityB;
-        });
+      // If this is the first (earliest) entry, show "INITIAL"
+      if (index === historyRecords.length - 1) {
+        changeKeyDisplay = 'INITIAL';
+      } else {
+        // Parse changeValue JSON if it's a string
+        const parsed = typeof record.changeValue === 'string' ? 
+          JSON.parse(record.changeValue) : record.changeValue;
         
-        if (sortedKeys.length > 0) {
-          // Display the highest priority key
-          const primaryKey = sortedKeys[0];
-          const primaryValue = parsed[primaryKey];
+        if (parsed && typeof parsed === 'object') {
+          // Extract all keys and sort by priority
+          const keys = Object.keys(parsed);
+          const sortedKeys = keys.sort((a, b) => {
+            const priorityA = KEY_PRIORITY[a] ?? 999;
+            const priorityB = KEY_PRIORITY[b] ?? 999;
+            return priorityA - priorityB;
+          });
           
-          // Format the primary key display
-          let primaryDisplay = '';
-          if (primaryKey === 'dateModified' || primaryKey === 'previousDateModified') {
-            primaryDisplay = `${primaryKey}: ${new Date(primaryValue).toLocaleString()}`;
-          } else if (primaryKey === 'filesizeBytes' || primaryKey === 'size') {
-            primaryDisplay = `${primaryKey}: ${formatBytes(primaryValue)}`;
-          } else if (primaryKey === 'status') {
-            primaryDisplay = primaryValue; // e.g., "deleted"
-          } else {
-            primaryDisplay = `${primaryKey}: ${primaryValue}`;
-          }
-          
-          changeValueDisplay = primaryDisplay;
-          additionalKeys = sortedKeys.length - 1;
-          
-          // Add count of remaining keys if multiple keys exist
-          if (additionalKeys > 0) {
-            changeValueDisplay += ` +${additionalKeys}`;
+          if (sortedKeys.length > 0) {
+            // Display only the highest priority key
+            changeKeyDisplay = sortedKeys[0];
           }
         }
-      } else {
-        changeValueDisplay = String(parsed || '');
       }
     } catch (e) {
-      // If JSON parse fails, use raw value
-      changeValueDisplay = String(record.changeValue || '-');
+      // If JSON parse fails, use '-'
+      changeKeyDisplay = '-';
     }
     
     return {
       recid: index + 1,
       detectedAt: record.detectedAt ? new Date(record.detectedAt).toLocaleString() : '-',
-      changeValue: changeValueDisplay,
-      path: selectedRecord ? selectedRecord.path || selectedRecord.filename : '-'
+      changeValue: changeKeyDisplay,
+      path: fullState.path || '-',
+      _rawData: record  // Store raw data for summary view
     };
   });
+}
+
+/**
+ * Build complete file state by analyzing all history records
+ * Returns an object with the full state at each history point
+ */
+function buildCompleteFileState(historyRecords, selectedRecord) {
+  const allAttributes = new Set();
+  const states = [];
+  let currentState = {
+    path: selectedRecord ? (selectedRecord.path || selectedRecord.filename) : '-'
+  };
+  
+  // First pass: collect all attributes and build state timeline
+  // Start from oldest (end of array) to newest (start of array)
+  for (let i = historyRecords.length - 1; i >= 0; i--) {
+    const record = historyRecords[i];
+    
+    try {
+      const parsed = typeof record.changeValue === 'string' ? 
+        JSON.parse(record.changeValue) : record.changeValue;
+      
+      if (parsed && typeof parsed === 'object') {
+        // Add all keys to the set of attributes
+        Object.keys(parsed).forEach(key => allAttributes.add(key));
+        
+        // Update current state with new values
+        Object.assign(currentState, parsed);
+      }
+    } catch (e) {
+      // Skip invalid records
+    }
+    
+    states.push({ ...currentState, detectedAt: record.detectedAt });
+  }
+  
+  // Reverse states to go from oldest to newest
+  states.reverse();
+  
+  return {
+    allAttributes: Array.from(allAttributes).sort(),
+    states: states,
+    path: selectedRecord ? (selectedRecord.path || selectedRecord.filename) : '-'
+  };
+}
+
+/**
+ * Create the history summary view below the grid
+ */
+function createHistorySummaryView(fullState, selectedIndex) {
+  try {
+    const attributeList = fullState.allAttributes;
+    const len = fullState.states.length;
+    
+    // selectedIndex is 0-based grid index (0 = newest)
+    // states index: 0 = newest, states.length-1 = oldest (after reverse)
+    // So selectedIndex maps directly to states[selectedIndex]
+    const selectedState = (selectedIndex < len) ? fullState.states[selectedIndex] : {};
+    const previousState = (selectedIndex + 1 < len) ? fullState.states[selectedIndex + 1] : {};
+    
+    console.log('Creating summary for selectedIndex:', selectedIndex, 'states length:', len);
+    
+    // Build HTML for summary
+    let summaryHtml = '<div id="history-summary" style="margin-top: 15px; padding: 15px; background: #f9f9f9; border-radius: 4px; border: 1px solid #ddd;">';
+    summaryHtml += '<h3 style="margin-top: 0; margin-bottom: 10px;">Change Summary</h3>';
+    
+    summaryHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">';
+    
+    // Previous column
+    summaryHtml += '<div><h4 style="margin: 5px 0 10px 0; color: #666;">Previous</h4>';
+    summaryHtml += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
+    
+    for (const attr of attributeList) {
+      const value = previousState[attr];
+      const displayValue = formatAttributeValue(attr, value);
+      const isChanged = selectedState[attr] !== previousState[attr];
+      const className = isChanged ? 'file-new' : '';
+      summaryHtml += `<tr style="border-bottom: 1px solid #eee;"><td style="padding: 6px; font-weight: bold; width: 40%;">${escapeHtml(attr)}:</td><td style="padding: 6px;" class="${className}">${escapeHtml(displayValue)}</td></tr>`;
+    }
+    
+    summaryHtml += '</table></div>';
+    
+    // Changed column
+    summaryHtml += '<div><h4 style="margin: 5px 0 10px 0; color: #666;">Changed</h4>';
+    summaryHtml += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
+    
+    for (const attr of attributeList) {
+      const value = selectedState[attr];
+      const displayValue = formatAttributeValue(attr, value);
+      const isChanged = selectedState[attr] !== previousState[attr];
+      const className = isChanged ? 'file-new' : '';
+      summaryHtml += `<tr style="border-bottom: 1px solid #eee;"><td style="padding: 6px; font-weight: bold; width: 40%;">${escapeHtml(attr)}:</td><td style="padding: 6px;" class="${className}">${escapeHtml(displayValue)}</td></tr>`;
+    }
+    
+    summaryHtml += '</table></div>';
+    
+    summaryHtml += '</div></div>';
+    
+    // Update the summary container
+    $('#history-summary-container').html(summaryHtml);
+  } catch (err) {
+    console.error('Error creating history summary:', err);
+    $('#history-summary-container').html('<div style="color: red;">Error loading summary: ' + escapeHtml(err.message) + '</div>');
+  }
+}
+
+/**
+ * Update history change summary when a different row is selected
+ */
+function updateHistoryChangeSummary(fullState, selectedIndex) {
+  createHistorySummaryView(fullState, selectedIndex);
+}
+
+/**
+ * Format attribute values for display
+ */
+function formatAttributeValue(attr, value) {
+  if (value === undefined || value === null) {
+    return '-';
+  }
+  
+  if (attr === 'dateModified' || attr === 'previousDateModified' || attr === 'dateCreated') {
+    if (typeof value === 'number') {
+      return new Date(value).toLocaleString();
+    }
+    return String(value);
+  }
+  
+  if (attr === 'size' || attr === 'filesizeBytes') {
+    if (typeof value === 'number') {
+      return formatBytes(value);
+    }
+    return String(value);
+  }
+  
+  return String(value);
+}
+
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 /**

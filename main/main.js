@@ -594,7 +594,6 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
         entriesWithChanges.push({
           ...entry,
           changeState,
-          previousDateModified
         });
         
         // Mark as processed

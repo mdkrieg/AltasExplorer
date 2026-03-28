@@ -41,7 +41,6 @@ class DatabaseService {
         dir_id INTEGER NOT NULL,
         filename TEXT NOT NULL,
         dateModified INTEGER,
-        previousDateModified INTEGER,
         dateCreated INTEGER,
         size INTEGER,
         checksumValue TEXT,
@@ -71,41 +70,6 @@ class DatabaseService {
     `;
 
     this.db.exec(schema);
-
-    // Migration: Rename categoryName to category if it exists
-    try {
-      this.db.prepare('SELECT category FROM dirs LIMIT 0').all();
-    } catch (err) {
-      // category column doesn't exist, need to migrate from categoryName
-      logger.info('Migrating database schema: renaming categoryName column to category');
-      try {
-        this.db.exec(`
-          ALTER TABLE dirs RENAME COLUMN categoryName TO category;
-        `);
-        logger.info('Column migration completed successfully');
-      } catch (migrationErr) {
-        logger.warn('Migration warning - categoryName may not exist or already migrated:', migrationErr.message);
-      }
-    }
-
-    // Migration: Add new columns to files table if they don't exist
-    try {
-      // Try to read from the new columns to see if they exist
-      this.db.prepare('SELECT previousDateModified FROM files LIMIT 0').all();
-    } catch (err) {
-      // Columns don't exist, add them
-      logger.info('Migrating database schema: adding new columns to files table');
-      try {
-        this.db.exec(`
-          ALTER TABLE files ADD COLUMN previousDateModified INTEGER;
-          ALTER TABLE files ADD COLUMN checksumValue TEXT;
-          ALTER TABLE files ADD COLUMN checksumStatus TEXT;
-        `);
-        logger.info('Migration completed successfully');
-      } catch (migrationErr) {
-        logger.warn('Migration warning:', migrationErr.message);
-      }
-    }
   }
 
   /**
@@ -206,7 +170,6 @@ class DatabaseService {
   compareFileState(currentEntry, dir_id) {
     const existingFile = this.getFileByInode(currentEntry.inode, dir_id);
     let changeState = 'unchanged';
-    let previousDateModified = null;
 
     if (!existingFile) {
       // New file
@@ -214,12 +177,10 @@ class DatabaseService {
     } else if (existingFile.dateModified !== currentEntry.dateModified) {
       // Date modified changed
       changeState = 'dateModified';
-      previousDateModified = existingFile.dateModified;
     }
 
     return {
-      changeState,
-      previousDateModified
+      changeState
     };
   }
 
@@ -228,7 +189,7 @@ class DatabaseService {
    */
   updateFileModificationDate(inode, dir_id, newDateModified) {
     const stmt = this.db.prepare(`
-      UPDATE files SET dateModified = ?, previousDateModified = dateModified WHERE inode = ? AND dir_id = ?
+      UPDATE files SET dateModified = ? WHERE inode = ? AND dir_id = ?
     `);
     return stmt.run(newDateModified, inode, dir_id);
   }
@@ -345,10 +306,10 @@ class DatabaseService {
 
   /**
    * Validate changeValue JSON against whitelist of allowed keys
-   * Allowed keys: filename, dateModified, filesizeBytes, checksumValue, checksumStatus, previousDateModified
+   * Allowed keys: filename, dateModified, filesizeBytes, checksumValue, checksumStatus, dirname, category, status
    */
   validateChangeValue(changeValue) {
-    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'previousDateModified', 'dirname', 'category', 'status'];
+    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'dirname', 'category', 'status'];
     
     // Check if it's valid JSON
     let obj;
