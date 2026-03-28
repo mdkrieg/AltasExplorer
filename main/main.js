@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage, Menu } = require('electron');
 const path = require('path');
 const os = require('os');
 const fsSync = require('fs');
@@ -48,6 +48,18 @@ function createWindow() {
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
+
+    // Handle window close requests - ask renderer if it's OK to close
+    mainWindow.on('close', (event) => {
+      if (!app.isQuitting) {
+        event.preventDefault();
+        // Ask the renderer if we should close
+        mainWindow.webContents.send('request-close-app');
+      }
+    });
+
+    // Open DevTools on startup for development
+    mainWindow.webContents.openDevTools();
   } catch (err) {
     logger.error('Error creating window:', err.message);
     app.quit();
@@ -86,6 +98,23 @@ async function updateWindowIcon(category) {
 // ============================================
 // IPC Handlers
 // ============================================
+
+/**
+ * Application window control
+ */
+ipcMain.handle('close-window', () => {
+  if (mainWindow) {
+    app.isQuitting = true;  // Set flag to allow window close
+    mainWindow.close();
+  }
+});
+
+ipcMain.on('allow-close-app', () => {
+  if (mainWindow) {
+    app.isQuitting = true;
+    mainWindow.close();
+  }
+});
 
 /**
  * File system operations
@@ -1140,6 +1169,8 @@ ipcMain.on('log-to-file', (event, { level, message, args }) => {
 // ============================================
 
 app.on('ready', () => {
+  // Disable the default menu to prevent Alt key from showing it
+  Menu.setApplicationMenu(null);
   initialize();
   createWindow();
 });

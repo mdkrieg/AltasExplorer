@@ -72,6 +72,11 @@ async function initialize() {
     // Attach event listeners
     attachEventListeners();
     
+    // Set up close request listener from main process
+    window.electronAPI.onCloseRequest(() => {
+      handleCloseRequest();
+    });
+    
     // Initialize Monaco editor loader
     await initializeMonacoLoader();
     
@@ -668,6 +673,7 @@ async function loadHotkeysFromStorage() {
       'navigate_forward': 'Alt+Right',
       'navigate_up': 'Alt+Up',
       'add_panel': 'Ctrl+T',
+      'close_panel': 'Ctrl+W',
       'enter_path': 'Enter',
       'cancel_path': 'Escape',
       'edit_notes': 'F2',
@@ -695,6 +701,10 @@ function getHotKeyCombo(event) {
   else if (key === 'Enter') key = 'Enter';
   else if (key === 'Escape') key = 'Escape';
   else if (key === ' ') key = 'Space';
+  else if (key.length === 1 && key >= 'a' && key <= 'z') {
+    // Uppercase single letters
+    key = key.toUpperCase();
+  }
   
   combo += key;
   return combo;
@@ -704,11 +714,14 @@ function getHotKeyCombo(event) {
  * Find the action ID for a given hotkey combo
  */
 function getActionForHotkey(hotkeyCombo) {
+  console.log('[getActionForHotkey] Looking for combo:', hotkeyCombo, 'in registry:', hotkeyRegistry);
   for (const [actionId, key] of Object.entries(hotkeyRegistry)) {
     if (key === hotkeyCombo) {
+      console.log('[getActionForHotkey] Found match:', actionId);
       return actionId;
     }
   }
+  console.log('[getActionForHotkey] No match found for:', hotkeyCombo);
   return null;
 }
 
@@ -1206,7 +1219,10 @@ function updatePanelLayout() {
  * Remove a panel and shift higher-numbered panels down
  */
 function removePanel(panelId) {
-  if (panelId === 1 || visiblePanels === 1) {
+  console.log('[removePanel] Called for panel', panelId, 'visiblePanels:', visiblePanels);
+  
+  if (visiblePanels === 1) {
+    console.log('[removePanel] Cannot remove last panel');
     alert('Cannot remove the last panel');
     return;
   }
@@ -1223,6 +1239,7 @@ function removePanel(panelId) {
   visiblePanels--;
   activePanelId = 1; // Reset to panel 1 after removal
   updatePanelLayout();
+  console.log('[removePanel] Panel removed, visiblePanels now:', visiblePanels);
 }
 
 /**
@@ -1266,6 +1283,120 @@ function clearPanelState(panelId) {
   $panel.find('.panel-landing-page').show();
   $panel.find('.panel-grid').hide();
   $panel.find('.panel-notes-view').hide();
+}
+
+/**
+ * Close the active panel or the window based on context
+ */
+async function closeActivePanel() {
+  console.log('[closeActivePanel] Called, notesEditMode:', notesEditMode, 'visiblePanels:', visiblePanels);
+  
+  // Check if monaco editor is in edit mode
+  if (notesEditMode) {
+    console.log('[closeActivePanel] In edit mode, prompting to save');
+    if (monacoEditor) {
+      const content = monacoEditor.getValue();
+      const result = confirm('Notes are being edited. Save and close panel?\n\nClick OK to save and close, or Cancel to keep editing.');
+      
+      if (result) {
+        // Save notes before closing
+        const notesPath = panelState[1].currentPath + '\\notes.txt';
+        try {
+          await window.electronAPI.writeNotesFile(notesPath, content);
+          
+          // Get current notes format setting
+          const settings = await window.electronAPI.getSettings();
+          const notesFormat = settings.notes_format || 'Markdown';
+          
+          // Format and display notes based on format setting
+          const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
+          const $notesContentView = $notesView.find('.notes-content-view');
+          const $notesEditorContainer = $notesView.find('.notes-editor-container');
+          const $editBtn = $notesView.find('.btn-notes-edit');
+          const $saveBtn = $notesView.find('.btn-notes-save');
+          
+          if (notesFormat === 'Markdown') {
+            // Render markdown to HTML
+            const htmlContent = await window.electronAPI.renderMarkdown(content);
+            $notesContentView.html(htmlContent);
+          } else {
+            // Use plain text formatting
+            const htmlContent = formatNotesContent(content, notesFormat);
+            $notesContentView.html(htmlContent);
+          }
+          
+          $notesEditorContainer.hide();
+          $notesContentView.show();
+          $editBtn.show().text('Edit').css('background', '#2196F3');
+          $saveBtn.hide();
+          notesEditMode = false;
+          
+          // Proceed to close the panel
+          proceedWithPanelClose();
+        } catch (err) {
+          alert('Error saving notes: ' + err.message);
+        }
+      }
+      // If user cancels, do nothing (keep edit mode open)
+    }
+    return;
+  }
+  
+  // If only one panel is open, confirm before closing the window
+  if (visiblePanels === 1) {
+    console.log('[closeActivePanel] Only 1 panel open, prompting to close app');
+    const result = confirm('Close the application?\n\nClick OK to close, or Cancel to keep the app open.');
+    if (result) {
+      console.log('[closeActivePanel] User confirmed close, calling closeWindow');
+      await window.electronAPI.closeWindow();
+    }
+    return;
+  }
+  
+  // Otherwise, just close the active panel
+  console.log('[closeActivePanel] Multiple panels open, closing panel', activePanelId);
+  proceedWithPanelClose();
+}
+
+/**
+ * Handle close app request from main process (triggered by close button or Alt+F4)
+ */
+async function handleCloseRequest() {
+  // Check if monaco editor is in edit mode
+  if (notesEditMode) {
+    if (monacoEditor) {
+      const content = monacoEditor.getValue();
+      const result = confirm('Notes are being edited. Save and close the application?\n\nClick OK to save and close, or Cancel to keep the app open.');
+      
+      if (result) {
+        // Save notes before closing
+        const notesPath = panelState[1].currentPath + '\\notes.txt';
+        try {
+          await window.electronAPI.writeNotesFile(notesPath, content);
+          window.electronAPI.allowClose();
+        } catch (err) {
+          console.error('Error saving notes before close:', err.message);
+          window.electronAPI.allowClose();  // Close anyway
+        }
+      }
+      // If user cancels, do nothing (app stays open)
+    }
+    return;
+  }
+  
+  // Ask for confirmation before closing
+  const result = confirm('Close the application?\n\nClick OK to close, or Cancel to keep the app open.');
+  if (result) {
+    window.electronAPI.allowClose();
+  }
+}
+
+/**
+ * Proceed with closing the active panel after any confirmation dialogs
+ */
+function proceedWithPanelClose() {
+  console.log('[proceedWithPanelClose] Removing panel', activePanelId);
+  removePanel(activePanelId);
 }
 
 /**
@@ -1391,6 +1522,10 @@ function attachEventListeners() {
     const hotkeyCombo = getHotKeyCombo(event);
     const actionId = getActionForHotkey(hotkeyCombo);
     
+    if (hotkeyCombo === 'Ctrl+W') {
+      console.log('[keyboard] Ctrl+W detected, actionId:', actionId);
+    }
+    
     // Only handle recognized hotkeys
     if (!actionId) return;
     
@@ -1460,6 +1595,11 @@ function attachEventListeners() {
           $(`#panel-${visiblePanels}`).show();
           updatePanelLayout();
         }
+        break;
+      case 'close_panel':
+        event.preventDefault();
+        console.log('[close_panel] Ctrl+W pressed, calling closeActivePanel()');
+        closeActivePanel();
         break;
     }
   });

@@ -106,6 +106,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   generateFolderIcon: (bgColor, textColor) =>
     ipcRenderer.invoke('generate-folder-icon', { bgColor, textColor }),
   
+  // Window control
+  closeWindow: () => ipcRenderer.invoke('close-window'),
+  onCloseRequest: (callback) => ipcRenderer.on('request-close-app', callback),
+  allowClose: () => ipcRenderer.send('allow-close-app'),
+  
   // Notes file operations
   readNotesFile: (notesPath) => ipcRenderer.invoke('read-notes-file', notesPath),
   writeNotesFile: (notesPath, content) => ipcRenderer.invoke('write-notes-file', { notesPath, content }),
