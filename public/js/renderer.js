@@ -14,10 +14,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -70,6 +70,9 @@ async function initialize() {
     
     // Initialize Monaco editor loader
     await initializeMonacoLoader();
+    
+    // Setup background refresh timer for panel 1 if enabled
+    await setupBackgroundRefreshTimer(1);
     
     console.log('Initialization complete');
   } catch (err) {
@@ -212,6 +215,9 @@ async function initializeGridForPanel(panelId) {
     w2ui[gridName].destroy();
   }
 
+  // Get the recordHeight setting
+  const recordHeight = await getRecordHeight();
+
   // Build columns dynamically based on panel state
   const state = panelState[panelId];
   const columns = [
@@ -232,6 +238,7 @@ async function initializeGridForPanel(panelId) {
   // Use w2grid constructor directly
   w2ui[gridName] = new w2grid({
     name: gridName,
+    recordHeight: recordHeight,
     show: {
       header: false,
       toolbar: false,
@@ -274,18 +281,6 @@ async function initializeGridForPanel(panelId) {
       if (record && record.isFolder) {
         navigateToDirectory(record.path, panelId);
         return;
-      }
-      
-      // Check if this is a dateModified cell double-click for a file with date modification
-      if (record && !record.isFolder && record.changeState === 'dateModified') {
-        const columnIndex = event.detail.column;
-        const columns = ['icon', 'filename', 'size', 'dateModified', 'checksum'];
-        const columnField = columns[columnIndex];
-        
-        if (columnField === 'dateModified') {
-          const inode = record.inode;
-          acknowledgeFileModification(inode, panelId);
-        }
       }
     },
     onContextMenu: function(event) {
@@ -331,9 +326,19 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 
   const state = panelState[panelId];
   
+  // Get the hide dot directory setting
+  const settings = await window.electronAPI.getSettings();
+  const hideDotDirectory = settings.hide_dot_directory || false;
+  
+  // Filter out "." entries if hiding is enabled
+  let filteredEntries = entries;
+  if (hideDotDirectory) {
+    filteredEntries = entries.filter(e => e.filename !== '.');
+  }
+  
   // Separate folders and files
-  const folders = entries.filter(e => e.isDirectory);
-  const files = entries.filter(e => !e.isDirectory);
+  const folders = filteredEntries.filter(e => e.isDirectory);
+  const files = filteredEntries.filter(e => !e.isDirectory);
 
   const records = [];
   let recordId = 1;
@@ -346,8 +351,16 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 
   // Add folders first
   for (const folder of folders) {
-    const category = await window.electronAPI.getCategoryForDirectory(folder.path);
-    const iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor);
+    // Determine which icon to use based on changeState
+    let iconUrl;
+    
+    if (folder.changeState === 'moved') {
+      // Use the moved folder icon
+      iconUrl = 'assets/folder-moved.svg';
+    } else {
+      const category = await window.electronAPI.getCategoryForDirectory(folder.path);
+      iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor);
+    }
     
     // Use the same getRowClassName function for consistency with files
     const className = getRowClassName(folder.changeState);
@@ -364,7 +377,9 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       path: folder.path,
       changeState: folder.changeState,
       inode: folder.inode,
-      dir_id: null // Will be set from DB if needed
+      dir_id: null, // Will be set from DB if needed
+      orphan_id: folder.orphan_id || null,
+      new_dir_id: folder.new_dir_id || null
     });
   }
 
@@ -374,9 +389,17 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     const dateModifiedContent = getDateModifiedCell(file, file.changeState);
     const checksumCell = getChecksumCell(file, file.changeState);
     
+    // Determine which file icon to use based on changeState
+    let iconSvg;
+    if (file.changeState === 'moved') {
+      iconSvg = '<img src="assets/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+    } else {
+      iconSvg = '<img src="assets/file.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+    }
+    
     records.push({
       recid: recordId++,
-      icon: applyClass('📄', className),
+      icon: applyClass(iconSvg, className),
       filename: applyClass(file.filename, className),
       filenameRaw: file.filename,
       size: applyClass(formatBytes(file.size), className),
@@ -391,7 +414,9 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       path: file.path,
       changeState: file.changeState,
       inode: file.inode,
-      dir_id: null // Will be set from DB if needed
+      dir_id: null, // Will be set from DB if needed
+      orphan_id: file.orphan_id || null,
+      new_dir_id: file.new_dir_id || null
     });
   }
 
@@ -411,8 +436,14 @@ function getRowClassName(changeState) {
   switch (changeState) {
     case 'new':
       return 'file-new';
+    case 'dateModified':
+      return 'file-date-modified';
     case 'checksumChanged':
       return 'file-checksum-changed';
+    case 'orphan':
+      return 'file-orphan';
+    case 'moved':
+      return 'file-moved';
     default:
       return '';
   }
@@ -631,11 +662,13 @@ function activatePathEditMode(panelId) {
   const $panel = $(`#panel-${panelId}`);
   const $pathDisplay = $panel.find('.panel-path');
   const $pathInput = $panel.find('.panel-path-input');
+  const $title = $panel.find('.w2ui-panel-title');
   
   const currentPath = panelState[panelId].currentPath;
   
-  // Show input, hide display
+  // Show input, hide display, and add editing class
   $pathDisplay.hide();
+  $title.addClass('path-input-editing');
   $pathInput.val(currentPath).show().select().focus();
 }
 
@@ -646,9 +679,11 @@ async function deactivatePathEditMode(panelId, navigateToNewPath = false, newPat
   const $panel = $(`#panel-${panelId}`);
   const $pathDisplay = $panel.find('.panel-path');
   const $pathInput = $panel.find('.panel-path-input');
+  const $title = $panel.find('.w2ui-panel-title');
   
-  // Hide input, show display
+  // Hide input, show display, and remove editing class
   $pathInput.hide();
+  $title.removeClass('path-input-editing');
   $pathDisplay.show();
   
   // Navigate to new path if requested and path is not empty
@@ -1190,9 +1225,11 @@ function attachPanelEventListeners(panelId) {
   });
 
   // Refresh button
-  $panel.find('.btn-panel-refresh').click(function() {
+  $panel.find('.btn-panel-refresh').click(async function() {
     setActivePanelId(panelId);
-    navigateToDirectory(panelState[panelId].currentPath, panelId);
+    await navigateToDirectory(panelState[panelId].currentPath, panelId);
+    // Reset background refresh timer when manually refreshing
+    await setupBackgroundRefreshTimer(panelId);
   });
 
   // Settings button (only for panel 1)
@@ -1367,19 +1404,14 @@ function attachEventListeners() {
     await deleteCategoryFromForm();
   });
 
-  // Browser settings: save home directory
-  $('#btn-browser-save-home').click(async function() {
-    await saveHomeDirectoryFromBrowserSettings();
-  });
-
-  // Browser settings: save notes format
-  $('#btn-browser-save-notes-format').click(async function() {
-    await saveNotesFormatFromBrowserSettings();
-  });
-
   // Browser settings: validate directory while typing
   $('#browser-home-directory').on('input', async function() {
     await updateHomeDirectoryWarning($(this).val());
+  });
+
+  // Browser settings: update preview on recordHeight input change
+  $('#browser-record-height').on('input', function() {
+    updateRecordHeightPreview();
   });
 
   // Browser Settings - Advanced: reinitialize database button
@@ -1400,6 +1432,21 @@ function attachEventListeners() {
     } catch (err) {
       alert('Error: ' + err.message);
     }
+  });
+
+  // Tag form save button
+  $('#btn-tag-save').click(async function() {
+    await saveTagFromForm();
+  });
+
+  // Tag form clear/new button
+  $('#btn-tag-clear').click(function() {
+    clearTagForm();
+  });
+
+  // Tag form delete button
+  $('#btn-tag-delete').click(async function() {
+    await deleteTagFromForm();
   });
 
   // History modal close button
@@ -1449,16 +1496,52 @@ function setupResizableDivider() {
 }
 
 /**
+ * Setup resizable divider for tag form panel
+ */
+function setupTagResizableDivider() {
+  const divider = $('#tag-divider');
+  const formPanel = $('#tag-form-panel');
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  divider.mousedown(function(e) {
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = formPanel.width();
+    $(document).css('user-select', 'none');
+  });
+
+  $(document).mousemove(function(e) {
+    if (!isResizing) return;
+    
+    const deltaX = e.clientX - startX;
+    const newWidth = Math.max(250, startWidth - deltaX); // Minimum 250px width
+    formPanel.css('flex', `0 0 ${newWidth}px`);
+  });
+
+  $(document).mouseup(function() {
+    if (isResizing) {
+      isResizing = false;
+      $(document).css('user-select', '');
+    }
+  });
+}
+
+/**
  * Show settings modal
  */
 async function showSettingsModal() {
   // Initialize grid and form
   await initializeCategoriesGrid();
   await initializeCategoriesForm();
+  await initializeTagsGrid();
+  await initializeTagsForm();
   await initializeBrowserSettingsForm();
   
-  // Setup resizable divider
+  // Setup resizable dividers
   setupResizableDivider();
+  setupTagResizableDivider();
   
   // Show modal
   $('#settings-modal').show();
@@ -1472,9 +1555,60 @@ async function showSettingsModal() {
  */
 function hideSettingsModal() {
   $('#settings-modal').hide();
-  // Destroy w2ui grid
+  // Destroy w2ui grids
   if (w2ui['categories-grid']) {
     w2ui['categories-grid'].destroy();
+  }
+  if (w2ui['tags-grid']) {
+    w2ui['tags-grid'].destroy();
+  }
+  
+  // Ensure background refresh timer is active for active panel
+  setupBackgroundRefreshTimer(activePanelId).catch(err => {
+    console.warn('Error setting up background refresh after closing settings:', err);
+  });
+}
+
+/**
+ * Setup background refresh timer for a panel
+ */
+async function setupBackgroundRefreshTimer(panelId) {
+  try {
+    // Stop existing timer
+    stopBackgroundRefreshTimer(panelId);
+    
+    // Get current settings
+    const settings = await window.electronAPI.getSettings();
+    
+    // Only setup if enabled
+    if (settings.background_refresh_enabled && settings.background_refresh_interval > 0) {
+      const interval = settings.background_refresh_interval * 1000; // Convert to milliseconds
+      
+      panelState[panelId].backgroundRefreshTimer = setInterval(() => {
+        const state = panelState[panelId];
+        if (state && state.currentPath) {
+          // Refresh the panel by navigating to current path without adding to history
+          navigateToDirectory(state.currentPath, panelId, false).catch(err => {
+            console.warn(`Background refresh failed for panel ${panelId}:`, err);
+          });
+        }
+      }, interval);
+      
+      console.log(`Background refresh timer setup for panel ${panelId}: every ${settings.background_refresh_interval} seconds`);
+    }
+  } catch (err) {
+    console.warn('Error in setupBackgroundRefreshTimer:', err);
+  }
+}
+
+/**
+ * Stop background refresh timer for a panel
+ */
+function stopBackgroundRefreshTimer(panelId) {
+  if (panelState[panelId] && panelState[panelId].backgroundRefreshTimer) {
+    clearInterval(panelState[panelId].backgroundRefreshTimer);
+    panelState[panelId].backgroundRefreshTimer = null;
+    console.log(`Background refresh timer stopped for panel ${panelId}`);
   }
 }
 
@@ -1756,8 +1890,20 @@ function hideHistoryModal() {
 function switchSettingsTab(tabName) {
   // Hide all tabs
   $('.settings-tab-content').hide();
-  // Show selected tab
-  $(`#tab-${tabName}`).show();
+  // Show selected tab with proper display mode
+  const $tab = $(`#tab-${tabName}`);
+  // For tabs that need flex layout (category, tag), use flex display
+  if (tabName === 'category' || tabName === 'tag') {
+    $tab.css('display', 'flex');
+    // Resize grid after tab becomes visible (needed for w2ui)
+    if (tabName === 'category' && w2ui['categories-grid']) {
+      setTimeout(() => w2ui['categories-grid'].resize(), 0);
+    } else if (tabName === 'tag' && w2ui['tags-grid']) {
+      setTimeout(() => w2ui['tags-grid'].resize(), 0);
+    }
+  } else {
+    $tab.show();
+  }
   
   // Update tab button styles
   $('.settings-tab-btn').each(function() {
@@ -1777,9 +1923,104 @@ async function initializeBrowserSettingsForm() {
   const settings = await window.electronAPI.getSettings();
   const homeDirectory = settings.home_directory || '';
   const notesFormat = settings.notes_format || 'Markdown';
+  const hideDotDirectory = settings.hide_dot_directory || false;
+  const recordHeight = settings.record_height || 30;
+  const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
+  const backgroundRefreshInterval = settings.background_refresh_interval || 30;
+  
   $('#browser-home-directory').val(homeDirectory);
   $('#browser-notes-format').val(notesFormat);
+  $('#browser-hide-dot-directory').prop('checked', hideDotDirectory);
+  $('#browser-record-height').val(recordHeight);
+  $('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
+  $('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
+  
   await updateHomeDirectoryWarning(homeDirectory);
+  updateRecordHeightPreview();
+  
+  // Setup event listeners for browser settings
+  setupBrowserSettingsEventListeners();
+}
+
+/**
+ * Setup event listeners for browser settings
+ */
+function setupBrowserSettingsEventListeners() {
+  // Toggle refresh interval input based on checkbox
+  $('#browser-background-refresh-enabled').on('change', function() {
+    $('#browser-background-refresh-interval').prop('disabled', !this.checked);
+  });
+  
+  // Save all browser settings
+  $('#btn-browser-save-all').on('click', saveBrowserSettings);
+}
+
+/**
+ * Save all browser settings at once
+ */
+async function saveBrowserSettings() {
+  try {
+    const homeDirectory = ($('#browser-home-directory').val() || '').trim();
+    const notesFormat = ($('#browser-notes-format').val() || 'Markdown').trim();
+    const hideDotDirectory = $('#browser-hide-dot-directory').is(':checked');
+    let recordHeight = parseInt($('#browser-record-height').val() || '30');
+    const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
+    let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
+    
+    // Validate record height range
+    if (isNaN(recordHeight) || recordHeight < 20) {
+      recordHeight = 20;
+      $('#browser-record-height').val(recordHeight);
+    } else if (recordHeight > 35) {
+      recordHeight = 35;
+      $('#browser-record-height').val(recordHeight);
+    }
+    
+    // Validate background refresh interval range
+    if (!backgroundRefreshEnabled) {
+      backgroundRefreshInterval = 30; // Default when disabled
+    } else if (isNaN(backgroundRefreshInterval) || backgroundRefreshInterval < 2) {
+      backgroundRefreshInterval = 2;
+      $('#browser-background-refresh-interval').val(backgroundRefreshInterval);
+    } else if (backgroundRefreshInterval > 60) {
+      backgroundRefreshInterval = 60;
+      $('#browser-background-refresh-interval').val(backgroundRefreshInterval);
+    }
+
+    const settings = await window.electronAPI.getSettings();
+    settings.home_directory = homeDirectory;
+    settings.notes_format = notesFormat;
+    settings.hide_dot_directory = hideDotDirectory;
+    settings.record_height = recordHeight;
+    settings.background_refresh_enabled = backgroundRefreshEnabled;
+    settings.background_refresh_interval = backgroundRefreshInterval;
+
+    const result = await window.electronAPI.saveSettings(settings);
+    if (!result || result.success === false) {
+      throw new Error(result?.error || 'Unable to save settings');
+    }
+
+    await updateHomeDirectoryWarning(homeDirectory);
+    updateRecordHeightPreview();
+    
+    // Apply record height to all active grids
+    applyRecordHeightToAllGrids(recordHeight);
+    
+    alert('All browser settings saved successfully');
+    
+    // Setup background refresh timer for the active panel
+    await setupBackgroundRefreshTimer(activePanelId);
+    
+    // Refresh the current directory if hide dot directory changed
+    if (hideDotDirectory) {
+      const state = panelState[activePanelId];
+      if (state && state.currentPath) {
+        await navigateToDirectory(state.currentPath, activePanelId);
+      }
+    }
+  } catch (err) {
+    alert('Error saving browser settings: ' + err.message);
+  }
 }
 
 /**
@@ -1803,46 +2044,64 @@ async function updateHomeDirectoryWarning(dirPath) {
 }
 
 /**
- * Save home directory setting from Browser Settings tab
+ * Update the preview grid to show the current recordHeight setting
  */
-async function saveHomeDirectoryFromBrowserSettings() {
-  const homeDirectory = ($('#browser-home-directory').val() || '').trim();
-
-  try {
-    const settings = await window.electronAPI.getSettings();
-    settings.home_directory = homeDirectory;
-
-    const result = await window.electronAPI.saveSettings(settings);
-    if (!result || result.success === false) {
-      throw new Error(result?.error || 'Unable to save settings');
+function updateRecordHeightPreview() {
+  const recordHeight = parseInt($('#browser-record-height').val() || '30');
+  
+  // Destroy existing preview grid if it exists
+  if (w2ui['preview-record-height-grid']) {
+    w2ui['preview-record-height-grid'].destroy();
+  }
+  
+  // Create sample data for preview
+  const previewRecords = [
+    { recid: 1, filename: 'example-file-1.pdf', size: '2.4 MB', modified: '2026-03-25' },
+    { recid: 2, filename: 'project-folder', size: '--', modified: '2026-03-28' },
+    { recid: 3, filename: 'document.txt', size: '45 KB', modified: '2026-03-20' },
+    { recid: 4, filename: 'image.jpg', size: '1.8 MB', modified: '2026-03-15' },
+    { recid: 5, filename: 'archive.zip', size: '156 MB', modified: '2026-03-10' }
+  ];
+  
+  // Create preview grid
+  $('#record-height-preview-grid').w2grid({
+    name: 'preview-record-height-grid',
+    columns: [
+      { field: 'filename', text: 'Filename', size: '60%', resizable: true },
+      { field: 'size', text: 'Size', size: '20%', resizable: true },
+      { field: 'modified', text: 'Modified', size: '20%', resizable: true }
+    ],
+    records: previewRecords,
+    recordHeight: recordHeight,
+    show: {
+      header: true,
+      toolbar: false,
+      footer: false
     }
+  });
+}
 
-    await updateHomeDirectoryWarning(homeDirectory);
-    alert('Home directory saved');
-  } catch (err) {
-    alert('Error saving home directory: ' + err.message);
+/**
+ * Apply recordHeight to all active grids
+ */
+function applyRecordHeightToAllGrids(recordHeight) {
+  for (let panelId = 1; panelId <= 4; panelId++) {
+    const grid = panelState[panelId].w2uiGrid;
+    if (grid) {
+      grid.recordHeight = recordHeight;
+      if (typeof grid.refresh === 'function') {
+        grid.refresh();
+      }
+    }
   }
 }
 
 /**
- * Save notes format setting from Browser Settings tab
+ * Get the current recordHeight setting
  */
-async function saveNotesFormatFromBrowserSettings() {
-  const notesFormat = ($('#browser-notes-format').val() || 'Markdown').trim();
-
-  try {
-    const settings = await window.electronAPI.getSettings();
-    settings.notes_format = notesFormat;
-
-    const result = await window.electronAPI.saveSettings(settings);
-    if (!result || result.success === false) {
-      throw new Error(result?.error || 'Unable to save settings');
-    }
-
-    alert('Notes format saved: ' + notesFormat);
-  } catch (err) {
-    alert('Error saving notes format: ' + err.message);
-  }
+async function getRecordHeight() {
+  const settings = await window.electronAPI.getSettings();
+  return settings.record_height || 30;
 }
 
 /**
@@ -1981,9 +2240,18 @@ function formatBytes(bytes) {
  */
 function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePanels) {
   const isMultiSelect = selectedRecords.length > 1;
-  const hasDirectorySelected = selectedRecords.some(r => r.isFolder);
-  const hasFileSelected = selectedRecords.some(r => !r.isFolder);
-  console.log("Generating context menu - selected records:", {selectedRecords,isMultiSelect, hasDirectorySelected, hasFileSelected});
+  const directoryCount = selectedRecords.filter(r => r.isFolder).length;
+  const fileCount = selectedRecords.filter(r => !r.isFolder).length;
+  const orphanCount = selectedRecords.filter(r => r.orphan_id).length;
+  console.log("Generating context menu - selected records:", {selectedRecords, isMultiSelect, directoryCount, fileCount, orphanCount});
+  
+  // Debug: log the orphan_id on each record
+  if (orphanCount > 0) {
+    selectedRecords.forEach((record, idx) => {
+      console.log(`  Record ${idx}:`, {filename: record.filename, orphan_id: record.orphan_id, changeState: record.changeState, keys: Object.keys(record)});
+    });
+  }
+  
   const addSeparator = (menu) =>{
     if (menu.length > 0 && !menu[menu.length - 1].id.startsWith('sep')) {
       menu.push({id: `sep${menu.length}`, text: '--'});
@@ -1994,8 +2262,9 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
   panelContextMenuState = {
     selectedRecords,
     isMultiSelect,
-    hasDirectorySelected,
-    hasFileSelected,
+    directoryCount,
+    fileCount,
+    orphanCount,
     selectedPaths: selectedRecords.map(r => r.path)
   };
   
@@ -2007,7 +2276,7 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
   
   let contextMenu = [];
 
-  if(!isMultiSelect && hasDirectorySelected) {
+  if(!isMultiSelect && directoryCount > 0) {
     // Build "Open In Panel X" menu items for available panels
     contextMenu.push({
       id:"open-in",
@@ -2035,6 +2304,26 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
       icon: 'fa fa-tag'
     }));;
     contextMenu.push(setCategoryOption);
+  }
+
+  // Add "Acknowledge & Remove" for orphaned files/folders
+  if (orphanCount > 0) {
+    addSeparator(contextMenu);
+    const orphanRecords = selectedRecords.filter(r => r.orphan_id);
+    if (isMultiSelect && orphanRecords.length > 0) {
+      contextMenu.push({
+        id: 'acknowledge-orphans',
+        text: `Remove ${orphanRecords.length} orphaned item${orphanRecords.length > 1 ? 's' : ''}`,
+        icon: 'fa fa-check-circle',
+        orphanIds: orphanRecords.map(r => r.orphan_id)
+      });
+    } else if (!isMultiSelect && orphanRecords.length === 1) {
+      contextMenu.push({
+        id: `acknowledge-orphan-${orphanRecords[0].orphan_id}`,
+        text: 'Acknowledge & Remove',
+        icon: 'fa fa-check-circle'
+      });
+    }
   }
 
   // Add "History" section (only for single selection)
@@ -2130,6 +2419,42 @@ async function handleContextMenuClick(event, panelId) {
     }
   }
   
+  // Handle "Acknowledge & Remove" for orphan items
+  if (menuItemId.startsWith('acknowledge-orphan-')) {
+    const orphanId = parseInt(menuItemId.replace('acknowledge-orphan-', ''));
+    try {
+      const result = await window.electronAPI.acknowledgeOrphan(orphanId);
+      if (result.success) {
+        // Refresh the current directory to remove the orphan from display
+        const state = panelState[activePanelId];
+        await navigateToDirectory(state.currentPath, activePanelId);
+      } else {
+        alert('Error removing orphan: ' + result.error);
+      }
+    } catch (err) {
+      alert('Error removing orphan: ' + err.message);
+    }
+  }
+  
+  // Handle "Remove orphans" for multiple orphan selections
+  if (menuItemId === 'acknowledge-orphans') {
+    const orphanRecords = selectedRecords.filter(r => r.orphan_id);
+    try {
+      for (const record of orphanRecords) {
+        const result = await window.electronAPI.acknowledgeOrphan(record.orphan_id);
+        if (!result.success) {
+          alert(`Error removing orphan ${record.filename}: ${result.error}`);
+          break;
+        }
+      }
+      // Refresh the current directory to remove the orphans from display
+      const state = panelState[activePanelId];
+      await navigateToDirectory(state.currentPath, activePanelId);
+    } catch (err) {
+      alert('Error removing orphans: ' + err.message);
+    }
+  }
+  
   // Handle "Toggle Date Created" column visibility
   if (menuItemId === 'toggle-date-created') {
     const state = panelState[activePanelId];
@@ -2147,6 +2472,11 @@ async function handleContextMenuClick(event, panelId) {
 
 // State for category form editing
 let categoryFormState = {
+  editingName: null
+};
+
+// State for tag form editing
+let tagFormState = {
   editingName: null
 };
 
@@ -2451,6 +2781,273 @@ async function deleteCategoryFromForm() {
     alert('Category deleted successfully!');
   } catch (err) {
     alert('Error deleting category: ' + err.message);
+  }
+}
+
+// ==================== Tags Management ====================
+
+/**
+ * Initialize tags grid
+ */
+async function initializeTagsGrid() {
+  const gridName = 'tags-grid';
+  
+  // Destroy existing grid if present
+  if (w2ui && w2ui[gridName]) {
+    w2ui[gridName].destroy();
+  }
+
+  // Get tags list from IPC
+  const tagsData = await window.electronAPI.getTagsList();
+  
+  // Build grid records from tags
+  const records = tagsData.map((tag, index) => ({
+    recid: index,
+    name: tag.name,
+    description: tag.description || '',
+    bgColor: tag.bgColor,
+    textColor: tag.textColor,
+    tagName: tag.name,
+    iconUrl: null
+  }));
+
+  // Generate all icons in parallel BEFORE creating grid
+  try {
+    const iconPromises = records.map(record =>
+      window.electronAPI.generateFolderIcon(record.bgColor, record.textColor)
+        .then(iconUrl => {
+          if (iconUrl) {
+            record.iconUrl = iconUrl;
+            console.log(`Icon generated for tag "${record.name}"`);
+          } else {
+            console.warn(`Icon generation returned null for tag "${record.name}" with colors bg=${record.bgColor}, outline=${record.textColor}`);
+          }
+          return iconUrl;
+        })
+        .catch(err => {
+          console.error(`Failed to generate icon for tag "${record.name}":`, err);
+          return null;
+        })
+    );
+    
+    // Wait for ALL icons to generate before rendering grid
+    await Promise.all(iconPromises);
+    console.log('All tag icons generated, rendering grid');
+  } catch (err) {
+    console.error('Error generating tag icons:', err);
+  }
+
+  // Create w2grid instance with icons already in records
+  w2ui[gridName] = new w2grid({
+    name: gridName,
+    show: {
+      header: false,
+      toolbar: false,
+      footer: false
+    },
+    columns: [
+      { field: 'icon', text: '', size: '40px', resizable: false, sortable: false, render: (record) => {
+        if (record.iconUrl) {
+          return `<div style="width: 30px; height: 20px; display: inline-flex; align-items: center; justify-content: center;"><img src="${record.iconUrl}" style="width: 20px; height: 20px; object-fit: contain;"></div>`;
+        }
+        return `<div style="width: 30px; height: 20px; background: ${record.bgColor}; border: 1px solid ${record.textColor}; border-radius: 3px;"></div>`;
+      }},
+      { field: 'name', text: 'Name', size: '100px', resizable: true, sortable: true },
+      { field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
+    ],
+    records: records,
+    onClick: function(event) {
+      event.onComplete = function() {
+        const grid = this;
+        const sel = grid.getSelection();
+        if (sel.length > 0) {
+          const recid = sel[0];
+          const record = grid.records.find(r => r.recid === recid);
+          if (record) {
+            populateTagForm(record);
+          }
+        }
+      };
+    }
+  });
+
+  // Render grid in container
+  w2ui[gridName].render('#tags-grid');
+}
+
+/**
+ * Initialize form elements for tag editing
+ */
+async function initializeTagsForm() {
+  // Form is already rendered in HTML, just clear it for new entry
+  clearTagForm();
+}
+
+/**
+ * Populate form with tag data when grid row is clicked
+ */
+function populateTagForm(record) {
+  tagFormState.editingName = record.tagName;
+  $('#form-tag-name').val(record.name);
+  $('#form-tag-bgColor').val(rgbToHex(record.bgColor));
+  $('#form-tag-textColor').val(rgbToHex(record.textColor));
+  $('#form-tag-description').val(record.description || '');
+}
+
+/**
+ * Clear tag form and reset to new mode
+ */
+function clearTagForm() {
+  tagFormState.editingName = null;
+  $('#form-tag-name').val('');
+  $('#form-tag-bgColor').val('#efe4b0');
+  $('#form-tag-textColor').val('#000000');
+  $('#form-tag-description').val('');
+  
+  // Clear grid selection
+  const grid = w2ui['tags-grid'];
+  if (grid) {
+    grid.selectNone();
+  }
+}
+
+/**
+ * Update grid after tag save (selective update)
+ * @param {object} updatedTag - The tag that was saved/updated
+ * @param {boolean} isNew - Whether this is a new tag or update
+ * @param {string} oldName - The old tag name (for renames), null if new
+ */
+async function updateGridAfterTagSave(updatedTag, isNew = false, oldName = null) {
+  const gridName = 'tags-grid';
+  if (!w2ui || !w2ui[gridName]) {
+    // Grid not initialized, reinitialize
+    await initializeTagsGrid();
+    return;
+  }
+
+  const grid = w2ui[gridName];
+  
+  try {
+    // Generate icon for the updated tag
+    const iconUrl = await window.electronAPI.generateFolderIcon(
+      updatedTag.bgColor,
+      updatedTag.textColor
+    );
+    
+    if (isNew) {
+      // NEW TAG: Add new record to grid
+      const newRecid = Math.max(...grid.records.map(r => r.recid), -1) + 1;
+      const newRecord = {
+        recid: newRecid,
+        name: updatedTag.name,
+        description: updatedTag.description || '',
+        bgColor: updatedTag.bgColor,
+        textColor: updatedTag.textColor,
+        tagName: updatedTag.name,
+        iconUrl: iconUrl
+      };
+      grid.add(newRecord);
+      console.log(`Added new tag "${updatedTag.name}" to grid`);
+    } else {
+      // EXISTING TAG: Find and update record
+      const recordIndex = grid.records.findIndex(r => r.tagName === oldName);
+      if (recordIndex >= 0) {
+        const record = grid.records[recordIndex];
+        record.name = updatedTag.name;
+        record.description = updatedTag.description || '';
+        record.bgColor = updatedTag.bgColor;
+        record.textColor = updatedTag.textColor;
+        record.tagName = updatedTag.name;
+        record.iconUrl = iconUrl;
+        
+        grid.refreshRow(record.recid);
+        console.log(`Updated tag "${updatedTag.name}" in grid`);
+      }
+    }
+  } catch (err) {
+    console.error('Error updating tag grid after save:', err);
+    // Fallback: reinitialize entire grid if update fails
+    await initializeTagsGrid();
+  }
+}
+
+/**
+ * Save tag from form (create or update)
+ */
+async function saveTagFromForm() {
+  const name = $('#form-tag-name').val().trim();
+  const bgColorHex = $('#form-tag-bgColor').val();
+  const textColorHex = $('#form-tag-textColor').val();
+  const description = $('#form-tag-description').val().trim();
+
+  if (!name) {
+    alert('Please enter a tag name');
+    return;
+  }
+
+  try {
+    // Convert HEX to RGB for storage
+    const tagData = {
+      name: name,
+      bgColor: hexToRgb(bgColorHex),
+      textColor: hexToRgb(textColorHex),
+      description: description
+    };
+
+    const isNew = !tagFormState.editingName;
+    const oldName = tagFormState.editingName;
+
+    if (isNew) {
+      // Create new tag
+      await window.electronAPI.saveTag(tagData);
+    } else {
+      // Update existing tag
+      tagData.oldName = oldName;
+      await window.electronAPI.updateTag(oldName, tagData);
+    }
+
+    // Update grid selectively instead of reinitializing
+    await updateGridAfterTagSave(tagData, isNew, oldName);
+    clearTagForm();
+    
+    alert(isNew ? 'Tag created successfully!' : 'Tag updated successfully!');
+  } catch (err) {
+    alert('Error saving tag: ' + err.message);
+  }
+}
+
+/**
+ * Delete tag from form
+ */
+async function deleteTagFromForm() {
+  if (!tagFormState.editingName) {
+    alert('Please select a tag to delete');
+    return;
+  }
+
+  if (!confirm(`Are you sure you want to delete the "${tagFormState.editingName}" tag?`)) {
+    return;
+  }
+
+  try {
+    const grid = w2ui['tags-grid'];
+    const tagToDelete = tagFormState.editingName;
+    
+    await window.electronAPI.deleteTag(tagToDelete);
+    
+    // Remove from grid selectively if grid exists
+    if (grid) {
+      const recordIndex = grid.records.findIndex(r => r.tagName === tagToDelete);
+      if (recordIndex >= 0) {
+        grid.remove(grid.records[recordIndex].recid);
+        console.log(`Removed tag "${tagToDelete}" from grid`);
+      }
+    }
+    
+    clearTagForm();
+    alert('Tag deleted successfully!');
+  } catch (err) {
+    alert('Error deleting tag: ' + err.message);
   }
 }
 

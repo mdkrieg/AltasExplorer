@@ -77,6 +77,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCategoryForDirectory: (dirPath) =>
     ipcRenderer.invoke('get-category-for-directory', dirPath),
 
+  // Tag operations
+  loadTags: () => ipcRenderer.invoke('load-tags'),
+  getTag: (name) => ipcRenderer.invoke('get-tag', name),
+  getTagsList: () => ipcRenderer.invoke('get-tags-list'),
+  createTag: (name, bgColor, textColor, description) =>
+    ipcRenderer.invoke('create-tag', { name, bgColor, textColor, description }),
+  updateTag: (name, tagData) =>
+    ipcRenderer.invoke('update-tag', { name, ...tagData }),
+  saveTag: (tagData) =>
+    ipcRenderer.invoke('save-tag', tagData),
+  deleteTag: (name) => ipcRenderer.invoke('delete-tag', name),
+
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),

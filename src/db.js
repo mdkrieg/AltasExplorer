@@ -62,6 +62,16 @@ class DatabaseService {
         FOREIGN KEY (file_id) REFERENCES files(id)
       );
 
+      CREATE TABLE IF NOT EXISTS orphans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inode TEXT NOT NULL,
+        dir_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        new_dir_id INTEGER,
+        FOREIGN KEY (dir_id) REFERENCES dirs(id),
+        FOREIGN KEY (new_dir_id) REFERENCES dirs(id)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_dirs_dirname ON dirs(dirname);
       CREATE INDEX IF NOT EXISTS idx_files_dir_id ON files(dir_id);
       CREATE INDEX IF NOT EXISTS idx_files_inode ON files(inode);
@@ -395,6 +405,73 @@ class DatabaseService {
       SELECT * FROM file_history WHERE inode = ? ORDER BY detectedAt DESC
     `);
     return stmt.all(inode);
+  }
+
+  /**
+   * Check if an inode exists in any directory other than the excluded one
+   * @param {string} inode - File inode
+   * @param {number} exclude_dir_id - Directory ID to exclude from search
+   * @returns {object|null} File record if found, null otherwise
+   */
+  findInodeInOtherDirectories(inode, exclude_dir_id) {
+    const stmt = this.db.prepare(`
+      SELECT f.*, d.id as dir_id_match FROM files f
+      JOIN dirs d ON f.dir_id = d.id
+      WHERE f.inode = ? AND f.dir_id != ?
+      LIMIT 1
+    `);
+    return stmt.get(inode, exclude_dir_id);
+  }
+
+  /**
+   * Create an orphan record for a file that was not found on filesystem
+   * @param {number} dir_id - Directory ID where file was expected
+   * @param {string} name - Filename of the orphan
+   * @returns {object} Insert result with lastID
+   */
+  createOrphan(dir_id, name, inode) {
+    const stmt = this.db.prepare(`
+      INSERT INTO orphans (inode, dir_id, name, new_dir_id)
+      VALUES (?, ?, ?, NULL)
+    `);
+    return stmt.run(inode, dir_id, name);
+  }
+
+  /**
+   * Update an orphan record with the new directory location (when file move is detected)
+   * @param {number} orphan_id - Orphan record ID
+   * @param {number} new_dir_id - Directory ID where file was found
+   * @returns {object} Update result
+   */
+  updateOrphanNewLocation(orphan_id, new_dir_id) {
+    const stmt = this.db.prepare(`
+      UPDATE orphans SET new_dir_id = ? WHERE id = ?
+    `);
+    return stmt.run(new_dir_id, orphan_id);
+  }
+
+  /**
+   * Delete an orphan record (user acknowledgement)
+   * @param {number} orphan_id - Orphan record ID to delete
+   * @returns {object} Delete result
+   */
+  deleteOrphan(orphan_id) {
+    const stmt = this.db.prepare(`
+      DELETE FROM orphans WHERE id = ?
+    `);
+    return stmt.run(orphan_id);
+  }
+
+  /**
+   * Get all orphan records for a directory
+   * @param {number} dir_id - Directory ID
+   * @returns {array} Array of orphan records
+   */
+  getOrphans(dir_id) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM orphans WHERE dir_id = ?
+    `);
+    return stmt.all(dir_id);
   }
 
   close() {

@@ -8,6 +8,7 @@ const logger = require('../src/logger');
 const db = require('../src/db');
 const fs = require('../src/filesystem');
 const categories = require('../src/categories');
+const tags = require('../src/tags');
 const icons = require('../src/icons');
 const checksum = require('../src/checksum');
 
@@ -412,6 +413,106 @@ ipcMain.handle('get-category-for-directory', (event, dirPath) => {
   }
 });
 
+// ============================================
+// Tags IPC Handlers
+// ============================================
+
+/**
+ * Tags: Load all tags
+ */
+ipcMain.handle('load-tags', () => {
+  try {
+    return tags.loadTags();
+  } catch (err) {
+    logger.error('Error loading tags:', err.message);
+    return {};
+  }
+});
+
+/**
+ * Tags: Get single tag
+ */
+ipcMain.handle('get-tag', (event, name) => {
+  try {
+    return tags.getTag(name);
+  } catch (err) {
+    logger.error('Error getting tag:', err.message);
+    return null;
+  }
+});
+
+/**
+ * Tags: Get tags list as array (for Settings modal grid)
+ */
+ipcMain.handle('get-tags-list', () => {
+  try {
+    const tagsObj = tags.loadTags();
+    // Convert object to array
+    return Object.values(tagsObj);
+  } catch (err) {
+    logger.error('Error getting tags list:', err.message);
+    return [];
+  }
+});
+
+/**
+ * Tags: Save tag (create or update)
+ */
+ipcMain.handle('save-tag', (event, tagData) => {
+  try {
+    const { name, bgColor, textColor, description } = tagData;
+    
+    // Check if tag exists
+    const existing = tags.getTag(name);
+    
+    if (existing) {
+      // Update existing
+      return tags.updateTag(name, bgColor, textColor, description || '');
+    } else {
+      // Create new
+      return tags.createTag(name, bgColor, textColor, description || '');
+    }
+  } catch (err) {
+    logger.error('Error saving tag:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * Tags: Update tag
+ */
+ipcMain.handle('update-tag', (event, tagData) => {
+  try {
+    const { name, oldName, bgColor, textColor, description } = tagData;
+    const updateName = name || oldName;
+    
+    // If name changed, delete old and create new
+    if (oldName && name && oldName !== name) {
+      tags.deleteTag(oldName);
+      return tags.createTag(name, bgColor, textColor, description || '');
+    } else {
+      // Just update
+      return tags.updateTag(updateName, bgColor, textColor, description || '');
+    }
+  } catch (err) {
+    logger.error('Error updating tag:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * Tags: Delete tag
+ */
+ipcMain.handle('delete-tag', (event, name) => {
+  try {
+    tags.deleteTag(name);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error deleting tag:', err.message);
+    return { error: err.message };
+  }
+});
+
 /**
  * Settings: Get settings
  */
@@ -714,20 +815,101 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
       }
     }
 
-    // Process deletions: files remaining in dbFileMap are no longer on filesystem
+    // Process missing files: check for moves vs orphans
+    const orphanedEntries = [];
     for (const [inode, dbFile] of dbFileMap) {
       try {
-        // Record deletion in history before deleting the file
-        db.insertFileHistory(inode, dirId, dbFile.id, {
-          filename: dbFile.filename,
-          status: 'deleted'
-        });
+        // Skip "." entries - they represent the directory itself and should be ignored
+        if (dbFile.filename === '.') {
+          logger.info(`Skipping "." entry for directory ${dirPath}`);
+          continue;
+        }
         
-        // Delete the file record
-        db.deleteFile(inode, dirId);
+        // Check if this inode exists in another directory (i.e., file moved)
+        const movedFileRecord = db.findInodeInOtherDirectories(inode, dirId);
+        
+        if (movedFileRecord) {
+          // File moved to another directory
+          const newDirId = movedFileRecord.dir_id_match;
+          
+          // Create orphan record to track the move
+          const orphanResult = db.createOrphan(dirId, dbFile.filename, inode);
+          const orphanId = orphanResult.lastID;
+          
+          // Update orphan with the new location
+          db.updateOrphanNewLocation(orphanId, newDirId);
+          
+          // Add to entries as 'moved' so it displays with special icon
+          orphanedEntries.push({
+            inode: inode,
+            filename: dbFile.filename,
+            isDirectory: false,
+            size: dbFile.size,
+            dateModified: dbFile.dateModified,
+            dateCreated: dbFile.dateCreated,
+            path: path.join(dirPath, dbFile.filename),
+            changeState: 'moved',
+            orphan_id: orphanId,
+            new_dir_id: newDirId
+          });
+          
+          logger.info(`File ${dbFile.filename} detected as moved from ${dirPath}`);
+        } else {
+          // File not found anywhere - it's orphaned/deleted
+          
+          // Create orphan record
+          const orphanResult = db.createOrphan(dirId, dbFile.filename, inode);
+          const orphanId = orphanResult.lastID;
+          
+          // Record deletion in history before marking as orphan
+          try {
+            db.insertFileHistory(inode, dirId, dbFile.id, {
+              filename: dbFile.filename,
+              status: 'orphan'
+            });
+          } catch (err) {
+            logger.error(`Error recording orphan history for ${dbFile.filename}:`, err.message);
+          }
+          
+          // Add to entries as 'orphan' so it displays as red text
+          orphanedEntries.push({
+            inode: inode,
+            filename: dbFile.filename,
+            isDirectory: false,
+            size: dbFile.size,
+            dateModified: dbFile.dateModified,
+            dateCreated: dbFile.dateCreated,
+            path: path.join(dirPath, dbFile.filename),
+            changeState: 'orphan',
+            orphan_id: orphanId
+          });
+          
+          logger.info(`File ${dbFile.filename} marked as orphan in ${dirPath}`);
+        }
       } catch (err) {
-        logger.error(`Error recording/deleting file ${dbFile.filename}:`, err.message);
+        logger.error(`Error processing missing file ${dbFile.filename}:`, err.message);
       }
+    }
+
+    // Add orphaned entries to the entries list
+    entriesWithChanges.push(...orphanedEntries);
+
+    // Add the "." current directory entry to the results
+    // (it's stored in DB but not in filesystem, so we need to add it manually)
+    const dotFileRecord = db.getFileByInode(dirInode, dirId);
+    if (dotFileRecord && dotFileRecord.filename === '.') {
+      entriesWithChanges.unshift({
+        inode: dirInode,
+        filename: '.',
+        isDirectory: true, // Treat "." as a directory entry
+        size: 0,
+        dateModified: dirStats.dateModified,
+        dateCreated: dirStats.dateCreated,
+        path: dirPath,
+        changeState: 'unchanged',
+        orphan_id: null,
+        new_dir_id: null
+      });
     }
 
     return {
@@ -836,6 +1018,19 @@ ipcMain.handle('get-file-history', (event, inode) => {
     return { success: true, data: history };
   } catch (err) {
     logger.error('Error retrieving file history:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Orphans: Acknowledge and remove an orphan record
+ */
+ipcMain.handle('acknowledge-orphan', (event, orphanId) => {
+  try {
+    db.deleteOrphan(orphanId);
+    return { success: true };
+  } catch (err) {
+    logger.error(`Error acknowledging orphan ${orphanId}:`, err.message);
     return { success: false, error: err.message };
   }
 });

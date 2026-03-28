@@ -9,6 +9,7 @@
     "build": "electron-builder",
     "test": "jest --watch",
     "test:coverage": "jest --coverage",
+    "db:reinit": "node scripts/reinitialize-db.js",
     "postinstall": "electron-rebuild better-sqlite3 --build-from-source"
   },
   "build": {
