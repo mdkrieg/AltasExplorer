@@ -30,6 +30,7 @@ let currentLayout = 1;
 let notesEditMode = false;
 let visiblePanels = 1;
 let panelContextMenuState = {}; // Stores context menu state for onMenuClick handler
+let hotkeyRegistry = {}; // Maps action IDs to their current key combinations
 const MISSING_DIRECTORY_LABEL = '(DIRECTORY DOES NOT EXIST)';
 
 /**
@@ -64,6 +65,9 @@ async function initialize() {
 
     // Load categories
     await loadCategories();
+
+    // Load hotkeys
+    await loadHotkeysFromStorage();
 
     // Attach event listeners
     attachEventListeners();
@@ -624,11 +628,84 @@ async function loadCategories() {
 }
 
 /**
+ * Load hotkeys from storage and populate registry
+ */
+async function loadHotkeysFromStorage() {
+  try {
+    const hotkeysData = await window.electronAPI.getHotkeys();
+    hotkeyRegistry = {};
+    
+    // Flatten the nested hotkeys structure into a simple actionId -> key mapping
+    for (const context of Object.values(hotkeysData)) {
+      for (const [actionId, actionData] of Object.entries(context)) {
+        hotkeyRegistry[actionId] = actionData.key;
+      }
+    }
+    
+    console.log('Hotkeys loaded:', hotkeyRegistry);
+  } catch (err) {
+    console.error('Error loading hotkeys:', err);
+    // Initialize with defaults if loading fails
+    hotkeyRegistry = {
+      'navigate_back': 'Alt+Left',
+      'navigate_forward': 'Alt+Right',
+      'navigate_up': 'Alt+Up',
+      'add_panel': 'Ctrl+T',
+      'enter_path': 'Enter',
+      'cancel_path': 'Escape',
+      'edit_notes': 'F2',
+      'save_notes': 'Ctrl+S'
+    };
+  }
+}
+
+/**
+ * Convert a KeyboardEvent to a normalized hotkey string like "Ctrl+S", "Alt+Left", etc.
+ */
+function getHotKeyCombo(event) {
+  let combo = '';
+  
+  if (event.ctrlKey) combo += 'Ctrl+';
+  if (event.altKey) combo += 'Alt+';
+  if (event.shiftKey) combo += 'Shift+';
+  
+  // Normalize arrow keys and other special keys
+  let key = event.key;
+  if (key === 'ArrowLeft') key = 'Left';
+  else if (key === 'ArrowRight') key = 'Right';
+  else if (key === 'ArrowUp') key = 'Up';
+  else if (key === 'ArrowDown') key = 'Down';
+  else if (key === 'Enter') key = 'Enter';
+  else if (key === 'Escape') key = 'Escape';
+  else if (key === ' ') key = 'Space';
+  
+  combo += key;
+  return combo;
+}
+
+/**
+ * Find the action ID for a given hotkey combo
+ */
+function getActionForHotkey(hotkeyCombo) {
+  for (const [actionId, key] of Object.entries(hotkeyRegistry)) {
+    if (key === hotkeyCombo) {
+      return actionId;
+    }
+  }
+  return null;
+}
+
+/**
  * Set which panel is currently active
  */
 function setActivePanelId(panelId) {
   if (panelId >= 1 && panelId <= 4) {
     activePanelId = panelId;
+    // Update panel badge styling for focus indicator
+    for (let i = 1; i <= 4; i++) {
+      $(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
+    }
+    $(`#panel-${panelId} .panel-number`).addClass('panel-number-selected');
     console.log('Active panel set to:', panelId);
   }
 }
@@ -1180,6 +1257,14 @@ function clearPanelState(panelId) {
 function attachPanelEventListeners(panelId) {
   const $panel = $(`#panel-${panelId}`);
   
+  // Set active panel when clicking anywhere in the panel (except on interactive elements)
+  $panel.click(function(e) {
+    // Don't retrigger for buttons that have their own handlers
+    if (!$(e.target).is('button') && !$(e.target).closest('button').length) {
+      setActivePanelId(panelId);
+    }
+  });
+  
   // Set active panel when clicking on title
   $panel.find('.w2ui-panel-title').click(function() {
     setActivePanelId(panelId);
@@ -1284,54 +1369,69 @@ function attachPanelEventListeners(panelId) {
  * Attach event listeners to buttons and grid
  */
 function attachEventListeners() {
-  // Keyboard shortcuts for Back/Forward
+  // Keyboard shortcuts - detect hotkey and dispatch to appropriate handler
   $(document).keydown(async function(event) {
-    // Alt+Left for back
-    if (event.altKey && event.key === 'ArrowLeft') {
-      event.preventDefault();
-      navigateBack();
-    }
-    // Alt+Right for forward
-    if (event.altKey && event.key === 'ArrowRight') {
-      event.preventDefault();
-      navigateForward();
-    }
-    // Alt+Up for parent directory
-    if (event.altKey && event.key === 'ArrowUp') {
-      event.preventDefault();
-      const state = panelState[activePanelId];
-      if (state.currentPath && state.currentPath.length > 3) {
-        const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
-        if (parentPath.length >= 2) {
-          navigateToDirectory(parentPath, activePanelId);
+    const hotkeyCombo = getHotKeyCombo(event);
+    const actionId = getActionForHotkey(hotkeyCombo);
+    
+    // Only handle recognized hotkeys
+    if (!actionId) return;
+    
+    switch(actionId) {
+      case 'navigate_back':
+        event.preventDefault();
+        navigateBack();
+        break;
+      case 'navigate_forward':
+        event.preventDefault();
+        navigateForward();
+        break;
+      case 'navigate_up':
+        event.preventDefault();
+        const state = panelState[activePanelId];
+        if (state.currentPath && state.currentPath.length > 3) {
+          const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
+          if (parentPath.length >= 2) {
+            navigateToDirectory(parentPath, activePanelId);
+          }
         }
-      }
-    }
-    // F2 to begin edit mode in notes
-    if (event.key === 'F2') {
-      const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
-      if ($notesView.is(':visible') && !notesEditMode) {
+        break;
+      case 'edit_notes':
+        const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
+        if ($notesView.is(':visible') && !notesEditMode) {
+          event.preventDefault();
+          await toggleNotesEditMode(activePanelId);
+        }
+        break;
+      case 'save_notes':
+        const $notesViewSave = $(`#panel-${activePanelId} .panel-notes-view`);
+        if ($notesViewSave.is(':visible') && notesEditMode) {
+          event.preventDefault();
+          await toggleNotesEditMode(activePanelId);
+        }
+        break;
+      case 'add_panel':
         event.preventDefault();
-        await toggleNotesEditMode(activePanelId);
-      }
+        if (visiblePanels < 4) {
+          visiblePanels++;
+          $(`#panel-${visiblePanels}`).show();
+          updatePanelLayout();
+        }
+        break;
     }
-    // Ctrl+S to save in notes edit mode
-    if (event.ctrlKey && event.key === 's') {
-      const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
-      if ($notesView.is(':visible') && notesEditMode) {
-        event.preventDefault();
-        await toggleNotesEditMode(activePanelId);
-      }
+  });
+
+  // Window focus/blur handlers for panel selection styling
+  $(window).blur(function() {
+    // When window loses focus, remove selection styling from all panels
+    for (let i = 1; i <= 4; i++) {
+      $(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
     }
-    // Ctrl+T to add a panel
-    if (event.ctrlKey && event.key === 't') {
-      event.preventDefault();
-      if (visiblePanels < 4) {
-        visiblePanels++;
-        $(`#panel-${visiblePanels}`).show();
-        updatePanelLayout();
-      }
-    }
+  });
+
+  $(window).focus(function() {
+    // When window regains focus, restore selection styling to active panel
+    $(`#panel-${activePanelId} .panel-number`).addClass('panel-number-selected');
   });
 
   // View button - show layout modal
@@ -1449,6 +1549,21 @@ function attachEventListeners() {
     await deleteTagFromForm();
   });
 
+  // Hotkeys form demo button
+  $('#btn-hotkey-demo').click(function() {
+    enterHotkeyDemoMode();
+  });
+
+  // Hotkeys form save button
+  $('#btn-hotkey-save').click(async function() {
+    await saveHotkeyFromForm();
+  });
+
+  // Hotkeys form reset button
+  $('#btn-hotkey-reset').click(async function() {
+    await resetHotkeyToDefault();
+  });
+
   // History modal close button
   $('#btn-history-close').click(function() {
     hideHistoryModal();
@@ -1529,6 +1644,39 @@ function setupTagResizableDivider() {
 }
 
 /**
+ * Setup resizable divider for hotkeys form panel
+ */
+function setupHotkeysResizableDivider() {
+  const divider = $('#hotkeys-divider');
+  const formPanel = $('#hotkeys-form-panel');
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  divider.mousedown(function(e) {
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = formPanel.width();
+    $(document).css('user-select', 'none');
+  });
+
+  $(document).mousemove(function(e) {
+    if (!isResizing) return;
+    
+    const deltaX = e.clientX - startX;
+    const newWidth = Math.max(250, startWidth - deltaX); // Minimum 250px width
+    formPanel.css('flex', `0 0 ${newWidth}px`);
+  });
+
+  $(document).mouseup(function() {
+    if (isResizing) {
+      isResizing = false;
+      $(document).css('user-select', '');
+    }
+  });
+}
+
+/**
  * Show settings modal
  */
 async function showSettingsModal() {
@@ -1538,10 +1686,12 @@ async function showSettingsModal() {
   await initializeTagsGrid();
   await initializeTagsForm();
   await initializeBrowserSettingsForm();
+  await initializeHotkeysGrid();
   
   // Setup resizable dividers
   setupResizableDivider();
   setupTagResizableDivider();
+  setupHotkeysResizableDivider();
   
   // Show modal
   $('#settings-modal').show();
@@ -1561,6 +1711,9 @@ function hideSettingsModal() {
   }
   if (w2ui['tags-grid']) {
     w2ui['tags-grid'].destroy();
+  }
+  if (w2ui['hotkeys-grid']) {
+    w2ui['hotkeys-grid'].destroy();
   }
   
   // Ensure background refresh timer is active for active panel
@@ -1892,14 +2045,16 @@ function switchSettingsTab(tabName) {
   $('.settings-tab-content').hide();
   // Show selected tab with proper display mode
   const $tab = $(`#tab-${tabName}`);
-  // For tabs that need flex layout (category, tag), use flex display
-  if (tabName === 'category' || tabName === 'tag') {
+  // For tabs that need flex layout (category, tag, hotkeys), use flex display
+  if (tabName === 'category' || tabName === 'tag' || tabName === 'hotkeys') {
     $tab.css('display', 'flex');
     // Resize grid after tab becomes visible (needed for w2ui)
     if (tabName === 'category' && w2ui['categories-grid']) {
       setTimeout(() => w2ui['categories-grid'].resize(), 0);
     } else if (tabName === 'tag' && w2ui['tags-grid']) {
       setTimeout(() => w2ui['tags-grid'].resize(), 0);
+    } else if (tabName === 'hotkeys' && w2ui['hotkeys-grid']) {
+      setTimeout(() => w2ui['hotkeys-grid'].resize(), 0);
     }
   } else {
     $tab.show();
@@ -2876,6 +3031,94 @@ async function initializeTagsGrid() {
 }
 
 /**
+ * Initialize hotkeys grid
+ */
+async function initializeHotkeysGrid() {
+  const gridName = 'hotkeys-grid';
+  
+  // Destroy existing grid if present
+  if (w2ui && w2ui[gridName]) {
+    w2ui[gridName].destroy();
+  }
+
+  // Get hotkeys data
+  const hotkeyData = await window.electronAPI.getHotkeys();
+  
+  // Build grid records from hotkeys - flatten the nested structure
+  const records = [];
+  let recid = 0;
+  for (const [context, actions] of Object.entries(hotkeyData)) {
+    for (const [actionId, actionData] of Object.entries(actions)) {
+      records.push({
+        recid: recid++,
+        context: context,
+        action: actionData.label,
+        hotkey: actionData.key,
+        actionId: actionId,
+        defaultKey: actionData.default
+      });
+    }
+  }
+
+  // Create w2grid instance
+  w2ui[gridName] = new w2grid({
+    name: gridName,
+    show: {
+      header: false,
+      toolbar: false,
+      footer: false
+    },
+    columns: [
+      { field: 'context', text: 'Context', size: '100px', resizable: true, sortable: true },
+      { field: 'action', text: 'Action', size: '150px', resizable: true, sortable: true },
+      { field: 'hotkey', text: 'Hotkey', size: '100%', resizable: true, sortable: false }
+    ],
+    records: records,
+    onClick: function(event) {
+      event.onComplete = function() {
+        const grid = this;
+        const sel = grid.getSelection();
+        if (sel.length > 0) {
+          const recid = sel[0];
+          const record = grid.records.find(r => r.recid === recid);
+          if (record) {
+            populateHotkeysForm(record);
+          }
+        }
+      };
+    }
+  });
+
+  // Render grid in container
+  w2ui[gridName].render('#hotkeys-grid');
+}
+
+/**
+ * Populate hotkeys form with selected hotkey data
+ */
+function populateHotkeysForm(record) {
+  $('#form-hotkey-context').val(record.context);
+  $('#form-hotkey-action').val(record.action);
+  $('#form-hotkey-current').val(record.hotkey);
+  
+  // Store current record in form for later use
+  $('#hotkeys-form').data('currentRecord', record);
+  
+  // Clear demo mode
+  $('#hotkey-demo-section').hide();
+  $('#form-hotkey-demo').val('');
+  $('#btn-hotkey-demo').text('Edit').show();
+  $('#btn-hotkey-save').hide();
+}
+
+/**
+ * Initialize form elements for hotkeys editing
+ */
+async function initializeHotkeysForm() {
+  // Nothing needed here - form is already in HTML and will be populated on grid selection
+}
+
+/**
  * Initialize form elements for tag editing
  */
 async function initializeTagsForm() {
@@ -3048,6 +3291,189 @@ async function deleteTagFromForm() {
     alert('Tag deleted successfully!');
   } catch (err) {
     alert('Error deleting tag: ' + err.message);
+  }
+}
+
+/**
+ * Enter demo mode for hotkey capture
+ */
+function enterHotkeyDemoMode() {
+  const $demoSection = $('#hotkey-demo-section');
+  const $demoInput = $('#form-hotkey-demo');
+  const $editBtn = $('#btn-hotkey-demo');
+  const $saveBtn = $('#btn-hotkey-save');
+  
+  // Show demo section and save button immediately
+  $demoSection.show();
+  $saveBtn.show();
+  $demoInput.val('Press a key combination...').css('color', '#999').focus();
+  $editBtn.text('Cancel').css('background', '#f44336');
+  
+  // Store to track if we're in edit mode
+  let isCapturing = true;
+  let capturedCombo = '';
+  
+  const keydownHandler = function(e) {
+    if (!isCapturing) return;
+    
+    // Prevent default for modifier keys and special keys
+    if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift') {
+      return; // Don't prevent, just return - user is building a combo
+    }
+    
+    e.preventDefault(); // Prevent default browser behavior for other keys
+    
+    const combo = getHotKeyCombo(e);
+    capturedCombo = combo;
+    
+    // Display captured combo in real-time and update form data
+    $demoInput.val(combo).css('color', '#333'); // Change text color back to normal when a key is pressed
+    $('#hotkeys-form').data('capturedCombo', combo); // Update form data so Save button can find it
+  };
+  
+  // Handle Cancel button click to exit edit mode
+  const cancelHandler = function() {
+    isCapturing = false;
+    cancelHotkeyDemo();
+    $(document).off('keydown.hotkeyDemo');
+    $editBtn.off('click.hotkeyCancel');
+  };
+  
+  $editBtn.on('click.hotkeyCancel', cancelHandler);
+  
+  // Attach key capture listener (only on keydown, not keyup)
+  $(document).on('keydown.hotkeyDemo', keydownHandler);
+  
+  // Store captured combo in form data so Save button can use it
+  $('#hotkeys-form').data('capturedCombo', capturedCombo);
+}
+
+/**
+ * Cancel demo mode
+ */
+function cancelHotkeyDemo() {
+  $('#hotkey-demo-section').hide();
+  $('#form-hotkey-demo').val('');
+  $('#btn-hotkey-demo').text('Edit').css('background', '#2196F3');
+  $('#btn-hotkey-save').hide();
+  $('#hotkeys-form').removeData('capturedCombo');
+}
+
+/**
+ * Save hotkey from form
+ */
+async function saveHotkeyFromForm() {
+  const record = $('#hotkeys-form').data('currentRecord');
+  const capturedCombo = $('#hotkeys-form').data('capturedCombo');
+  
+  if (!record || !capturedCombo) {
+    alert('No hotkey captured. Please use Edit mode to capture a new hotkey.');
+    return;
+  }
+  
+  try {
+    // Get current hotkeys data
+    const hotkeyData = await window.electronAPI.getHotkeys();
+    
+    // Check for duplicates within the same context
+    const context = record.context;
+    const newKey = capturedCombo;
+    
+    for (const [actionId, actionData] of Object.entries(hotkeyData[context])) {
+      if (actionId !== record.actionId && actionData.key === newKey) {
+        // Duplicate found
+        if (confirm(`This hotkey is already assigned to "${actionData.label}" in the "${context}" context.\\n\\nDo you want to override it?`)) {
+          // User confirmed override
+          actionData.key = capturedCombo;
+          hotkeyData[context][record.actionId].key = capturedCombo;
+          break;
+        } else {
+          // User cancelled
+          throw new Error('Hotkey conflict - operation cancelled');
+        }
+      }
+    }
+    
+    // Update the hotkey for this action
+    hotkeyData[record.context][record.actionId].key = capturedCombo;
+    
+    // Save to backend
+    const result = await window.electronAPI.saveHotkeys(hotkeyData);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to save hotkeys');
+    }
+    
+    // Reload hotkey registry in memory
+    await loadHotkeysFromStorage();
+    
+    // Update grid with new hotkey
+    const grid = w2ui['hotkeys-grid'];
+    if (grid) {
+      const gridRecord = grid.records.find(r => r.actionId === record.actionId);
+      if (gridRecord) {
+        gridRecord.hotkey = capturedCombo;
+        grid.refreshRow(gridRecord.recid);
+      }
+    }
+    
+    // Update form and clear capture
+    $('#form-hotkey-current').val(capturedCombo);
+    cancelHotkeyDemo();
+    
+    alert('Hotkey saved successfully!');
+  } catch (err) {
+    alert('Error saving hotkey: ' + err.message);
+  }
+}
+
+/**
+ * Reset hotkey to default
+ */
+async function resetHotkeyToDefault() {
+  const record = $('#hotkeys-form').data('currentRecord');
+  if (!record) {
+    alert('Please select a hotkey to reset');
+    return;
+  }
+  
+  if (!confirm(`Reset "${record.action}" hotkey to ${record.defaultKey}?`)) {
+    return;
+  }
+  
+  try {
+    // Get current hotkeys data
+    const hotkeyData = await window.electronAPI.getHotkeys();
+    
+    // Reset the hotkey for this action to its default
+    hotkeyData[record.context][record.actionId].key = record.defaultKey;
+    
+    // Save to backend
+    const result = await window.electronAPI.saveHotkeys(hotkeyData);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to save hotkeys');
+    }
+    
+    // Reload hotkey registry in memory
+    await loadHotkeysFromStorage();
+    
+    // Update grid
+    const grid = w2ui['hotkeys-grid'];
+    if (grid) {
+      const gridRecord = grid.records.find(r => r.actionId === record.actionId);
+      if (gridRecord) {
+        gridRecord.hotkey = record.defaultKey;
+        grid.refreshRow(gridRecord.recid);
+      }
+    }
+    
+    // Update form and clear any edit state
+    record.hotkey = record.defaultKey;
+    $('#form-hotkey-current').val(record.defaultKey);
+    cancelHotkeyDemo();
+    
+    alert('Hotkey reset successfully!');
+  } catch (err) {
+    alert('Error resetting hotkey: ' + err.message);
   }
 }
 

@@ -94,6 +94,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
   isDirectory: (dirPath) => ipcRenderer.invoke('is-directory', dirPath),
   
+  // Hotkeys
+  getHotkeys: () => ipcRenderer.invoke('get-hotkeys'),
+  saveHotkeys: (hotkeyData) => ipcRenderer.invoke('save-hotkeys', hotkeyData),
+  
   // Window icon update
   updateWindowIcon: (categoryName) =>
     ipcRenderer.invoke('update-window-icon', categoryName),

@@ -539,6 +539,31 @@ ipcMain.handle('save-settings', (event, settings) => {
 });
 
 /**
+ * Hotkeys: Get hotkeys
+ */
+ipcMain.handle('get-hotkeys', () => {
+  try {
+    return categories.getHotkeys();
+  } catch (err) {
+    logger.error('Error getting hotkeys:', err.message);
+    return {};
+  }
+});
+
+/**
+ * Hotkeys: Save hotkeys
+ */
+ipcMain.handle('save-hotkeys', (event, hotkeyData) => {
+  try {
+    categories.saveHotkeys(hotkeyData);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error saving hotkeys:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * File system: Check whether a path is an existing directory
  */
 ipcMain.handle('is-directory', (event, dirPath) => {
