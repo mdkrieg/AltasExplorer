@@ -51,21 +51,23 @@ class DatabaseService {
         UNIQUE(inode, dir_id)
       );
 
-      CREATE TABLE IF NOT EXISTS file_changes (
+      CREATE TABLE IF NOT EXISTS file_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         inode TEXT NOT NULL,
         dir_id INTEGER NOT NULL,
-        changeType TEXT NOT NULL,
+        file_id INTEGER NOT NULL,
+        changeValue TEXT NOT NULL,
         detectedAt INTEGER,
         acknowledgedAt INTEGER,
         FOREIGN KEY (dir_id) REFERENCES dirs(id),
-        UNIQUE(inode, dir_id, changeType)
+        FOREIGN KEY (file_id) REFERENCES files(id)
       );
 
       CREATE INDEX IF NOT EXISTS idx_dirs_dirname ON dirs(dirname);
       CREATE INDEX IF NOT EXISTS idx_files_dir_id ON files(dir_id);
       CREATE INDEX IF NOT EXISTS idx_files_inode ON files(inode);
-      CREATE INDEX IF NOT EXISTS idx_file_changes_inode ON file_changes(inode);
+      CREATE INDEX IF NOT EXISTS idx_file_history_inode ON file_history(inode);
+      CREATE INDEX IF NOT EXISTS idx_file_history_dir_id ON file_history(dir_id);
     `;
 
     this.db.exec(schema);
@@ -277,6 +279,17 @@ class DatabaseService {
   }
 
   /**
+   * Delete a single file by inode and dir_id
+   * Note: Does not delete file_history records to preserve audit trail
+   */
+  deleteFile(inode, dir_id) {
+    const stmt = this.db.prepare(`
+      DELETE FROM files WHERE inode = ? AND dir_id = ?
+    `);
+    return stmt.run(inode, dir_id);
+  }
+
+  /**
    * Get a single file by inode and dirname
    */
   getFile(inode, dirname) {
@@ -328,6 +341,99 @@ class DatabaseService {
   updateFileTags(inode, dir_id, tags) {
     const stmt = this.db.prepare('UPDATE files SET tags = ? WHERE inode = ? AND dir_id = ?');
     return stmt.run(tags, inode, dir_id);
+  }
+
+  /**
+   * Validate changeValue JSON against whitelist of allowed keys
+   * Allowed keys: filename, dateModified, filesizeBytes, checksumValue, checksumStatus, previousDateModified
+   */
+  validateChangeValue(changeValue) {
+    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'previousDateModified', 'dirname', 'category', 'status'];
+    
+    // Check if it's valid JSON
+    let obj;
+    try {
+      if (typeof changeValue === 'string') {
+        obj = JSON.parse(changeValue);
+      } else {
+        obj = changeValue;
+      }
+    } catch (err) {
+      throw new Error(`Invalid JSON in changeValue: ${err.message}`);
+    }
+
+    // Check that all keys are whitelisted
+    const keys = Object.keys(obj);
+    for (const key of keys) {
+      if (!ALLOWED_KEYS.includes(key)) {
+        throw new Error(`Invalid key in changeValue: ${key}. Allowed keys: ${ALLOWED_KEYS.join(', ')}`);
+      }
+    }
+
+    // Ensure it's not empty
+    if (keys.length === 0) {
+      throw new Error('changeValue cannot be empty');
+    }
+
+    return obj;
+  }
+
+  /**
+   * Insert a file history record
+   * @param {string} inode - File inode
+   * @param {number} dir_id - Directory ID
+   * @param {number} file_id - File ID (foreign key to files table)
+   * @param {object|string} changeValue - JSON object or string with file metadata/changes
+   * @returns {object} Insert result with lastID
+   */
+  insertFileHistory(inode, dir_id, file_id, changeValue) {
+    // Validate and stringify changeValue if needed
+    const validatedChange = this.validateChangeValue(changeValue);
+    const changeValueJson = typeof changeValue === 'string' ? changeValue : JSON.stringify(validatedChange);
+
+    const stmt = this.db.prepare(`
+      INSERT INTO file_history (inode, dir_id, file_id, changeValue, detectedAt)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    return stmt.run(inode, dir_id, file_id, changeValueJson, Date.now());
+  }
+
+  /**
+   * Update acknowledgedAt timestamp for a file history record
+   * @param {number} historyId - ID of the file_history record to acknowledge
+   * @returns {object} Update result
+   */
+  updateFileHistoryAcknowledgement(historyId) {
+    const stmt = this.db.prepare(`
+      UPDATE file_history SET acknowledgedAt = ? WHERE id = ?
+    `);
+
+    return stmt.run(Date.now(), historyId);
+  }
+
+  /**
+   * Get the most recent file history record for an inode
+   * @param {string} inode - File inode
+   * @returns {object|null} Most recent history record
+   */
+  getLatestFileHistory(inode) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM file_history WHERE inode = ? ORDER BY detectedAt DESC LIMIT 1
+    `);
+    return stmt.get(inode);
+  }
+
+  /**
+   * Get all file history records for an inode, ordered by detectedAt DESC
+   * @param {string} inode - File inode
+   * @returns {array} Array of history records
+   */
+  getFileHistory(inode) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM file_history WHERE inode = ? ORDER BY detectedAt DESC
+    `);
+    return stmt.all(inode);
   }
 
   close() {

@@ -154,6 +154,7 @@
       <div id="settings-tabs" style="display: flex; border-bottom: 1px solid #ddd; background: #fafafa;">
         <button class="settings-tab-btn" data-tab="category" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid #2196F3; color: #2196F3; font-weight: bold; cursor: pointer; border-radius: 0;">Category Settings</button>
         <button class="settings-tab-btn" data-tab="browser" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #666; font-weight: bold; cursor: pointer; border-radius: 0;">Browser Settings</button>
+        <button class="settings-tab-btn" data-tab="developer" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #666; font-weight: bold; cursor: pointer; border-radius: 0;">Developer</button>
       </div>
       
       <!-- Tab Content -->
@@ -234,6 +235,18 @@
             </div>
           </div>
         </div>
+
+        <!-- Developer Tab -->
+        <div id="tab-developer" class="settings-tab-content" style="display: none; flex-direction: column; overflow: hidden; flex: 1; padding: 20px;">
+          <div style="max-width: 620px; display: flex; flex-direction: column; gap: 20px;">
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="font-weight: bold; font-size: 13px; color: #d32f2f;">Database Tools</div>
+              <div style="font-size: 12px; color: #666;">Warning: These operations cannot be undone.</div>
+              <button id="btn-dev-reinitialize-db" style="padding: 12px; background: #d32f2f; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Reinitialize Database</button>
+              <div style="font-size: 11px; color: #999;">Clears all database tables and resets to initial state. This will delete all file history and category assignments, but keep category definitions.</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -284,6 +297,17 @@
       </div>
 
       <button id="btn-layout-close" style="width: 100%; padding: 10px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+    </div>
+  </div>
+
+  <!-- File History Modal -->
+  <div id="history-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 8px; width: 900px; height: 600px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+      <div style="display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #ddd;">
+        <h2 id="history-modal-title" style="margin: 0; flex: 1;">File History</h2>
+        <button id="btn-history-close" style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+      </div>
+      <div id="history-grid" style="flex: 1; overflow: hidden;"></div>
     </div>
   </div>
 

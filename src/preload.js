@@ -95,5 +95,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeNotesFile: (notesPath, content) => ipcRenderer.invoke('write-notes-file', { notesPath, content }),
   
   // Markdown rendering via IPC
-  renderMarkdown: (content) => ipcRenderer.invoke('render-markdown', content)
+  renderMarkdown: (content) => ipcRenderer.invoke('render-markdown', content),
+  
+  // File history operations
+  getFileHistory: (inode) => ipcRenderer.invoke('get-file-history', inode),
+  
+  // Database operations
+  reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database')
 });

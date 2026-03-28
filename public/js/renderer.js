@@ -14,10 +14,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -212,6 +212,23 @@ async function initializeGridForPanel(panelId) {
     w2ui[gridName].destroy();
   }
 
+  // Build columns dynamically based on panel state
+  const state = panelState[panelId];
+  const columns = [
+    { field: 'icon', text: '', size: '40px', resizable: false, sortable: false },
+    { field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true },
+    { field: 'size', text: 'Size', size: '120px', resizable: true, sortable: true, align: 'right' },
+    { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true }
+  ];
+  
+  // Add optional DateCreated column if enabled for this panel
+  if (state.showDateCreated) {
+    columns.push({ field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true });
+  }
+  
+  // Always add checksum at the end
+  columns.push({ field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false });
+
   // Use w2grid constructor directly
   w2ui[gridName] = new w2grid({
     name: gridName,
@@ -220,13 +237,7 @@ async function initializeGridForPanel(panelId) {
       toolbar: false,
       footer: false
     },
-    columns: [
-      { field: 'icon', text: '', size: '40px', resizable: false, sortable: false },
-      { field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true },
-      { field: 'size', text: 'Size', size: '120px', resizable: true, sortable: true, align: 'right' },
-      { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true },
-      { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false }
-    ],
+    columns: columns,
     records: [],
     contextMenu: [],
     onClick: function(event) {
@@ -283,9 +294,9 @@ async function initializeGridForPanel(panelId) {
         
         // Get all selected records
         const selectedRecIds = this.getSelection();
-        const selectedRecords = selectedRecIds.map(recid => this.records[recid - 1]).filter(r => r && r.isFolder);
+        const selectedRecords = selectedRecIds.map(recid => this.records[recid - 1]);
         
-        // If no selected records or right-clicked item is not a folder, don't show menu
+        // If no selected records, don't show menu
         if (selectedRecords.length === 0) {
           return;
         }
@@ -369,6 +380,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       size: applyClass(formatBytes(file.size), className),
       dateModified: dateModifiedContent,
       dateModifiedRaw: file.dateModified, // Store raw timestamp for acknowledgment
+      dateCreated: file.dateCreated ? new Date(file.dateCreated).toLocaleDateString() : '-',
+      dateCreatedRaw: file.dateCreated,
       checksum: checksumCell,
       checksumStatus: null, // Will store 'pending', 'calculated', 'error'
       checksumValue: null, // Will store the actual hash
@@ -751,6 +764,17 @@ function formatNotesContent(content, format) {
     default:
       return '<pre style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">' + 
              escapeHtml(content) + '</pre>';
+  }
+}
+
+/**
+ * Hide history modal
+ */
+function hideHistoryModal() {
+  $('#history-modal').hide();
+  // Destroy w2ui grid
+  if (w2ui['history-grid']) {
+    w2ui['history-grid'].destroy();
   }
 }
 
@@ -1295,6 +1319,38 @@ function attachEventListeners() {
   $('#browser-home-directory').on('input', async function() {
     await updateHomeDirectoryWarning($(this).val());
   });
+
+  // Developer: reinitialize database button
+  $('#btn-dev-reinitialize-db').click(async function() {
+    if (!confirm('Are you sure you want to reinitialize the database? This will delete all file history and directory assignments. This cannot be undone.')) {
+      return;
+    }
+    
+    try {
+      const result = await window.electronAPI.reinitializeDatabase();
+      if (result.success) {
+        alert('Database reinitialized successfully. The application will now reload.');
+        // Reload the page to reset all state
+        window.location.reload();
+      } else {
+        alert('Error reinitializing database: ' + result.error);
+      }
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  });
+
+  // History modal close button
+  $('#btn-history-close').click(function() {
+    hideHistoryModal();
+  });
+
+  // History modal overlay click to close
+  $('#history-modal').click(function(e) {
+    if (e.target === this) {
+      hideHistoryModal();
+    }
+  });
 }
 
 /**
@@ -1357,6 +1413,147 @@ function hideSettingsModal() {
   // Destroy w2ui grid
   if (w2ui['categories-grid']) {
     w2ui['categories-grid'].destroy();
+  }
+}
+
+/**
+ * Open history modal for a selected file/directory
+ */
+async function openHistoryModal(selectedRecord) {
+  try {
+    // Get file history from database
+    const result = await window.electronAPI.getFileHistory(selectedRecord.inode);
+    
+    if (!result.success) {
+      alert('Error loading file history: ' + result.error);
+      return;
+    }
+    
+    // Update modal title
+    $('#history-modal-title').text(`History: ${selectedRecord.filename}`);
+    
+    // Destroy existing grid if it exists
+    if (w2ui['history-grid']) {
+      w2ui['history-grid'].destroy();
+    }
+    
+    // Initialize and populate history grid
+    const historyData = formatHistoryData(result.data || [], selectedRecord);
+    
+    const gridColumns = [
+      { field: 'detectedAt', caption: 'Detected At', size: '160px', resizable: true, sortable: true },
+      { field: 'changeValue', caption: 'Change', size: '200px', resizable: true, sortable: true },
+      { field: 'path', caption: 'Path', size: '100%', resizable: true, sortable: true }
+    ];
+    
+    $('#history-grid').w2grid({
+      name: 'history-grid',
+      columns: gridColumns,
+      records: historyData,
+      show: { header: true, toolbar: true, footer: true },
+      toolbar: {
+        items: [
+          { type: 'button', id: 'btn-refresh-history', text: 'Refresh', icon: 'fa fa-refresh' }
+        ],
+        onClick: function(event) {
+          if (event.item.id === 'btn-refresh-history') {
+            openHistoryModal(selectedRecord);
+          }
+        }
+      }
+    });
+    
+    // Show modal
+    $('#history-modal').show();
+  } catch (err) {
+    console.error('Error opening history modal:', err);
+    alert('Error opening history: ' + err.message);
+  }
+}
+
+/**
+ * Format history data for display in grid
+ * Implements priority-based key extraction and displays full file path
+ */
+function formatHistoryData(historyRecords, selectedRecord) {
+  // Priority order for change keys (lower number = higher priority)
+  const KEY_PRIORITY = {
+    'checksumValue': 1,
+    'filename': 2,
+    'dateModified': 3,
+    'size': 4,
+    'filesizeBytes': 4,
+    'status': 5
+  };
+  
+  return historyRecords.map((record, index) => {
+    let changeValueDisplay = '-';
+    let additionalKeys = 0;
+    
+    try {
+      // Parse changeValue JSON if it's a string
+      const parsed = typeof record.changeValue === 'string' ? 
+        JSON.parse(record.changeValue) : record.changeValue;
+      
+      if (parsed && typeof parsed === 'object') {
+        // Extract all keys and sort by priority
+        const keys = Object.keys(parsed);
+        const sortedKeys = keys.sort((a, b) => {
+          const priorityA = KEY_PRIORITY[a] ?? 999;
+          const priorityB = KEY_PRIORITY[b] ?? 999;
+          return priorityA - priorityB;
+        });
+        
+        if (sortedKeys.length > 0) {
+          // Display the highest priority key
+          const primaryKey = sortedKeys[0];
+          const primaryValue = parsed[primaryKey];
+          
+          // Format the primary key display
+          let primaryDisplay = '';
+          if (primaryKey === 'dateModified' || primaryKey === 'previousDateModified') {
+            primaryDisplay = `${primaryKey}: ${new Date(primaryValue).toLocaleString()}`;
+          } else if (primaryKey === 'filesizeBytes' || primaryKey === 'size') {
+            primaryDisplay = `${primaryKey}: ${formatBytes(primaryValue)}`;
+          } else if (primaryKey === 'status') {
+            primaryDisplay = primaryValue; // e.g., "deleted"
+          } else {
+            primaryDisplay = `${primaryKey}: ${primaryValue}`;
+          }
+          
+          changeValueDisplay = primaryDisplay;
+          additionalKeys = sortedKeys.length - 1;
+          
+          // Add count of remaining keys if multiple keys exist
+          if (additionalKeys > 0) {
+            changeValueDisplay += ` +${additionalKeys}`;
+          }
+        }
+      } else {
+        changeValueDisplay = String(parsed || '');
+      }
+    } catch (e) {
+      // If JSON parse fails, use raw value
+      changeValueDisplay = String(record.changeValue || '-');
+    }
+    
+    return {
+      recid: index + 1,
+      detectedAt: record.detectedAt ? new Date(record.detectedAt).toLocaleString() : '-',
+      changeValue: changeValueDisplay,
+      path: selectedRecord ? selectedRecord.path || selectedRecord.filename : '-'
+    };
+  });
+}
+
+/**
+ * Hide history modal
+ */
+function hideHistoryModal() {
+  $('#history-modal').hide();
+  // Destroy w2ui grid
+  if (w2ui['history-grid']) {
+    w2ui['history-grid'].destroy();
   }
 }
 
@@ -1591,52 +1788,67 @@ function formatBytes(bytes) {
  */
 function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePanels) {
   const isMultiSelect = selectedRecords.length > 1;
-  
+  const hasDirectorySelected = selectedRecords.some(r => r.isFolder);
+  const hasFileSelected = selectedRecords.some(r => !r.isFolder);
+  console.log("Generating context menu - selected records:", {selectedRecords,isMultiSelect, hasDirectorySelected, hasFileSelected});
+  const addSeparator = (menu) =>{
+    if (menu.length > 0 && !menu[menu.length - 1].id.startsWith('sep')) {
+      menu.push({id: `sep${menu.length}`, text: '--'});
+    }
+  }
+
   // Store context for onMenuClick handler
   panelContextMenuState = {
-    selectedRecords: selectedRecords,
-    isMultiSelect: isMultiSelect,
+    selectedRecords,
+    isMultiSelect,
+    hasDirectorySelected,
+    hasFileSelected,
     selectedPaths: selectedRecords.map(r => r.path)
   };
   
-  // Build "Open In" menu items for each available panel
+  // Determine available panels considering opening only one additional panel at a time
   const availablePanels = [];
   for (let i = 1; i <= Math.min(visiblePanelCount + 1, 4); i++) {
     availablePanels.push(i);
   }
   
-  const openInItems = availablePanels.map(panelNum => ({
-    id: `open-in-${panelNum}`,
-    text: `Panel ${panelNum}`,
-    icon: 'fa fa-folder-open'
-  }));
-  
-  // Build "Set Category" menu items for each category
-  const categoryItems = Object.keys(allCategories).map(categoryName => ({
-    id: `set-category-${categoryName}`,
-    text: categoryName,
-    icon: 'fa fa-tag'
-  }));
-  
-  // Flatten into single menu array with separators
-  const contextMenu = [];
-  
-  // Add "Open In" section
-  contextMenu.push({id:"open-in", text: 'Open In', icon: 'fa fa-folder-open', items: openInItems});
-  
-  // Add "Set Category" section
-  let setCategoryOption = {
-    id: 'set-category-label',
-    text: 'Set Category',
-    icon: 'fa fa-tag'
-  };
-  if (isMultiSelect) {
-    setCategoryOption.text = 'Set Category (applies to all)';
+  let contextMenu = [];
+
+  if(!isMultiSelect && hasDirectorySelected) {
+    // Build "Open In Panel X" menu items for available panels
+    contextMenu.push({
+      id:"open-in",
+      text: 'Open In',
+      icon: 'fa fa-folder-open',
+      items: availablePanels.map(panelNum => ({
+        id: `open-in-${panelNum}`,
+        text: `Panel ${panelNum}`,
+        icon: 'fa fa-folder-open'
+      }))
+    });
+    // Build "Set Category" menu items for each category
+    let setCategoryOption = {
+      id: 'set-category-label',
+      text: 'Set Category',
+      icon: 'fa fa-tag'
+    };
+    if (isMultiSelect) {
+      setCategoryOption.text = 'Set Category (applies to all)';
+    }
+    // Add category items
+    setCategoryOption.items = Object.keys(allCategories).map(categoryName => ({
+      id: `set-category-${categoryName}`,
+      text: categoryName,
+      icon: 'fa fa-tag'
+    }));;
+    contextMenu.push(setCategoryOption);
   }
-  
-  // Add category items
-  setCategoryOption.items = categoryItems;
-  contextMenu.push(setCategoryOption);
+
+  // Add "History" section (only for single selection)
+  if (!isMultiSelect) {
+    addSeparator(contextMenu);
+    contextMenu.push({id:"view-history", text: 'History', icon: 'fa fa-history'});
+  }
   
   return contextMenu;
 }
@@ -1707,6 +1919,34 @@ async function handleContextMenuClick(event, panelId) {
     } catch (err) {
       alert('Error assigning category: ' + err.message);
     }
+  }
+  
+  // Handle "View History" click
+  if (menuItemId === 'view-history') {
+    const selectedRecord = selectedRecords[0]; // Single selection only
+    if (!selectedRecord) {
+      alert('Please select a file or directory to view history');
+      return;
+    }
+    
+    try {
+      // Open the history modal with the selected record
+      await openHistoryModal(selectedRecord);
+    } catch (err) {
+      alert('Error opening history: ' + err.message);
+    }
+  }
+  
+  // Handle "Toggle Date Created" column visibility
+  if (menuItemId === 'toggle-date-created') {
+    const state = panelState[activePanelId];
+    state.showDateCreated = !state.showDateCreated;
+    
+    // Reinitialize the grid with new column configuration
+    await initializeGridForPanel(activePanelId);
+    
+    // Refresh the current directory to reload the grid with new columns
+    await navigateToDirectory(state.currentPath, activePanelId);
   }
 }
 

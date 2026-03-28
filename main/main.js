@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const os = require('os');
+const fsSync = require('fs');
 
 // Import service modules
 const logger = require('../src/logger');
@@ -117,28 +118,101 @@ ipcMain.handle('scan-directory', (event, dirPath) => {
     // Create or get the directory entry (returns dir_id)
     const dirId = db.getOrCreateDirectory(dirPath, dirInode, categoryName);
 
-    // Clear existing file entries for this directory
-    db.clearDirectory(dirPath);
+    // Create/update dot entry for the directory itself
+    db.upsertFile({
+      inode: dirInode,
+      dir_id: dirId,
+      filename: '.',
+      dateModified: dirStats.dateModified,
+      dateCreated: dirStats.dateCreated,
+      size: 0
+    });
 
-    // Read and upsert files
+    // Get existing database files for this directory
+    const existingDbFiles = db.getFilesByDirId(dirId);
+    const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
+
+    // Read and process files
     const entries = fs.readDirectory(dirPath);
+    let insertedCount = 0;
+    let updatedCount = 0;
+    let deletedCount = 0;
+
+    // Process filesystem entries: upsert files, track changes
     for (const entry of entries) {
-      if (!entry.isDirectory) { // Only index files
+      if (!entry.isDirectory) {
+        const dbFile = dbFileMap.get(entry.inode);
+        
+        if (!dbFile) {
+          // New file
+          db.upsertFile({
+            inode: entry.inode,
+            dir_id: dirId,
+            filename: entry.filename,
+            dateModified: entry.dateModified,
+            dateCreated: entry.dateCreated,
+            size: entry.size
+          });
+          insertedCount++;
+        } else if (dbFile.dateModified !== entry.dateModified || dbFile.size !== entry.size) {
+          // File changed - update it
+          db.upsertFile({
+            inode: entry.inode,
+            dir_id: dirId,
+            filename: entry.filename,
+            dateModified: entry.dateModified,
+            dateCreated: entry.dateCreated,
+            size: entry.size
+          });
+          updatedCount++;
+        }
+        
+        // Mark as processed
+        dbFileMap.delete(entry.inode);
+      } else {
+        // Track subdirectories with dot placeholder file
+        const existingDir = db.getDirectory(entry.path);
+        let subDirId;
+        if (!existingDir) {
+          // New subdirectory - create entry in dirs table and get its ID
+          subDirId = db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
+          insertedCount++;
+        } else {
+          // Get existing directory's ID
+          subDirId = existingDir.id;
+        }
+        
+        // Create/update dot file entry for directory tracking with the child directory's own dir_id
         db.upsertFile({
           inode: entry.inode,
-          dir_id: dirId,
-          filename: entry.filename,
+          dir_id: subDirId,
+          filename: '.',
           dateModified: entry.dateModified,
           dateCreated: entry.dateCreated,
-          size: entry.size
+          size: 0
         });
+        
+        dbFileMap.delete(entry.inode);
+      }
+    }
+
+    // Process deletions: remaining files in dbFileMap are no longer on filesystem
+    for (const [inode, dbFile] of dbFileMap) {
+      try {
+        db.deleteFile(inode, dirId);
+        deletedCount++;
+      } catch (err) {
+        logger.error(`Error deleting file ${dbFile.filename}:`, err.message);
       }
     }
 
     return {
       success: true,
       count: entries.filter(e => !e.isDirectory).length,
-      category: categoryName
+      category: categoryName,
+      inserted: insertedCount,
+      updated: updatedCount,
+      deleted: deletedCount
     };
   } catch (err) {
     logger.error('Error scanning directory:', err.message);
@@ -478,7 +552,17 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
     // Create or get the directory entry (returns dir_id)
     const dirId = db.getOrCreateDirectory(dirPath, dirInode, categoryName);
 
-    // IMPORTANT: Get existing database records BEFORE clearing
+    // Create/update dot entry for the directory itself
+    db.upsertFile({
+      inode: dirInode,
+      dir_id: dirId,
+      filename: '.',
+      dateModified: dirStats.dateModified,
+      dateCreated: dirStats.dateCreated,
+      size: 0
+    });
+
+    // IMPORTANT: Get existing database records BEFORE any modifications
     const existingDbFiles = db.getFilesByDirId(dirId);
     const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
 
@@ -512,8 +596,11 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
           changeState,
           previousDateModified
         });
+        
+        // Mark as processed
+        dbFileMap.delete(entry.inode);
       } else {
-        // For directories, check if they're new
+        // For directories, check if they're new and track with "." entries
         const existingDir = db.getDirectory(entry.path);
         let changeState = 'unchanged';
 
@@ -523,6 +610,12 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
           db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
         }
 
+        // Track directory in file_history with "." placeholder
+        const existingDotFile = dbFileMap.get(entry.inode);
+        if (!existingDotFile) {
+          changeState = changeState === 'unchanged' ? 'new' : changeState;
+        }
+
         entriesWithChanges.push({
           ...entry,
           changeState
@@ -530,12 +623,12 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
       }
     }
 
-    // Now clear existing file entries for this directory
-    db.clearDirectory(dirPath);
-
-    // Upsert all files with their new data
+    // Upsert all files with their new data and track changes in file_history
     for (const entry of entriesWithChanges) {
       if (!entry.isDirectory) {
+        const dbFile = existingDbFiles.find(f => f.inode === entry.inode);
+        
+        // Upsert the file
         db.upsertFile({
           inode: entry.inode,
           dir_id: dirId,
@@ -544,6 +637,97 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
           dateCreated: entry.dateCreated,
           size: entry.size
         });
+
+        // Get the file record to get its ID for history tracking
+        const fileRecord = db.getFileByInode(entry.inode, dirId);
+        if (!fileRecord) {
+          logger.error(`Failed to retrieve file record after upsert for ${entry.filename}`);
+          continue;
+        }
+
+        // Track file changes in file_history
+        if (!dbFile) {
+          // First encounter: store all file metadata
+          try {
+            db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
+              filename: entry.filename,
+              dateModified: entry.dateModified,
+              filesizeBytes: entry.size
+            });
+          } catch (err) {
+            logger.error(`Error recording file history for new file ${entry.filename}:`, err.message);
+          }
+        } else if (dbFile.dateModified !== entry.dateModified) {
+          // Date modified changed: store only the change
+          try {
+            db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
+              filename: entry.filename,
+              dateModified: entry.dateModified,
+              previousDateModified: dbFile.dateModified
+            });
+          } catch (err) {
+            logger.error(`Error recording file history for date change ${entry.filename}:`, err.message);
+          }
+        }
+      } else {
+        // Handle subdirectory dot entries
+        const existingDir = db.getDirectory(entry.path);
+        let subDirId;
+        if (!existingDir) {
+          // New subdirectory - create entry in dirs table
+          subDirId = db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
+        } else {
+          // Get existing directory's ID
+          subDirId = existingDir.id;
+        }
+        
+        const dbDotFile = existingDbFiles.find(f => f.inode === entry.inode && f.filename === '.');
+        const subDirCategory = categories.getCategoryForDirectory(entry.path) || category;
+        
+        // Create or update dot placeholder file for directory with its own dir_id
+        db.upsertFile({
+          inode: entry.inode,
+          dir_id: subDirId,
+          filename: '.',
+          dateModified: entry.dateModified,
+          dateCreated: entry.dateCreated,
+          size: 0
+        });
+
+        // Get the dot file record for history tracking
+        const dotFileRecord = db.getFileByInode(entry.inode, subDirId);
+        if (dotFileRecord) {
+          try {
+            if (!dbDotFile) {
+              // First time seeing this directory - record it
+              db.insertFileHistory(entry.inode, subDirId, dotFileRecord.id, {
+                dirname: path.basename(entry.path),
+                category: subDirCategory ? subDirCategory.name : 'Default'
+              });
+            }
+          } catch (err) {
+            logger.error(`Error recording directory history for ${entry.path}:`, err.message);
+          }
+        }
+        
+        // Mark as processed
+        dbFileMap.delete(entry.inode);
+      }
+    }
+
+    // Process deletions: files remaining in dbFileMap are no longer on filesystem
+    for (const [inode, dbFile] of dbFileMap) {
+      try {
+        // Record deletion in history before deleting the file
+        db.insertFileHistory(inode, dirId, dbFile.id, {
+          filename: dbFile.filename,
+          status: 'deleted'
+        });
+        
+        // Delete the file record
+        db.deleteFile(inode, dirId);
+      } catch (err) {
+        logger.error(`Error recording/deleting file ${dbFile.filename}:`, err.message);
       }
     }
 
@@ -610,10 +794,88 @@ ipcMain.handle('update-file-modification-date', (event, { dirPath, inode, newDat
       return { success: false, error: 'Directory not found in database' };
     }
 
+    // Get the current file data before updating
+    const file = db.getFileByInode(inode, dir.id);
+    if (!file) {
+      return { success: false, error: 'File not found in database' };
+    }
+
+    // Update the file modification date in the files table
     db.updateFileModificationDate(inode, dir.id, newDateModified);
+
+    // Record the acknowledgement in file_history
+    try {
+      db.insertFileHistory(inode, dir.id, file.id, {
+        filename: file.filename,
+        dateModified: newDateModified,
+        previousDateModified: file.dateModified
+      });
+
+      // Get the newly inserted record to set acknowledgedAt
+      const latestHistory = db.getLatestFileHistory(inode);
+      if (latestHistory) {
+        db.updateFileHistoryAcknowledgement(latestHistory.id);
+      }
+    } catch (err) {
+      logger.error(`Error recording acknowledgement in file_history for ${inode}:`, err.message);
+      // Don't fail the overall update if history recording fails
+    }
+
     return { success: true };
   } catch (err) {
     console.error('Error updating file modification date:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * File History: Get all history records for a file by inode
+ */
+ipcMain.handle('get-file-history', (event, inode) => {
+  try {
+    const history = db.getFileHistory(inode);
+    return { success: true, data: history };
+  } catch (err) {
+    logger.error('Error retrieving file history:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Database: Reinitialize database (clear all data and reset schema)
+ */
+ipcMain.handle('reinitialize-database', (event) => {
+  try {
+    logger.info('Reinitializing database...');
+    
+    // Close current database
+    db.close();
+    
+    // Delete the database file
+    const dbPath = path.join(os.homedir(), '.atlasexplorer', 'data.sqlite');
+    const dbWalPath = dbPath + '-wal';
+    const dbShmPath = dbPath + '-shm';
+    
+    if (fsSync.existsSync(dbPath)) {
+      fsSync.unlinkSync(dbPath);
+      logger.info('Deleted database file');
+    }
+    
+    if (fsSync.existsSync(dbWalPath)) {
+      fsSync.unlinkSync(dbWalPath);
+    }
+    
+    if (fsSync.existsSync(dbShmPath)) {
+      fsSync.unlinkSync(dbShmPath);
+    }
+    
+    // Reinitialize database
+    db.initialize();
+    logger.info('Database reinitialized successfully');
+    
+    return { success: true, message: 'Database reinitialized successfully' };
+  } catch (err) {
+    logger.error('Error reinitializing database:', err.message);
     return { success: false, error: err.message };
   }
 });
