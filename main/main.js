@@ -104,8 +104,22 @@ ipcMain.handle('read-directory', (event, dirPath) => {
  */
 ipcMain.handle('scan-directory', (event, dirPath) => {
   try {
+    // Validate path parameter
+    if (!dirPath || typeof dirPath !== 'string') {
+      logger.error(`scan-directory: Invalid path - received ${typeof dirPath}`);
+      return { success: false, error: 'Directory path must be a valid string' };
+    }
+    
+    const normalizedPath = dirPath.trim();
+    if (!normalizedPath) {
+      logger.error('scan-directory: Empty path provided');
+      return { success: false, error: 'Directory path cannot be empty' };
+    }
+    
+    logger.info(`Scanning directory: ${normalizedPath}`);
+    
     // Get directory inode to track the directory itself
-    const dirStats = fs.getStats(dirPath);
+    const dirStats = fs.getStats(normalizedPath);
     if (!dirStats) {
       return { success: false, error: 'Unable to read directory stats' };
     }
@@ -134,7 +148,7 @@ ipcMain.handle('scan-directory', (event, dirPath) => {
     const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
 
     // Read and process files
-    const entries = fs.readDirectory(dirPath);
+    const entries = fs.readDirectory(normalizedPath);
     let insertedCount = 0;
     let updatedCount = 0;
     let deletedCount = 0;
@@ -663,8 +677,22 @@ ipcMain.handle('render-markdown', async (event, content) => {
  */
 ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
   try {
+    // Validate path parameter
+    if (!dirPath || typeof dirPath !== 'string') {
+      logger.error(`scan-directory-with-comparison: Invalid path - received ${typeof dirPath}`);
+      return { success: false, error: 'Directory path must be a valid string' };
+    }
+    
+    const normalizedPath = dirPath.trim();
+    if (!normalizedPath) {
+      logger.error('scan-directory-with-comparison: Empty path provided');
+      return { success: false, error: 'Directory path cannot be empty' };
+    }
+    
+    logger.info(`Scanning directory (with comparison): ${normalizedPath}`);
+    
     // Get directory inode to track the directory itself
-    const dirStats = fs.getStats(dirPath);
+    const dirStats = fs.getStats(normalizedPath);
     if (!dirStats) {
       return { success: false, error: 'Unable to read directory stats' };
     }
@@ -672,11 +700,11 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
     const dirInode = dirStats.inode;
 
     // Get category for this directory
-    const category = categories.getCategoryForDirectory(dirPath);
+    const category = categories.getCategoryForDirectory(normalizedPath);
     const categoryName = category ? category.name : 'Default';
 
     // Create or get the directory entry (returns dir_id)
-    const dirId = db.getOrCreateDirectory(dirPath, dirInode, categoryName);
+    const dirId = db.getOrCreateDirectory(normalizedPath, dirInode, categoryName);
 
     // Create/update dot entry for the directory itself
     db.upsertFile({
@@ -693,7 +721,7 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
     const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
 
     // Read all filesystem entries (folders + files)
-    const entries = fs.readDirectory(dirPath);
+    const entries = fs.readDirectory(normalizedPath);
     const entriesWithChanges = [];
 
     for (const entry of entries) {
@@ -725,7 +753,7 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
         // Mark as processed
         dbFileMap.delete(entry.inode);
       } else {
-        // For directories, check if they're new and track with "." entries
+        // For directories, only mark as new if the directory itself is new (not in dirs table)
         const existingDir = db.getDirectory(entry.path);
         let changeState = 'unchanged';
 
@@ -734,12 +762,8 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
           changeState = 'new';
           db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
         }
-
-        // Track directory in file_history with "." placeholder
-        const existingDotFile = dbFileMap.get(entry.inode);
-        if (!existingDotFile) {
-          changeState = changeState === 'unchanged' ? 'new' : changeState;
-        }
+        // Note: Don't check for existing dot files to determine changeState - subdirectories'
+        // dot files are stored in their own directory entry (different dir_id), not in parent
 
         entriesWithChanges.push({
           ...entry,
@@ -806,7 +830,6 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
           subDirId = existingDir.id;
         }
         
-        const dbDotFile = existingDbFiles.find(f => f.inode === entry.inode && f.filename === '.');
         const subDirCategory = categories.getCategoryForDirectory(entry.path) || category;
         
         // Create or update dot placeholder file for directory with its own dir_id
@@ -823,8 +846,9 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
         const dotFileRecord = db.getFileByInode(entry.inode, subDirId);
         if (dotFileRecord) {
           try {
-            if (!dbDotFile) {
-              // First time seeing this directory - record it
+            // Only insert history if this is actually a NEW directory (first time in dirs table)
+            if (!existingDir) {
+              // First time seeing this directory - record it in history
               db.insertFileHistory(entry.inode, subDirId, dotFileRecord.id, {
                 dirname: path.basename(entry.path),
                 category: subDirCategory ? subDirCategory.name : 'Default'

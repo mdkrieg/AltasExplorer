@@ -7,13 +7,28 @@ class FilesystemService {
    * Read directory contents and return file/folder info with inode and stats
    */
   readDirectory(dirPath) {
-    const entries = fs.readdirSync(dirPath);
+    // Validate path before proceeding
+    if (!dirPath || typeof dirPath !== 'string') {
+      logger.error(`readDirectory: Invalid path type - received ${typeof dirPath}`);
+      return [];
+    }
+    
+    const normalizedPath = dirPath.trim();
+    if (!normalizedPath) {
+      logger.error('readDirectory: Empty path provided');
+      return [];
+    }
+    
+    // Log the actual path being read for debugging future edge cases
+    logger.info(`Reading directory contents from: ${normalizedPath}`);
+    
+    const entries = fs.readdirSync(normalizedPath);
     const files = [];
     const folders = [];
 
     for (const entry of entries) {
       try {
-        const fullPath = path.join(dirPath, entry);
+        const fullPath = path.join(normalizedPath, entry);
         const stats = fs.statSync(fullPath);
         const inode = stats.ino.toString(); // Get inode
 

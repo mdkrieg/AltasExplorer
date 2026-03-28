@@ -90,10 +90,27 @@ async function initialize() {
  */
 async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
   try {
-    console.log(`Navigating panel ${panelId} to:`, dirPath);
+    // Validate and normalize the path before proceeding
+    if (!dirPath || typeof dirPath !== 'string') {
+      console.error(`[navigateToDirectory] Invalid path type - received ${typeof dirPath}:`, dirPath);
+      throw new Error('Path must be a non-empty string');
+    }
+    
+    let normalizedPath = dirPath.trim();
+    if (!normalizedPath) {
+      console.error('[navigateToDirectory] Empty path after normalization');
+      throw new Error('Path cannot be empty');
+    }
+
+    if (normalizedPath.length == 2 && normalizedPath[1] === ':') {
+      // append backslash for drive root paths like "C:"
+      normalizedPath += '\\';
+    }
+    
+    console.log(`Navigating panel ${panelId} to:`, normalizedPath);
     
     const state = panelState[panelId];
-    state.currentPath = dirPath;
+    state.currentPath = normalizedPath;
     
     // Update navigation history
     if (addToHistory) {
@@ -104,10 +121,10 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     
     // Update panel path display
     const $panel = $(`#panel-${panelId}`);
-    $panel.find('.panel-path').text(dirPath);
+    $panel.find('.panel-path').text(normalizedPath);
 
     // Handle non-existent paths without blocking user navigation history
-    const directoryExists = await window.electronAPI.isDirectory(dirPath);
+    const directoryExists = await window.electronAPI.isDirectory(normalizedPath);
     if (!directoryExists) {
       state.currentCategory = null;
       setPanelPathValidity(panelId, false);
@@ -119,7 +136,7 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     setPanelPathValidity(panelId, true);
 
     // Scan directory and populate files
-    const scanResult = await window.electronAPI.scanDirectoryWithComparison(dirPath);
+    const scanResult = await window.electronAPI.scanDirectoryWithComparison(normalizedPath);
     console.log('Scan result:', scanResult);
 
     if (!scanResult.success) {
@@ -127,7 +144,7 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     }
 
     // Get category for this directory
-    const category = await window.electronAPI.getCategoryForDirectory(dirPath);
+    const category = await window.electronAPI.getCategoryForDirectory(normalizedPath);
     console.log('Category for directory:', category);
     state.currentCategory = category;
 
@@ -1389,12 +1406,38 @@ function attachEventListeners() {
       case 'navigate_up':
         event.preventDefault();
         const state = panelState[activePanelId];
-        if (state.currentPath && state.currentPath.length > 3) {
-          const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
-          if (parentPath.length >= 2) {
-            navigateToDirectory(parentPath, activePanelId);
-          }
+        if (!state.currentPath || typeof state.currentPath !== 'string' || state.currentPath.trim() === '') {
+          console.warn('[navigate_up] Invalid current path');
+          break;
         }
+        
+        let path = state.currentPath.trim();
+        
+        // Remove trailing backslash for consistent handling
+        if (path.endsWith('\\')) {
+          path = path.substring(0, path.length - 1);
+        }
+        
+        // Check if at drive root (e.g., "E:", "C:")
+        if (path.length === 2 && path[1] === ':') {
+          console.info(`[navigate_up] Already at drive root: ${path}`);
+          break;
+        }
+        
+        // Find last backslash
+        const lastSlash = path.lastIndexOf('\\');
+        if (lastSlash <= 2) {
+          console.warn(`[navigate_up] Cannot navigate up from: ${path}`);
+          break;
+        }
+        
+        const parentPath = path.substring(0, lastSlash);
+        if (parentPath.length == 2 && parentPath[1] === ':') {
+          // Add backslash for drive root
+          parentPath += '\\';
+        }
+        console.info(`[navigate_up] Navigating from ${state.currentPath} to ${parentPath}`);
+        navigateToDirectory(parentPath, activePanelId);
         break;
       case 'edit_notes':
         const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);

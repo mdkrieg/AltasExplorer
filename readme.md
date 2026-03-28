@@ -19,7 +19,8 @@ TODO:
 * Autocategories
 * Search!!!
 * Auto Backups
-* Diffing?
+* Diffing
+* Photo / Media mode - thumbnails and preview pane + exif data
 
 Crazy stuff:
 * Integrate Node-RED for "macros" functionality
