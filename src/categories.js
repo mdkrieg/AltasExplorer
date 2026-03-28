@@ -7,6 +7,7 @@ const db = require('./db');
 const CATEGORIES_DIR = path.join(os.homedir(), '.atlasexplorer', 'categories');
 const SETTINGS_PATH = path.join(os.homedir(), '.atlasexplorer', 'settings.json');
 const HOTKEYS_PATH = path.join(os.homedir(), '.atlasexplorer', 'hotkeys.json');
+const SOURCE_HOTKEYS_PATH = path.join(__dirname, '..', 'assets', 'hotkeys.json');
 
 class CategoryService {
   constructor() {
@@ -20,22 +21,18 @@ class CategoryService {
    */
   ensureHotkeysFile() {
     if (!fs.existsSync(HOTKEYS_PATH)) {
-      const defaultHotkeys = {
-        'Panel Navigation': {
-          'navigate_back': { label: 'Navigate Back', key: 'Alt+Left', default: 'Alt+Left' },
-          'navigate_forward': { label: 'Navigate Forward', key: 'Alt+Right', default: 'Alt+Right' },
-          'navigate_up': { label: 'Go to Parent', key: 'Alt+Up', default: 'Alt+Up' },
-          'add_panel': { label: 'Add Panel', key: 'Ctrl+T', default: 'Ctrl+T' },
-          'enter_path': { label: 'Enter Path', key: 'Enter', default: 'Enter' },
-          'cancel_path': { label: 'Cancel Path', key: 'Escape', default: 'Escape' }
-        },
-        'Notes': {
-          'edit_notes': { label: 'Edit Notes', key: 'F2', default: 'F2' },
-          'save_notes': { label: 'Save Notes', key: 'Ctrl+S', default: 'Ctrl+S' }
+      try {
+        // Try to read from the source hotkeys file in assets
+        if (fs.existsSync(SOURCE_HOTKEYS_PATH)) {
+          const hotkeyContent = fs.readFileSync(SOURCE_HOTKEYS_PATH, 'utf8');
+          fs.writeFileSync(HOTKEYS_PATH, hotkeyContent);
+          logger.info('Created hotkeys.json from assets');
+        } else {
+          logger.warn(`Source hotkeys file not found at ${SOURCE_HOTKEYS_PATH}`);
         }
-      };
-      fs.writeFileSync(HOTKEYS_PATH, JSON.stringify(defaultHotkeys, null, 2));
-      logger.info('Created default hotkeys.json');
+      } catch (err) {
+        logger.error('Error reading source hotkeys file:', err.message);
+      }
     }
   }
 

@@ -1,0 +1,51 @@
+{
+  "Panel Navigation": {
+    "navigate_back": {
+      "label": "Navigate Back",
+      "key": "Alt+Left",
+      "default": "Alt+Left"
+    },
+    "navigate_forward": {
+      "label": "Navigate Forward",
+      "key": "Alt+Right",
+      "default": "Alt+Right"
+    },
+    "navigate_up": {
+      "label": "Go to Parent",
+      "key": "Alt+Up",
+      "default": "Alt+Up"
+    },
+    "add_panel": {
+      "label": "Add Panel",
+      "key": "Ctrl+t",
+      "default": "Ctrl+t"
+    },
+    "close_panel": {
+      "label": "Close Active Panel",
+      "key": "Ctrl+w",
+      "default": "Ctrl+w"
+    },
+    "enter_path": {
+      "label": "Enter Path",
+      "key": "Enter",
+      "default": "Enter"
+    },
+    "cancel_path": {
+      "label": "Cancel Path",
+      "key": "Escape",
+      "default": "Escape"
+    }
+  },
+  "Notes": {
+    "edit_notes": {
+      "label": "Edit Notes",
+      "key": "Ctrl+e",
+      "default": "F2"
+    },
+    "save_notes": {
+      "label": "Save Notes",
+      "key": "Ctrl+s",
+      "default": "Ctrl+s"
+    }
+  }
+}
