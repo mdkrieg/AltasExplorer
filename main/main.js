@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeImage, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage, Menu, globalShortcut } = require('electron');
 const path = require('path');
 const os = require('os');
 const fsSync = require('fs');
@@ -57,9 +57,6 @@ function createWindow() {
         mainWindow.webContents.send('request-close-app');
       }
     });
-
-    // Open DevTools on startup for development
-    mainWindow.webContents.openDevTools();
   } catch (err) {
     logger.error('Error creating window:', err.message);
     app.quit();
@@ -1173,6 +1170,19 @@ app.on('ready', () => {
   Menu.setApplicationMenu(null);
   initialize();
   createWindow();
+
+  // Register dev tools shortcuts since menu bar is hidden
+  globalShortcut.register('F12', () => {
+    if (mainWindow) {
+      mainWindow.webContents.toggleDevTools();
+    }
+  });
+
+  globalShortcut.register('Ctrl+Shift+I', () => {
+    if (mainWindow) {
+      mainWindow.webContents.toggleDevTools();
+    }
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -1188,5 +1198,7 @@ app.on('activate', () => {
 });
 
 app.on('quit', () => {
+  // Unregister all global shortcuts
+  globalShortcut.unregisterAll();
   db.close();
 });

@@ -701,27 +701,21 @@ function getHotKeyCombo(event) {
   else if (key === 'Enter') key = 'Enter';
   else if (key === 'Escape') key = 'Escape';
   else if (key === ' ') key = 'Space';
-  else if (key.length === 1 && key >= 'a' && key <= 'z') {
-    // Uppercase single letters
-    key = key.toUpperCase();
-  }
   
   combo += key;
   return combo;
 }
 
 /**
- * Find the action ID for a given hotkey combo
+ * Find the action ID for a given hotkey combo (case-insensitive)
  */
 function getActionForHotkey(hotkeyCombo) {
-  console.log('[getActionForHotkey] Looking for combo:', hotkeyCombo, 'in registry:', hotkeyRegistry);
+  const normalizedCombo = hotkeyCombo.toUpperCase();
   for (const [actionId, key] of Object.entries(hotkeyRegistry)) {
-    if (key === hotkeyCombo) {
-      console.log('[getActionForHotkey] Found match:', actionId);
+    if (key.toUpperCase() === normalizedCombo) {
       return actionId;
     }
   }
-  console.log('[getActionForHotkey] No match found for:', hotkeyCombo);
   return null;
 }
 
@@ -1219,10 +1213,7 @@ function updatePanelLayout() {
  * Remove a panel and shift higher-numbered panels down
  */
 function removePanel(panelId) {
-  console.log('[removePanel] Called for panel', panelId, 'visiblePanels:', visiblePanels);
-  
   if (visiblePanels === 1) {
-    console.log('[removePanel] Cannot remove last panel');
     alert('Cannot remove the last panel');
     return;
   }
@@ -1239,7 +1230,6 @@ function removePanel(panelId) {
   visiblePanels--;
   activePanelId = 1; // Reset to panel 1 after removal
   updatePanelLayout();
-  console.log('[removePanel] Panel removed, visiblePanels now:', visiblePanels);
 }
 
 /**
@@ -1289,11 +1279,8 @@ function clearPanelState(panelId) {
  * Close the active panel or the window based on context
  */
 async function closeActivePanel() {
-  console.log('[closeActivePanel] Called, notesEditMode:', notesEditMode, 'visiblePanels:', visiblePanels);
-  
   // Check if monaco editor is in edit mode
   if (notesEditMode) {
-    console.log('[closeActivePanel] In edit mode, prompting to save');
     if (monacoEditor) {
       const content = monacoEditor.getValue();
       const result = confirm('Notes are being edited. Save and close panel?\n\nClick OK to save and close, or Cancel to keep editing.');
@@ -1344,17 +1331,14 @@ async function closeActivePanel() {
   
   // If only one panel is open, confirm before closing the window
   if (visiblePanels === 1) {
-    console.log('[closeActivePanel] Only 1 panel open, prompting to close app');
     const result = confirm('Close the application?\n\nClick OK to close, or Cancel to keep the app open.');
     if (result) {
-      console.log('[closeActivePanel] User confirmed close, calling closeWindow');
       await window.electronAPI.closeWindow();
     }
     return;
   }
   
   // Otherwise, just close the active panel
-  console.log('[closeActivePanel] Multiple panels open, closing panel', activePanelId);
   proceedWithPanelClose();
 }
 
@@ -1395,7 +1379,6 @@ async function handleCloseRequest() {
  * Proceed with closing the active panel after any confirmation dialogs
  */
 function proceedWithPanelClose() {
-  console.log('[proceedWithPanelClose] Removing panel', activePanelId);
   removePanel(activePanelId);
 }
 
@@ -1522,10 +1505,6 @@ function attachEventListeners() {
     const hotkeyCombo = getHotKeyCombo(event);
     const actionId = getActionForHotkey(hotkeyCombo);
     
-    if (hotkeyCombo === 'Ctrl+W') {
-      console.log('[keyboard] Ctrl+W detected, actionId:', actionId);
-    }
-    
     // Only handle recognized hotkeys
     if (!actionId) return;
     
@@ -1598,7 +1577,6 @@ function attachEventListeners() {
         break;
       case 'close_panel':
         event.preventDefault();
-        console.log('[close_panel] Ctrl+W pressed, calling closeActivePanel()');
         closeActivePanel();
         break;
     }
@@ -1863,7 +1841,14 @@ function setupHotkeysResizableDivider() {
  * Show settings modal
  */
 async function showSettingsModal() {
-  // Initialize grid and form
+  
+  // Show modal FIRST so containers have proper dimensions
+  $('#settings-modal').show();
+  
+  // Ensure Category Settings tab is active (this will also call resize after tab becomes visible)
+  switchSettingsTab('category');
+  
+  // Initialize grids and forms AFTER modal is visible with proper dimensions
   await initializeCategoriesGrid();
   await initializeCategoriesForm();
   await initializeTagsGrid();
@@ -1876,11 +1861,6 @@ async function showSettingsModal() {
   setupTagResizableDivider();
   setupHotkeysResizableDivider();
   
-  // Show modal
-  $('#settings-modal').show();
-  
-  // Ensure Category Settings tab is active
-  switchSettingsTab('category');
 }
 
 /**
@@ -3273,7 +3253,10 @@ async function initializeHotkeysGrid() {
   });
 
   // Render grid in container
-  w2ui[gridName].render('#hotkeys-grid');
+  w2ui[gridName].render('#hotkeys-grid')
+  w2ui[gridName].selectNone();
+  w2ui[gridName].refresh();
+  w2ui[gridName].resize();
 }
 
 /**
