@@ -51,13 +51,13 @@ html, body {
 
 /* Panel Title */
 .w2ui-panel-title {
-  padding: 12px;
-  background: #f0f0f0;
-  border-bottom: 1px solid #d0d0d0;
   font-weight: bold;
   font-size: 13px;
   color: #333;
   user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* Scroll Container */
@@ -111,6 +111,20 @@ button:active {
   gap: 0;
 }
 
+/* Toolbar in panel items - hidden since moved to w2grid header */
+.panel-item > .w2ui-panel-title {
+  display: none !important;
+}
+
+/* Grid container fills remaining space below toolbar */
+.panel-item > .panel-grid {
+  flex: 1 1 auto;
+  overflow: hidden;
+  min-height: 0;
+}
+
+
+
 /* Panel Number Badge */
 .panel-number {
   position: absolute;
@@ -156,6 +170,7 @@ button:active {
 
 .layout-1 #panel-1 {
   display: flex !important;
+  flex-direction: column;
 }
 
 .layout-1 #panel-2,
@@ -173,6 +188,7 @@ button:active {
 .layout-2 #panel-1,
 .layout-2 #panel-2 {
   display: flex !important;
+  flex-direction: column;
 }
 
 .layout-2 #panel-3,
@@ -188,18 +204,21 @@ button:active {
 
 .layout-3 #panel-1 {
   display: flex !important;
+  flex-direction: column;
   grid-column: 1;
   grid-row: 1 / 3;
 }
 
 .layout-3 #panel-2 {
   display: flex !important;
+  flex-direction: column;
   grid-column: 2;
   grid-row: 1;
 }
 
 .layout-3 #panel-3 {
   display: flex !important;
+  flex-direction: column;
   grid-column: 2;
   grid-row: 2;
 }
@@ -216,24 +235,28 @@ button:active {
 
 .layout-4 #panel-1 {
   display: flex !important;
+  flex-direction: column;
   grid-column: 1;
   grid-row: 1;
 }
 
 .layout-4 #panel-2 {
   display: flex !important;
+  flex-direction: column;
   grid-column: 2;
   grid-row: 1;
 }
 
 .layout-4 #panel-3 {
   display: flex !important;
+  flex-direction: column;
   grid-column: 1;
   grid-row: 2;
 }
 
 .layout-4 #panel-4 {
   display: flex !important;
+  flex-direction: column;
   grid-column: 2;
   grid-row: 2;
 }
@@ -377,6 +400,50 @@ textarea {
 
 .btn-notes-back:hover {
   background: #e8e8e8;
+}
+
+/* Remove Panel Button Styles */
+.btn-panel-remove {
+  padding: 4px 8px;
+  background: #f44336;
+  color: white;
+  border: none;
+  font-weight: bold;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-panel-remove:hover {
+  background: #d32f2f;
+}
+
+.btn-panel-remove:active {
+  background: #c62828;
+}
+
+/* Remove Panel Button on Landing Page (Overlay Style) */
+.btn-panel-remove-overlay {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 4px 8px;
+  background: #f44336;
+  color: white;
+  border: none;
+  font-weight: bold;
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 5;
+  transition: all 0.2s ease;
+}
+
+.btn-panel-remove-overlay:hover {
+  background: #d32f2f;
+}
+
+.btn-panel-remove-overlay:active {
+  background: #c62828;
 }
 
 .panel-notes-view {

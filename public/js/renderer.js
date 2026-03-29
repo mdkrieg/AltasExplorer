@@ -154,6 +154,125 @@ async function initialize() {
 }
 
 /**
+ * Update the w2grid header with path and toolbar buttons
+ */
+function updateGridHeader(panelId, path) {
+  const gridName = `grid-panel-${panelId}`;
+  const headerEl = document.getElementById(`grid_${gridName}_header`);
+  
+  if (!headerEl) return;
+  
+  // Build toolbar HTML with path and buttons
+  let buttonsHtml = `
+    <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
+    <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
+  `;
+  
+  if (panelId === 1) {
+    buttonsHtml += `<button class="btn-panel-settings" style="padding: 4px 8px; margin-right: 5px;">Settings</button>`;
+    buttonsHtml += `<button id="btn-add-panel" style="padding: 4px 8px; background: #4CAF50; color: white; border: none; font-weight: bold; border-radius: 4px;">+</button>`;
+  }
+  
+  if (panelId > 1) {
+    buttonsHtml += `<button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">-</button>`;
+  }
+  
+  const headerHtml = `
+    <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 12px; background: #f0f0f0; border-bottom: 1px solid #e0e0e0;">
+      <span class="panel-path" style="font-weight: bold; font-size: 12px; cursor: pointer; user-select: none;">${path}</span>
+      <input class="panel-path-input" type="text" value="${path}" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #2196F3; border-radius: 4px; font-family: inherit; flex: 1; max-width: 60%; margin-right: 8px;">
+      <div style="display: flex; gap: 4px;">
+        ${buttonsHtml}
+      </div>
+    </div>
+  `;
+  
+  headerEl.innerHTML = headerHtml;
+  
+  // Reattach event listeners to new elements
+  attachGridHeaderEventListeners(panelId);
+}
+
+/**
+ * Attach event listeners to grid header elements
+ */
+function attachGridHeaderEventListeners(panelId) {
+  const $header = $(`#grid_grid-panel-${panelId}_header`);
+  
+  // Path click to edit
+  $header.find('.panel-path').off('click').on('click', function() {
+    const $path = $(this);
+    const $input = $header.find('.panel-path-input');
+    $path.hide();
+    $input.show().select().focus();
+  });
+  
+  // Path input - handle Enter, Escape, blur
+  $header.find('.panel-path-input').off('keydown blur').on('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const newPath = $(this).val().trim();
+      const $path = $header.find('.panel-path');
+      const $input = $(this);
+      $input.hide();
+      $path.show();
+      if (newPath && newPath !== panelState[panelId].currentPath) {
+        navigateToDirectory(newPath, panelId);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      $(this).hide();
+      $header.find('.panel-path').show();
+    }
+  }).on('blur', function() {
+    $(this).hide();
+    $header.find('.panel-path').show();
+  });
+  
+  // Parent folder button
+  $header.find('.btn-panel-parent').off('click').on('click', function() {
+    setActivePanelId(panelId);
+    const state = panelState[panelId];
+    if (state.currentPath && state.currentPath.length > 3) {
+      const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
+      if (parentPath.length >= 2) {
+        navigateToDirectory(parentPath, panelId);
+      }
+    }
+  });
+  
+  // Refresh button
+  $header.find('.btn-panel-refresh').off('click').on('click', async function() {
+    setActivePanelId(panelId);
+    await navigateToDirectory(panelState[panelId].currentPath, panelId);
+    await setupBackgroundRefreshTimer(panelId);
+  });
+  
+  // Settings button (panel 1 only)
+  if (panelId === 1) {
+    $header.find('.btn-panel-settings').off('click').on('click', function() {
+      setActivePanelId(panelId);
+      showSettingsModal();
+    });
+    
+    // Add panel button (green + button)
+    $header.find('#btn-add-panel').off('click').on('click', function() {
+      if (visiblePanels < 4) {
+        visiblePanels++;
+        updatePanelLayout();
+      }
+    });
+  }
+  
+  // Remove button (panels 2-4 only)
+  if (panelId > 1) {
+    $header.find('.btn-panel-remove').off('click').on('click', function() {
+      removePanel(panelId);
+    });
+  }
+}
+
+/**
  * Navigate to a directory in a specific panel
  */
 async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
@@ -192,9 +311,8 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       updateSidebarSelection(normalizedPath);
     }
     
-    // Update panel path display
-    const $panel = $(`#panel-${panelId}`);
-    $panel.find('.panel-path').text(normalizedPath);
+    // Update grid header with path (will be called after grid is populated)
+    // For now just update the panel state, the header will be set after navigate succeeds
 
     // Handle non-existent paths without blocking user navigation history
     const directoryExists = await window.electronAPI.isDirectory(normalizedPath);
@@ -202,7 +320,8 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       state.currentCategory = null;
       setPanelPathValidity(panelId, false);
       showMissingDirectoryRecord(panelId);
-      $panel.find('.w2ui-panel-title').show();
+      // Update header for invalid path
+      updateGridHeader(panelId, normalizedPath);
       return;
     }
 
@@ -233,8 +352,14 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     // Populate file grid for this panel
     await populateFileGrid(entries, category, panelId);
 
-    // Show the toolbar when displaying the grid (for all panels)
-    $panel.find('.w2ui-panel-title').show();
+    // Update grid header with path and buttons
+    updateGridHeader(panelId, normalizedPath);
+
+    // Force grid resize after layout is painted
+    const gridToResize = panelState[panelId].w2uiGrid;
+    if (gridToResize) {
+      requestAnimationFrame(() => gridToResize.resize());
+    }
 
     // Start async checksum calculation if category has it enabled
     if (category && category.enableChecksum) {
@@ -575,9 +700,9 @@ async function initializeGridForPanel(panelId) {
     name: gridName,
     recordHeight: recordHeight,
     show: {
-      header: false,
-      toolbar: false,
-      footer: false
+      header: true,
+      toolbar: true,
+      footer: true
     },
     columns: columns,
     records: [],
@@ -648,6 +773,9 @@ async function initializeGridForPanel(panelId) {
   // Render grid in the panel's grid container
   const $gridContainer = $(`#panel-${panelId} .panel-grid`);
   w2ui[gridName].render($gridContainer[0]);
+  
+  // Set initial header
+  updateGridHeader(panelId, 'Loading...');
   
   // Store reference in panelState
   panelState[panelId].w2uiGrid = w2ui[gridName];
@@ -1342,7 +1470,6 @@ async function showNotesView(panelId) {
   const $notesView = $(`#panel-${panelId} .panel-notes-view`);
   const $notesEditorContainer = $notesView.find('.notes-editor-container');
   const $notesContentView = $notesView.find('.notes-content-view');
-  const $panelToolbar = $(`#panel-${panelId} > .w2ui-panel-title`);
   const $notesToolbar = $notesView.find('.w2ui-panel-title');
   
   try {
@@ -1385,10 +1512,9 @@ async function showNotesView(panelId) {
     $notesContentView.show();
     $notesEditorContainer.hide();
     
-    // Update toolbar with notes path
+    // Update toolbar with notes path (overlays grid header)
     $notesToolbar.find('.notes-path').text(notesPath);
     $notesToolbar.show();
-    $panelToolbar.hide();
     
     // Reset buttons
     $notesToolbar.find('.btn-notes-edit').show().text('Edit').css('background', '#2196F3');
@@ -1420,10 +1546,9 @@ async function showNotesView(panelId) {
     $notesEditorContainer.show();
     $notesContentView.hide();
     
-    // Update toolbar with notes path
+    // Update toolbar with notes path (overlays grid header)
     $notesToolbar.find('.notes-path').text(notesPath);
     $notesToolbar.show();
-    $panelToolbar.hide();
     
     // Show Save button for new file
     $notesToolbar.find('.btn-notes-edit').hide();
@@ -1442,14 +1567,13 @@ function hideNotesView(panelId) {
   const $notesView = $(`#panel-${panelId} .panel-notes-view`);
   const $notesEditorContainer = $notesView.find('.notes-editor-container');
   const $notesContentView = $notesView.find('.notes-content-view');
-  const $panelToolbar = $(`#panel-${panelId} > .w2ui-panel-title`);
   const $notesToolbar = $notesView.find('.w2ui-panel-title');
   
   $notesView.hide();
   $notesToolbar.hide();
   $notesEditorContainer.hide();
   $notesContentView.hide();
-  $panelToolbar.show();
+  // Panel toolbar (grid header) remains visible
   $(`#panel-${panelId} .panel-landing-page`).show();
   
   notesEditMode = false;
@@ -1575,9 +1699,8 @@ function clearPanelState(panelId) {
     selectMode: false
   };
   
-  // Hide the toolbar when clearing panel state
+  // Note: Grid header is hidden along with the grid
   const $panel = $(`#panel-${panelId}`);
-  $panel.find('.w2ui-panel-title').hide();
   setPanelPathValidity(panelId, true);
   $panel.find('.panel-landing-page').show();
   $panel.find('.panel-grid').hide();
@@ -1592,47 +1715,60 @@ async function closeActivePanel() {
   if (notesEditMode) {
     if (monacoEditor) {
       const content = monacoEditor.getValue();
-      const result = confirm('Notes are being edited. Save and close panel?\n\nClick OK to save and close, or Cancel to keep editing.');
-      
-      if (result) {
-        // Save notes before closing
-        const notesPath = panelState[1].currentPath + '\\notes.txt';
-        try {
-          await window.electronAPI.writeNotesFile(notesPath, content);
-          
-          // Get current notes format setting
-          const settings = await window.electronAPI.getSettings();
-          const notesFormat = settings.notes_format || 'Markdown';
-          
-          // Format and display notes based on format setting
-          const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
-          const $notesContentView = $notesView.find('.notes-content-view');
-          const $notesEditorContainer = $notesView.find('.notes-editor-container');
-          const $editBtn = $notesView.find('.btn-notes-edit');
-          const $saveBtn = $notesView.find('.btn-notes-save');
-          
-          if (notesFormat === 'Markdown') {
-            // Render markdown to HTML
-            const htmlContent = await window.electronAPI.renderMarkdown(content);
-            $notesContentView.html(htmlContent);
-          } else {
-            // Use plain text formatting
-            const htmlContent = formatNotesContent(content, notesFormat);
-            $notesContentView.html(htmlContent);
-          }
-          
-          $notesEditorContainer.hide();
-          $notesContentView.show();
-          $editBtn.show().text('Edit').css('background', '#2196F3');
-          $saveBtn.hide();
-          notesEditMode = false;
-          
-          // Proceed to close the panel
-          proceedWithPanelClose();
-        } catch (err) {
-          alert('Error saving notes: ' + err.message);
+      w2confirm({
+        msg: 'Notes are being edited.<br><br>Click "Save & Close" to save and close, or "Keep Editing" to continue.',
+        title: 'Unsaved Notes',
+        width: 420,
+        height: 200,
+        btn_yes: {
+          text: 'Save & Close',
+          class: '',
+          style: ''
+        },
+        btn_no: {
+          text: 'Keep Editing',
+          class: '',
+          style: ''
         }
-      }
+      }).yes(async () => {
+          // Save notes before closing
+          const notesPath = panelState[1].currentPath + '\\notes.txt';
+          try {
+            await window.electronAPI.writeNotesFile(notesPath, content);
+            
+            // Get current notes format setting
+            const settings = await window.electronAPI.getSettings();
+            const notesFormat = settings.notes_format || 'Markdown';
+            
+            // Format and display notes based on format setting
+            const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
+            const $notesContentView = $notesView.find('.notes-content-view');
+            const $notesEditorContainer = $notesView.find('.notes-editor-container');
+            const $editBtn = $notesView.find('.btn-notes-edit');
+            const $saveBtn = $notesView.find('.btn-notes-save');
+            
+            if (notesFormat === 'Markdown') {
+              // Render markdown to HTML
+              const htmlContent = await window.electronAPI.renderMarkdown(content);
+              $notesContentView.html(htmlContent);
+            } else {
+              // Use plain text formatting
+              const htmlContent = formatNotesContent(content, notesFormat);
+              $notesContentView.html(htmlContent);
+            }
+            
+            $notesEditorContainer.hide();
+            $notesContentView.show();
+            $editBtn.show().text('Edit').css('background', '#2196F3');
+            $saveBtn.hide();
+            notesEditMode = false;
+            
+            // Proceed to close the panel
+            proceedWithPanelClose();
+          } catch (err) {
+            alert('Error saving notes: ' + err.message);
+          }
+        })
       // If user cancels, do nothing (keep edit mode open)
     }
     return;
@@ -1640,10 +1776,24 @@ async function closeActivePanel() {
   
   // If only one panel is open, confirm before closing the window
   if (visiblePanels === 1) {
-    const result = confirm('Close the application?\n\nClick OK to close, or Cancel to keep the app open.');
-    if (result) {
+    w2confirm({
+      msg: 'Close the application?<br><br>Click "Close" to exit, or "Cancel" to keep the app open.',
+      title: 'Confirm Close',
+      width: 400,
+      height: 180,
+      btn_yes: {
+        text: 'Close',
+        class: '',
+        style: ''
+      },
+      btn_no: {
+        text: 'Cancel',
+        class: '',
+        style: ''
+      }
+    }).yes(async () => {
       await window.electronAPI.closeWindow();
-    }
+    });
     return;
   }
   
@@ -1659,29 +1809,41 @@ async function handleCloseRequest() {
   if (notesEditMode) {
     if (monacoEditor) {
       const content = monacoEditor.getValue();
-      const result = confirm('Notes are being edited. Save and close the application?\n\nClick OK to save and close, or Cancel to keep the app open.');
-      
-      if (result) {
-        // Save notes before closing
-        const notesPath = panelState[1].currentPath + '\\notes.txt';
-        try {
-          await window.electronAPI.writeNotesFile(notesPath, content);
-          window.electronAPI.allowClose();
-        } catch (err) {
-          console.error('Error saving notes before close:', err.message);
-          window.electronAPI.allowClose();  // Close anyway
+      w2confirm({
+        msg: 'Notes are being edited<br><br>"Exit Anyway" to close WITHOUT saving, or<br>"Cancel" to keep the app open.',
+        title: 'WARNING - Unsaved Notes',
+        width: 450,        // width of the dialog
+        height: 220,       // height of the dialog
+        btn_yes: {
+            text: 'Exit Anyway',   // text for yes button (or yes_text)
+            class: '',     // class for yes button (or yes_class)
+            style: '',     // style for yes button (or yes_style)
+            onClick: null  // callBack for yes button (or yes_callBack)
+        },
+        btn_no: {
+            text: 'Cancel',    // text for no button (or no_text)
+            class: '',     // class for no button (or no_class)
+            style: '',     // style for no button (or no_style)
+            onClick: null  // callBack for no button (or no_callBack)
         }
-      }
-      // If user cancels, do nothing (app stays open)
+      }).yes(async () => {
+          // Save notes before closing
+          const notesPath = panelState[1].currentPath + '\\notes.txt';
+          try {
+            // saved in case we want to add a save option to this popup in the future:
+            // await window.electronAPI.writeNotesFile(notesPath, content);
+            window.electronAPI.allowClose();
+          } catch (err) {
+            console.error('Error saving notes before close:', err.message);
+            window.electronAPI.allowClose();  // Close anyway
+          }
+        });
+      // If user cancels, do nothing (app stays open
     }
     return;
   }
-  
-  // Ask for confirmation before closing
-  const result = confirm('Close the application?\n\nClick OK to close, or Cancel to keep the app open.');
-  if (result) {
-    window.electronAPI.allowClose();
-  }
+  // default behavior: allow close without confirmation
+  window.electronAPI.allowClose();
 }
 
 /**
@@ -1705,65 +1867,8 @@ function attachPanelEventListeners(panelId) {
     }
   });
   
-  // Set active panel when clicking on title
-  $panel.find('.w2ui-panel-title').click(function() {
-    setActivePanelId(panelId);
-  });
-  
-  // Panel path - click to edit or press Ctrl+L
-  $panel.find('.panel-path').click(function() {
-    activatePathEditMode(panelId);
-  });
-
-  // Handle Ctrl+L globally for active panel
-  $(document).on('keydown.pathEdit' + panelId, function(e) {
-    if (e.ctrlKey && e.key === 'l' && activePanelId === panelId) {
-      e.preventDefault();
-      activatePathEditMode(panelId);
-    }
-  });
-
-  // Path input - handle Enter, Escape, and blur
-  $panel.find('.panel-path-input').on('keydown', function(e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const newPath = $(this).val().trim();
-      deactivatePathEditMode(panelId, true, newPath);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      deactivatePathEditMode(panelId, false);
-    }
-  }).on('blur', function() {
-    deactivatePathEditMode(panelId, false);
-  });
-
-  // Parent folder button
-  $panel.find('.btn-panel-parent').click(function() {
-    setActivePanelId(panelId);
-    const state = panelState[panelId];
-    if (state.currentPath && state.currentPath.length > 3) {
-      const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
-      if (parentPath.length >= 2) {
-        navigateToDirectory(parentPath, panelId);
-      }
-    }
-  });
-
-  // Refresh button
-  $panel.find('.btn-panel-refresh').click(async function() {
-    setActivePanelId(panelId);
-    await navigateToDirectory(panelState[panelId].currentPath, panelId);
-    // Reset background refresh timer when manually refreshing
-    await setupBackgroundRefreshTimer(panelId);
-  });
-
-  // Settings button (only for panel 1)
-  if (panelId === 1) {
-    $panel.find('.btn-panel-settings').click(function() {
-      setActivePanelId(panelId);
-      showSettingsModal();
-    });
-  }
+  // Note: Panel title elements are now managed in the grid header by attachGridHeaderEventListeners
+  // which is called from updateGridHeader()
   
   // Select button (panels 2-4 only)
   if (panelId > 1) {
@@ -1799,7 +1904,7 @@ function attachPanelEventListeners(panelId) {
     });
     
     // Panel remove button (panels 2-4 only)
-    $panel.find('.btn-panel-remove').click(function() {
+    $panel.find('.btn-panel-remove').off('click').on('click', function() {
       removePanel(panelId);
     });
   }
@@ -1986,22 +2091,35 @@ function attachEventListeners() {
 
   // Browser Settings - Advanced: reinitialize database button
   $('#btn-dev-reinitialize-db').click(async function() {
-    if (!confirm('Are you sure you want to reinitialize the database? This will delete all file history and directory assignments. This cannot be undone.')) {
-      return;
-    }
-    
-    try {
-      const result = await window.electronAPI.reinitializeDatabase();
-      if (result.success) {
-        alert('Database reinitialized successfully. The application will now reload.');
-        // Reload the page to reset all state
-        window.location.reload();
-      } else {
-        alert('Error reinitializing database: ' + result.error);
+    w2confirm({
+      msg: 'This will delete all file history and directory assignments.<br><br>This action cannot be undone.',
+      title: 'Reinitialize Database?',
+      width: 450,
+      height: 200,
+      btn_yes: {
+        text: 'Reinitialize',
+        class: '',
+        style: ''
+      },
+      btn_no: {
+        text: 'Cancel',
+        class: '',
+        style: ''
       }
-    } catch (err) {
-      alert('Error: ' + err.message);
-    }
+    }).yes(async () => {
+        try {
+          const result = await window.electronAPI.reinitializeDatabase();
+          if (result.success) {
+            alert('Database reinitialized successfully. The application will now reload.');
+            // Reload the page to reset all state
+            window.location.reload();
+          } else {
+            alert('Error reinitializing database: ' + result.error);
+          }
+        } catch (err) {
+          alert('Error: ' + err.message);
+        }
+      });
   });
 
   // Tag form save button
@@ -2786,15 +2904,30 @@ async function refreshCategoriesList() {
           'cursor': 'pointer'
         })
         .click(async function() {
-          if (confirm(`Delete category "${name}"?`)) {
-            try {
-              await window.electronAPI.deleteCategory(name);
-              await loadCategories();
-              await refreshCategoriesList();
-            } catch (err) {
-              alert('Error deleting category: ' + err.message);
+          w2confirm({
+            msg: `Delete category "${name}"?<br><br>This action cannot be undone.`,
+            title: 'Delete Category',
+            width: 380,
+            height: 180,
+            btn_yes: {
+              text: 'Delete',
+              class: '',
+              style: ''
+            },
+            btn_no: {
+              text: 'Cancel',
+              class: '',
+              style: ''
             }
-          }
+          }).yes(async () => {
+              try {
+                await window.electronAPI.deleteCategory(name);
+                await loadCategories();
+                await refreshCategoriesList();
+              } catch (err) {
+                alert('Error deleting category: ' + err.message);
+              }
+            });
         });
 
       controlsDiv.append(editBtn, deleteBtn);
@@ -3385,30 +3518,43 @@ async function deleteCategoryFromForm() {
     return;
   }
 
-  if (!confirm(`Are you sure you want to delete the "${categoryFormState.editingName}" category?`)) {
-    return;
-  }
-
-  try {
-    const grid = w2ui['categories-grid'];
-    const categoryToDelete = categoryFormState.editingName;
-    
-    await window.electronAPI.deleteCategory(categoryToDelete);
-    
-    // Remove from grid selectively if grid exists
-    if (grid) {
-      const recordIndex = grid.records.findIndex(r => r.categoryName === categoryToDelete);
-      if (recordIndex >= 0) {
-        grid.remove(grid.records[recordIndex].recid);
-        console.log(`Removed category "${categoryToDelete}" from grid`);
-      }
+  w2confirm({
+    msg: `Delete the "${categoryFormState.editingName}" category?<br><br>This action cannot be undone.`,
+    title: 'Delete Category',
+    width: 400,
+    height: 180,
+    btn_yes: {
+      text: 'Delete',
+      class: '',
+      style: ''
+    },
+    btn_no: {
+      text: 'Cancel',
+      class: '',
+      style: ''
     }
-    
-    clearCategoryForm();
-    alert('Category deleted successfully!');
-  } catch (err) {
-    alert('Error deleting category: ' + err.message);
-  }
+  }).yes(async () => {
+      try {
+        const grid = w2ui['categories-grid'];
+        const categoryToDelete = categoryFormState.editingName;
+        
+        await window.electronAPI.deleteCategory(categoryToDelete);
+        
+        // Remove from grid selectively if grid exists
+        if (grid) {
+          const recordIndex = grid.records.findIndex(r => r.categoryName === categoryToDelete);
+          if (recordIndex >= 0) {
+            grid.remove(grid.records[recordIndex].recid);
+            console.log(`Removed category "${categoryToDelete}" from grid`);
+          }
+        }
+        
+        clearCategoryForm();
+        alert('Category deleted successfully!');
+      } catch (err) {
+        alert('Error deleting category: ' + err.message);
+      }
+    })
 }
 
 // ==================== Tags Management ====================
@@ -3743,30 +3889,43 @@ async function deleteTagFromForm() {
     return;
   }
 
-  if (!confirm(`Are you sure you want to delete the "${tagFormState.editingName}" tag?`)) {
-    return;
-  }
-
-  try {
-    const grid = w2ui['tags-grid'];
-    const tagToDelete = tagFormState.editingName;
-    
-    await window.electronAPI.deleteTag(tagToDelete);
-    
-    // Remove from grid selectively if grid exists
-    if (grid) {
-      const recordIndex = grid.records.findIndex(r => r.tagName === tagToDelete);
-      if (recordIndex >= 0) {
-        grid.remove(grid.records[recordIndex].recid);
-        console.log(`Removed tag "${tagToDelete}" from grid`);
-      }
+  w2confirm({
+    msg: `Delete the "${tagFormState.editingName}" tag?<br><br>This action cannot be undone.`,
+    title: 'Delete Tag',
+    width: 400,
+    height: 180,
+    btn_yes: {
+      text: 'Delete',
+      class: '',
+      style: ''
+    },
+    btn_no: {
+      text: 'Cancel',
+      class: '',
+      style: ''
     }
-    
-    clearTagForm();
-    alert('Tag deleted successfully!');
-  } catch (err) {
-    alert('Error deleting tag: ' + err.message);
-  }
+  }).yes(async () => {
+      try {
+        const grid = w2ui['tags-grid'];
+        const tagToDelete = tagFormState.editingName;
+        
+        await window.electronAPI.deleteTag(tagToDelete);
+        
+        // Remove from grid selectively if grid exists
+        if (grid) {
+          const recordIndex = grid.records.findIndex(r => r.tagName === tagToDelete);
+          if (recordIndex >= 0) {
+            grid.remove(grid.records[recordIndex].recid);
+            console.log(`Removed tag "${tagToDelete}" from grid`);
+          }
+        }
+        
+        clearTagForm();
+        alert('Tag deleted successfully!');
+      } catch (err) {
+        alert('Error deleting tag: ' + err.message);
+      }
+    })
 }
 
 /**
@@ -3856,16 +4015,33 @@ async function saveHotkeyFromForm() {
     
     for (const [actionId, actionData] of Object.entries(hotkeyData[context])) {
       if (actionId !== record.actionId && actionData.key === newKey) {
-        // Duplicate found
-        if (confirm(`This hotkey is already assigned to "${actionData.label}" in the "${context}" context.\\n\\nDo you want to override it?`)) {
-          // User confirmed override
-          actionData.key = capturedCombo;
-          hotkeyData[context][record.actionId].key = capturedCombo;
-          break;
-        } else {
-          // User cancelled
-          throw new Error('Hotkey conflict - operation cancelled');
-        }
+        // Duplicate found - prompt user for override
+        w2confirm({
+          msg: `This hotkey is already assigned to "${actionData.label}" in the "${context}" context.<br><br>Do you want to override it?`,
+          title: 'Hotkey Conflict',
+          width: 420,
+          height: 200,
+          btn_yes: {
+            text: 'Override',
+            class: '',
+            style: ''
+          },
+          btn_no: {
+            text: 'Cancel',
+            class: '',
+            style: ''
+          }
+        }).yes(() => {
+            // User confirmed override
+            actionData.key = capturedCombo;
+            hotkeyData[context][record.actionId].key = capturedCombo;
+          })
+          .no(() => {
+            // User cancelled - don't continue
+            throw new Error('Hotkey conflict - operation cancelled');
+          });
+        // Note: Execution continues immediately; the actual override will be determined by the response
+        break;
       }
     }
     
@@ -3911,45 +4087,58 @@ async function resetHotkeyToDefault() {
     return;
   }
   
-  if (!confirm(`Reset "${record.action}" hotkey to ${record.defaultKey}?`)) {
-    return;
-  }
-  
-  try {
-    // Get current hotkeys data
-    const hotkeyData = await window.electronAPI.getHotkeys();
-    
-    // Reset the hotkey for this action to its default
-    hotkeyData[record.context][record.actionId].key = record.defaultKey;
-    
-    // Save to backend
-    const result = await window.electronAPI.saveHotkeys(hotkeyData);
-    if (!result.success) {
-      throw new Error(result.error || 'Failed to save hotkeys');
+  w2confirm({
+    msg: `Reset "${record.action}" hotkey to ${record.defaultKey}?`,
+    title: 'Reset Hotkey',
+    width: 380,
+    height: 160,
+    btn_yes: {
+      text: 'Reset',
+      class: '',
+      style: ''
+    },
+    btn_no: {
+      text: 'Cancel',
+      class: '',
+      style: ''
     }
-    
-    // Reload hotkey registry in memory
-    await loadHotkeysFromStorage();
-    
-    // Update grid
-    const grid = w2ui['hotkeys-grid'];
-    if (grid) {
-      const gridRecord = grid.records.find(r => r.actionId === record.actionId);
-      if (gridRecord) {
-        gridRecord.hotkey = record.defaultKey;
-        grid.refreshRow(gridRecord.recid);
+  }).yes(async () => {
+      try {
+        // Get current hotkeys data
+        const hotkeyData = await window.electronAPI.getHotkeys();
+        
+        // Reset the hotkey for this action to its default
+        hotkeyData[record.context][record.actionId].key = record.defaultKey;
+        
+        // Save to backend
+        const result = await window.electronAPI.saveHotkeys(hotkeyData);
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to save hotkeys');
+        }
+        
+        // Reload hotkey registry in memory
+        await loadHotkeysFromStorage();
+        
+        // Update grid
+        const grid = w2ui['hotkeys-grid'];
+        if (grid) {
+          const gridRecord = grid.records.find(r => r.actionId === record.actionId);
+          if (gridRecord) {
+            gridRecord.hotkey = record.defaultKey;
+            grid.refreshRow(gridRecord.recid);
+          }
+        }
+        
+        // Update form and clear any edit state
+        record.hotkey = record.defaultKey;
+        $('#form-hotkey-current').val(record.defaultKey);
+        cancelHotkeyDemo();
+        
+        alert('Hotkey reset successfully!');
+      } catch (err) {
+        alert('Error resetting hotkey: ' + err.message);
       }
-    }
-    
-    // Update form and clear any edit state
-    record.hotkey = record.defaultKey;
-    $('#form-hotkey-current').val(record.defaultKey);
-    cancelHotkeyDemo();
-    
-    alert('Hotkey reset successfully!');
-  } catch (err) {
-    alert('Error resetting hotkey: ' + err.message);
-  }
+    });
 }
 
 // Initialize on document ready
