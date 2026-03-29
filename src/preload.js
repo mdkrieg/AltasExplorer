@@ -41,6 +41,7 @@ console.error = (...args) => {
 contextBridge.exposeInMainWorld('electronAPI', {
   // File system operations
   readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
+  getRootDrives: () => ipcRenderer.invoke('get-root-drives'),
   
   // Database operations
   scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),

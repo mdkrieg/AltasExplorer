@@ -94,6 +94,37 @@ class FilesystemService {
   resolvePath(filePath) {
     return path.resolve(filePath);
   }
+
+  /**
+   * Get root drives (Windows drive letters and removable media)
+   */
+  getRootDrives() {
+    const drives = [];
+    
+    // On Windows, check for drive letters C:, D:, E:, etc.
+    for (let i = 67; i <= 90; i++) { // ASCII codes for C-Z
+      const drive = String.fromCharCode(i) + ':';
+      try {
+        const fullPath = drive + '\\';
+        // Try to access the drive
+        if (fs.existsSync(fullPath)) {
+          const stats = fs.statSync(fullPath);
+          drives.push({
+            label: drive,
+            path: fullPath,
+            isRemovable: false,
+            isReady: true
+          });
+        }
+      } catch (err) {
+        // Drive not accessible, skip it
+        logger.debug(`Drive ${drive} not accessible: ${err.message}`);
+      }
+    }
+    
+    logger.info(`Found ${drives.length} root drives`);
+    return drives;
+  }
 }
 
 module.exports = new FilesystemService();

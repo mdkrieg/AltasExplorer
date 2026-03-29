@@ -126,6 +126,18 @@ ipcMain.handle('read-directory', (event, dirPath) => {
 });
 
 /**
+ * Get root drives for sidebar
+ */
+ipcMain.handle('get-root-drives', (event) => {
+  try {
+    return fs.getRootDrives();
+  } catch (err) {
+    logger.error('Error getting root drives:', err.message);
+    return [];
+  }
+});
+
+/**
  * Database: Scan directory and upsert files
  */
 ipcMain.handle('scan-directory', (event, dirPath) => {

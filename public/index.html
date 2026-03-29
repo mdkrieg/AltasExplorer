@@ -15,17 +15,20 @@
   <link rel="stylesheet" type="text/css" href="css/styles.css">
 </head>
 <body>
-  <div id="main" style="width: 100%; height: 100%;">
+  <!-- W2Layout Container -->
+  <div id="layout" style="width: 100%; height: 100%;"></div>
+
+  <!-- Sidebar Content (will be rendered into w2layout's left panel) -->
+  <div id="sidebar-content" style="display: none; width: 100%; height: 100%; flex-direction: column;">
+    <div class="sidebar-header">
+      <h3>This PC</h3>
+    </div>
+    <div id="sidebar-tree" class="sidebar-tree"></div>
+  </div>
+
+  <!-- Panel Container (will be rendered into w2layout's main panel) -->
+  <div id="main-content" style="display: none; width: 100%; height: 100%; flex-direction: column;">
     <div class="w2ui-page page-0">
-      <div class="w2ui-panel wpanel" name="left" style="display: none; width: 250px;">
-        <!-- Left sidebar: Folder navigation - HIDDEN -->
-        <div class="w2ui-panel-title">Folders</div>
-        <div id="folders-container" style="padding: 10px; overflow-y: auto; height: calc(100% - 50px);">
-          <div id="current-path-sidebar" style="margin-bottom: 10px; font-weight: bold; word-break: break-all; font-size: 12px;"></div>
-          <button id="btn-parent-folder-sidebar" style="width: 100%; margin-bottom: 10px; padding: 8px;">Parent Folder</button>
-          <div id="subfolders-list" style="border: 1px solid #ddd; border-radius: 4px;"></div>
-        </div>
-      </div>
 
       <div id="panel-container" class="panel-container layout-1" style="left: 0; right: 0; top: 0; bottom: 0; position: absolute; display: grid;">
         <!-- Panel 1 (always present) -->

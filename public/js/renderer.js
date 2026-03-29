@@ -33,6 +33,16 @@ let panelContextMenuState = {}; // Stores context menu state for onMenuClick han
 let hotkeyRegistry = {}; // Maps action IDs to their current key combinations
 const MISSING_DIRECTORY_LABEL = '(DIRECTORY DOES NOT EXIST)';
 
+// Sidebar state
+let sidebarState = {
+  expandedPaths: new Set(),
+  selectedPath: null,
+  drives: []
+};
+
+// W2Layout instance
+let w2layoutInstance = null;
+
 /**
  * Initialize the application
  */
@@ -47,8 +57,61 @@ async function initialize() {
     
     console.log('electronAPI available:', Object.keys(window.electronAPI));
 
+    // Initialize w2layout with resizable panels
+    w2layoutInstance = new w2layout({
+      name: 'layout',
+      padding: 0,
+      panels: [
+        { 
+          type: 'left',
+          size: parseInt(localStorage.getItem('sidebarWidth') || '250'),
+          resizable: true,
+          minSize: 150,
+          maxSize: 500,
+          style: 'border-right: 1px solid #ddd;'
+        },
+        { 
+          type: 'main',
+          minSize: 300,
+          overflow: 'hidden'
+        }
+      ]
+    });
+
+    // Render layout
+    w2layoutInstance.render('#layout');
+
+    // Move sidebar content into left panel
+    const sidebarContent = document.getElementById('sidebar-content');
+    const leftPanelElement = w2layoutInstance.el('left');
+    if (leftPanelElement && sidebarContent) {
+      // Move the element into the left panel
+      sidebarContent.style.display = 'flex';
+      leftPanelElement.appendChild(sidebarContent);
+    }
+
+    // Move main content into main panel
+    const mainContent = document.getElementById('main-content');
+    const mainPanelElement = w2layoutInstance.el('main');
+    if (mainPanelElement && mainContent) {
+      // Move the element into the main panel
+      mainContent.style.display = 'flex';
+      mainPanelElement.appendChild(mainContent);
+    }
+
+    // Handle panel resize to save sidebar width
+    w2layoutInstance.on('resize', function() {
+      const leftPanel = this.get('left');
+      if (leftPanel && leftPanel.size) {
+        localStorage.setItem('sidebarWidth', leftPanel.size);
+      }
+    });
+
     // Initialize grids for all panels
     await initializeAllGrids();
+
+    // Initialize sidebar with root drives
+    await initializeSidebar();
 
     // Get settings and navigate to home directory
     const settings = await window.electronAPI.getSettings();
@@ -122,6 +185,11 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       state.navigationHistory = state.navigationHistory.slice(0, state.navigationIndex + 1);
       state.navigationHistory.push(dirPath);
       state.navigationIndex = state.navigationHistory.length - 1;
+    }
+    
+    // Update sidebar selection if navigating panel-1
+    if (panelId === 1) {
+      updateSidebarSelection(normalizedPath);
     }
     
     // Update panel path display
@@ -228,6 +296,247 @@ async function initializeAllGrids() {
   for (let panelId = 1; panelId <= 4; panelId++) {
     await initializeGridForPanel(panelId);
   }
+}
+
+/**
+ * Initialize sidebar with root drives
+ */
+async function initializeSidebar() {
+  try {
+    console.log('Initializing sidebar...');
+    
+    // Get root drives from main process
+    const drives = await window.electronAPI.getRootDrives();
+    sidebarState.drives = drives;
+    
+    // Render the sidebar tree
+    await renderSidebarTree(drives);
+    
+    // Attach sidebar event listeners
+    attachSidebarEventListeners();
+    
+    console.log('Sidebar initialized with', drives.length, 'drives');
+  } catch (err) {
+    console.error('Error initializing sidebar:', err);
+  }
+}
+
+/**
+ * Render the sidebar tree starting with root drives
+ */
+async function renderSidebarTree(drives) {
+  const $tree = $('#sidebar-tree');
+  $tree.empty();
+  
+  // Create "This PC" group section with all drives
+  for (const drive of drives) {
+    const $driveItem = createSidebarDriveItem(drive);
+    $tree.append($driveItem);
+  }
+}
+
+/**
+ * Create a sidebar item for a drive
+ */
+function createSidebarDriveItem(drive) {
+  const $item = $('<div>')
+    .addClass('sidebar-item sidebar-item-drive')
+    .attr('data-path', drive.path)
+    .attr('data-isDirectory', 'true')
+    .attr('data-expanded', 'false');
+  
+  // Toggle arrow (for expanding/collapsing)
+  const $arrow = $('<div>')
+    .addClass('sidebar-toggle-arrow collapsed')
+    .text('▶')
+    .attr('title', 'Expand drive');
+  
+  // Drive label
+  const $label = $('<div>')
+    .addClass('sidebar-item-label')
+    .text(drive.label)
+    .attr('title', drive.label);
+  
+  $item.append($arrow, $label);
+  
+  return $item;
+}
+
+/**
+ * Create a sidebar item for a directory
+ */
+function createSidebarDirectoryItem(dirName, dirPath, level = 0) {
+  const $item = $('<div>')
+    .addClass('sidebar-item')
+    .addClass(`sidebar-item-indent-${Math.min(level, 5)}`)
+    .attr('data-path', dirPath)
+    .attr('data-isDirectory', 'true')
+    .attr('data-expanded', 'false');
+  
+  // Toggle arrow (will be hidden if no children or hidden by default)
+  const $arrow = $('<div>')
+    .addClass('sidebar-toggle-arrow collapsed no-children')
+    .text('▶');
+  
+  // Directory label
+  const $label = $('<div>')
+    .addClass('sidebar-item-label')
+    .text(dirName)
+    .attr('title', dirPath);
+  
+  $item.append($arrow, $label);
+  
+  return $item;
+}
+
+/**
+ * Load and expand children for a sidebar item
+ */
+async function loadSidebarItemChildren(path, $item) {
+  try {
+    // Check if already loaded
+    const $children = $item.next('.sidebar-children');
+    if ($children.length > 0) {
+      return; // Already loaded
+    }
+    
+    // Get directory contents
+    const entries = await window.electronAPI.readDirectory(path);
+    
+    // Filter to only directories
+    const directories = entries.filter(e => e.isDirectory);
+    
+    // If no directories, exit
+    if (directories.length === 0) {
+      // Update arrow to show no children
+      $item.find('.sidebar-toggle-arrow').addClass('no-children');
+      return;
+    }
+    
+    // Create children container
+    const $childrenContainer = $('<div>').addClass('sidebar-children');
+    
+    // Get current level from indentation class
+    const levelMatch = $item.attr('class').match(/sidebar-item-indent-(\d+)/);
+    let currentLevel = levelMatch ? parseInt(levelMatch[1]) : 0;
+    const childLevel = currentLevel + 1;
+    
+    // Create items for each subdirectory
+    for (const dir of directories) {
+      const $childItem = createSidebarDirectoryItem(dir.filename, dir.path, childLevel);
+      $childrenContainer.append($childItem);
+    }
+    
+    // Insert children container after the item
+    $item.after($childrenContainer);
+    
+    // Update arrow to show has children
+    $item.find('.sidebar-toggle-arrow').removeClass('no-children');
+    
+    console.log(`Loaded ${directories.length} subdirectories for ${path}`);
+  } catch (err) {
+    console.error('Error loading sidebar item children:', err);
+  }
+}
+
+/**
+ * Toggle expansion of a sidebar item
+ */
+async function toggleSidebarItemExpansion($item) {
+  const isExpanded = $item.attr('data-expanded') === 'true';
+  const path = $item.attr('data-path');
+  
+  if (isExpanded) {
+    // Collapse
+    collapseSidebarItem($item);
+  } else {
+    // Expand - load children if not already loaded
+    await expandSidebarItem($item, path);
+  }
+}
+
+/**
+ * Expand a sidebar item and show its children
+ */
+async function expandSidebarItem($item, path) {
+  // Load children if not loaded yet
+  await loadSidebarItemChildren(path, $item);
+  
+  // Show children container
+  const $children = $item.next('.sidebar-children');
+  if ($children.length > 0) {
+    $children.show();
+  }
+  
+  // Update arrow and state
+  $item.attr('data-expanded', 'true');
+  $item.find('.sidebar-toggle-arrow').removeClass('collapsed').text('▼');
+}
+
+/**
+ * Collapse a sidebar item and hide its children
+ */
+function collapseSidebarItem($item) {
+  // Hide children container
+  const $children = $item.next('.sidebar-children');
+  if ($children.length > 0) {
+    $children.hide();
+  }
+  
+  // Update arrow and state
+  $item.attr('data-expanded', 'false');
+  $item.find('.sidebar-toggle-arrow').addClass('collapsed').text('▶');
+}
+
+/**
+ * Update sidebar selection to highlight a path
+ */
+function updateSidebarSelection(path) {
+  // Remove selection from all items
+  $('.sidebar-item').removeClass('sidebar-item-selected');
+  
+  // Add selection to matching path
+  if (path) {
+    $(`.sidebar-item[data-path="${path}"]`).addClass('sidebar-item-selected');
+    sidebarState.selectedPath = path;
+  }
+}
+
+/**
+ * Attach event listeners to sidebar items
+ */
+function attachSidebarEventListeners() {
+  // Delegate click events for dynamic items
+  $('#sidebar-tree').on('click', '.sidebar-toggle-arrow', function(e) {
+    e.stopPropagation();
+    const $item = $(this).closest('.sidebar-item');
+    toggleSidebarItemExpansion($item);
+  });
+  
+  // Double-click to navigate
+  $('#sidebar-tree').on('dblclick', '.sidebar-item-label', function(e) {
+    e.stopPropagation();
+    const $item = $(this).closest('.sidebar-item');
+    const path = $item.attr('data-path');
+    
+    if (path) {
+      // Navigate to directory in panel-1
+      navigateToDirectory(path, 1);
+      // Update sidebar selection
+      updateSidebarSelection(path);
+    }
+  });
+  
+  // Single click to select
+  $('#sidebar-tree').on('click', '.sidebar-item-label', function(e) {
+    e.stopPropagation();
+    const $item = $(this).closest('.sidebar-item');
+    const path = $item.attr('data-path');
+    
+    if (path) {
+      updateSidebarSelection(path);
+    }
+  });
 }
 
 /**
