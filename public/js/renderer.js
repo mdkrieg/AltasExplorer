@@ -14,10 +14,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null, lastRefreshInterval: null, hasBeenViewed: false },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null, lastRefreshInterval: null, hasBeenViewed: false },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null, lastRefreshInterval: null, hasBeenViewed: false },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null, lastRefreshInterval: null, hasBeenViewed: false }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -152,13 +152,27 @@ async function initialize() {
     window.electronAPI.onCloseRequest(() => {
       handleCloseRequest();
     });
+
+    // Listen for backend background refresh notifications
+    window.electronAPI.onDirectoryChanged(({ panelId, dirPath }) => {
+      const state = panelState[panelId];
+      if (state && state.currentPath === dirPath) {
+        navigateToDirectory(dirPath, panelId, false).catch(err => {
+          console.error(`Background refresh failed for panel ${panelId}:`, err);
+        });
+      }
+    });
     
     // Initialize Monaco editor loader
     await initializeMonacoLoader();
     
-    // Setup background refresh timer for panel 1 if enabled
-    await setupBackgroundRefreshTimer(1);
-    
+    // Start backend background refresh
+    const bgSettings = await window.electronAPI.getSettings();
+    window.electronAPI.startBackgroundRefresh(
+      bgSettings.background_refresh_enabled || false,
+      bgSettings.background_refresh_interval || 30
+    );
+
     console.log('Initialization complete');
   } catch (err) {
     console.error('Error initializing app:', err);
@@ -178,11 +192,9 @@ function updateGridHeader(panelId, path) {
   // Build toolbar HTML with path and buttons
   let buttonsHtml = `
     <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-    <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
   `;
   
   if (panelId === 1) {
-    buttonsHtml += `<button class="btn-panel-settings" style="padding: 4px 8px; margin-right: 5px;">Settings</button>`;
     buttonsHtml += `<button id="btn-add-panel" style="padding: 4px 8px; background: #4CAF50; color: white; border: none; font-weight: bold; border-radius: 4px;">+</button>`;
   }
   
@@ -258,7 +270,6 @@ function attachGridHeaderEventListeners(panelId) {
   $header.find('.btn-panel-refresh').off('click').on('click', async function() {
     setActivePanelId(panelId);
     await navigateToDirectory(panelState[panelId].currentPath, panelId);
-    await setupBackgroundRefreshTimer(panelId);
   });
   
   // Settings button (panel 1 only)
@@ -369,8 +380,11 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     state.currentCategory = category;
 
     // Update window icon if this is the active panel
+    // Use initials from the "." dot entry of the current directory if present
     if (panelId === activePanelId && category) {
-      await window.electronAPI.updateWindowIcon(category.name);
+      const dotEntry = (scanResult.entries || []).find(e => e.filename === '.' && e.isDirectory);
+      const currentDirInitials = dotEntry ? (dotEntry.initials || null) : null;
+      await window.electronAPI.updateWindowIcon(category.name, currentDirInitials);
     }
 
     // Use entries from scan result (already has changeState metadata)
@@ -390,6 +404,9 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
 
     // Mark this panel as having been viewed
     panelState[panelId].hasBeenViewed = true;
+
+    // Register this directory for backend background refresh
+    window.electronAPI.registerWatchedPath(panelId, normalizedPath);
 
     // Start async checksum calculation if category has it enabled
     if (category && category.enableChecksum) {
@@ -467,8 +484,14 @@ async function initializeSidebar() {
     // Render the sidebar tree
     await renderSidebarTree(drives);
     
+    // Render favorites list
+    await renderFavoritesList();
+
     // Attach sidebar event listeners
     attachSidebarEventListeners();
+
+    // Attach favorites event listeners
+    attachFavoritesEventListeners();
     
     console.log('Sidebar initialized with', drives.length, 'drives');
   } catch (err) {
@@ -528,9 +551,9 @@ function createSidebarDirectoryItem(dirName, dirPath, level = 0) {
     .attr('data-isDirectory', 'true')
     .attr('data-expanded', 'false');
   
-  // Toggle arrow (will be hidden if no children or hidden by default)
+  // Toggle arrow (will be hidden if no children, determined on first expand)
   const $arrow = $('<div>')
-    .addClass('sidebar-toggle-arrow collapsed no-children')
+    .addClass('sidebar-toggle-arrow collapsed')
     .text('▶');
   
   // Directory label
@@ -694,6 +717,277 @@ function attachSidebarEventListeners() {
   });
 }
 
+// =====================
+// FAVORITES
+// =====================
+
+let favoritesContextMenuTarget = null; // path of favorite being right-clicked
+let favoriteDragSrcIndex = null;
+
+/**
+ * Load favorites array from settings
+ */
+async function loadFavoritesFromSettings() {
+  try {
+    const settings = await window.electronAPI.getSettings();
+    return Array.isArray(settings.favorites) ? settings.favorites : [];
+  } catch (err) {
+    console.error('Error loading favorites:', err);
+    return [];
+  }
+}
+
+/**
+ * Save favorites array to settings
+ */
+async function saveFavoritesToSettings(favorites) {
+  try {
+    const settings = await window.electronAPI.getSettings();
+    settings.favorites = favorites;
+    await window.electronAPI.saveSettings(settings);
+  } catch (err) {
+    console.error('Error saving favorites:', err);
+  }
+}
+
+/**
+ * Render the favorites list in the sidebar
+ */
+async function renderFavoritesList() {
+  const favorites = await loadFavoritesFromSettings();
+  const $list = $('#favorites-list');
+  $list.empty();
+
+  if (favorites.length === 0) {
+    $list.append(
+      $('<div>').addClass('favorite-item-empty')
+        .css({ padding: '4px 12px', fontSize: '11px', color: '#bbb', fontStyle: 'italic' })
+        .text('No favorites yet')
+    );
+    return;
+  }
+
+  for (let index = 0; index < favorites.length; index++) {
+    const fav = favorites[index];
+    const name = fav.name || fav.path.split(/[\\/]/).filter(Boolean).pop() || fav.path;
+    const $item = $('<div>')
+      .addClass('favorite-item')
+      .attr('data-path', fav.path)
+      .attr('data-index', index)
+      .attr('draggable', 'true');
+
+    const $handle = $('<div>').addClass('favorite-item-drag-handle').text('⠿');
+    const $icon = $('<div>').addClass('favorite-item-icon');
+    const $label = $('<div>').addClass('favorite-item-label').text(name).attr('title', fav.path);
+
+    // Resolve category-based folder icon with initials
+    try {
+      const [category, initials] = await Promise.all([
+        window.electronAPI.getCategoryForDirectory(fav.path),
+        window.electronAPI.getDirectoryInitials(fav.path)
+      ]);
+      const iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, initials || null);
+      $icon.html(`<img src="${iconUrl}" style="width: 16px; height: 16px; object-fit: contain;">`);
+    } catch (err) {
+      $icon.html('📁');
+    }
+
+    $item.append($handle, $icon, $label);
+    $list.append($item);
+  }
+}
+
+/**
+ * Add a directory path to favorites (avoiding duplicates)
+ */
+async function addToFavorites(dirPath) {
+  const favorites = await loadFavoritesFromSettings();
+  const normalized = dirPath.replace(/\\/g, '/');
+  const exists = favorites.some(f => f.path.replace(/\\/g, '/') === normalized);
+  if (!exists) {
+    const name = dirPath.split(/[\\/]/).filter(Boolean).pop() || dirPath;
+    favorites.push({ path: dirPath, name });
+    await saveFavoritesToSettings(favorites);
+    await renderFavoritesList();
+  }
+}
+
+/**
+ * Remove a path from favorites
+ */
+async function removeFromFavorites(dirPath) {
+  const favorites = await loadFavoritesFromSettings();
+  const normalized = dirPath.replace(/\\/g, '/');
+  const updated = favorites.filter(f => f.path.replace(/\\/g, '/') !== normalized);
+  await saveFavoritesToSettings(updated);
+  await renderFavoritesList();
+}
+
+/**
+ * Attach event listeners for the favorites list (drag/drop, click, right-click)
+ */
+function attachFavoritesEventListeners() {
+  const $list = $('#favorites-list');
+
+  // Navigate on click
+  $list.on('click', '.favorite-item', async function(e) {
+    const path = $(this).attr('data-path');
+    if (path) {
+      await navigateToDirectory(path, 1);
+      updateSidebarSelection(path);
+    }
+  });
+
+  // Right-click context menu
+  $list.on('contextmenu', '.favorite-item', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    favoritesContextMenuTarget = $(this).attr('data-path');
+    showFavoritesContextMenu(e.clientX, e.clientY);
+  });
+
+  // Drag events – source
+  $list.on('dragstart', '.favorite-item', function(e) {
+    favoriteDragSrcIndex = parseInt($(this).attr('data-index'));
+    $(this).addClass('dragging');
+    e.originalEvent.dataTransfer.effectAllowed = 'move';
+    e.originalEvent.dataTransfer.setData('text/plain', favoriteDragSrcIndex.toString());
+  });
+
+  $list.on('dragend', '.favorite-item', function() {
+    $(this).removeClass('dragging');
+    $('.favorite-item').removeClass('drag-over-top drag-over-bottom');
+  });
+
+  // Drag events – target
+  $list.on('dragover', '.favorite-item', function(e) {
+    e.preventDefault();
+    e.originalEvent.dataTransfer.dropEffect = 'move';
+    const rect = this.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    $(this).removeClass('drag-over-top drag-over-bottom');
+    if (e.originalEvent.clientY < midY) {
+      $(this).addClass('drag-over-top');
+    } else {
+      $(this).addClass('drag-over-bottom');
+    }
+  });
+
+  $list.on('dragleave', '.favorite-item', function() {
+    $(this).removeClass('drag-over-top drag-over-bottom');
+  });
+
+  $list.on('drop', '.favorite-item', async function(e) {
+    e.preventDefault();
+    $(this).removeClass('drag-over-top drag-over-bottom');
+    const destIndex = parseInt($(this).attr('data-index'));
+    if (favoriteDragSrcIndex === null || favoriteDragSrcIndex === destIndex) return;
+
+    const rect = this.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const insertAfter = e.originalEvent.clientY >= midY;
+
+    const favorites = await loadFavoritesFromSettings();
+    const moved = favorites.splice(favoriteDragSrcIndex, 1)[0];
+    let insertAt = destIndex;
+    if (favoriteDragSrcIndex < destIndex) insertAt = destIndex - 1;
+    if (insertAfter) insertAt += 1;
+    favorites.splice(insertAt, 0, moved);
+    await saveFavoritesToSettings(favorites);
+    await renderFavoritesList();
+    favoriteDragSrcIndex = null;
+  });
+}
+
+/**
+ * Show the favorites right-click context menu
+ */
+function showFavoritesContextMenu(x, y) {
+  let $menu = $('#favorites-context-menu');
+  if ($menu.length === 0) {
+    $menu = buildFavoritesContextMenuEl();
+    $('body').append($menu);
+  }
+
+  // Rebuild Open In items based on visible panels
+  const $openInSub = $menu.find('.fav-submenu');
+  $openInSub.empty();
+  for (let i = 1; i <= Math.min(visiblePanels + 1, 4); i++) {
+    $openInSub.append(
+      $('<div>').addClass('fav-menu-item')
+        .attr('data-panel', i)
+        .text(`Panel ${i}`)
+        .on('click', async function(e) {
+          e.stopPropagation();
+          hideFavoritesContextMenu();
+          const path = favoritesContextMenuTarget;
+          if (!path) return;
+          const panelNum = parseInt($(this).attr('data-panel'));
+          const $panel = $(`#panel-${panelNum}`);
+          if (panelNum > visiblePanels) {
+            visiblePanels = panelNum;
+            $panel.show();
+            updatePanelLayout();
+          }
+          await navigateToDirectory(path, panelNum);
+          $panel.find('.panel-landing-page').hide();
+          $panel.find('.panel-grid').show();
+          const grid = panelState[panelNum].w2uiGrid;
+          if (grid && grid.resize) grid.resize();
+          setActivePanelId(panelNum);
+        })
+    );
+  }
+
+  $menu.css({ left: x, top: y, display: 'block' });
+
+  // Ensure menu stays in viewport
+  const menuRect = $menu[0].getBoundingClientRect();
+  if (menuRect.right > window.innerWidth) {
+    $menu.css('left', x - menuRect.width);
+  }
+  if (menuRect.bottom > window.innerHeight) {
+    $menu.css('top', y - menuRect.height);
+  }
+}
+
+function buildFavoritesContextMenuEl() {
+  const $menu = $('<div>').attr('id', 'favorites-context-menu');
+
+  // Open In (with submenu)
+  const $openIn = $('<div>').addClass('fav-menu-item has-submenu').text('Open In');
+  const $sub = $('<div>').addClass('fav-submenu');
+  $openIn.append($sub);
+  $menu.append($openIn);
+
+  $menu.append($('<hr>').addClass('fav-menu-separator'));
+
+  // Remove
+  $menu.append(
+    $('<div>').addClass('fav-menu-item fav-menu-item-remove').text('Remove')
+      .on('click', async function(e) {
+        e.stopPropagation();
+        hideFavoritesContextMenu();
+        if (favoritesContextMenuTarget) {
+          await removeFromFavorites(favoritesContextMenuTarget);
+        }
+      })
+  );
+
+  return $menu;
+}
+
+function hideFavoritesContextMenu() {
+  $('#favorites-context-menu').hide();
+}
+
+// Hide context menu on outside click
+$(document).on('click', function(e) {
+  if (!$(e.target).closest('#favorites-context-menu').length) {
+    hideFavoritesContextMenu();
+  }
+});
+
 /**
  * Initialize w2ui grid for a specific panel
  */
@@ -754,6 +1048,16 @@ async function initializeGridForPanel(panelId) {
           // Let w2ui handle the row highlighting naturally
         }
       }
+
+      // Icon-cell click on a folder row → open inline initials editor
+      if (event.detail.column === 0 && event.detail.recid) {
+        const record = this.records[event.detail.recid - 1];
+        if (record && record.isFolder && record.changeState !== 'moved') {
+          openInitialsEditor(record, panelId);
+          event.preventDefault();
+          return;
+        }
+      }
       
       // Single click handling for other panels in select mode
       if (panelId > 1 && panelState[panelId].selectMode && event.detail.recid) {
@@ -797,12 +1101,21 @@ async function initializeGridForPanel(panelId) {
       console.log('Context menu click:', event);
       // Handle context menu item clicks
       handleContextMenuClick(event, panelId);
+    },
+    onReload: function(event) {
+      event.preventDefault();
+      setActivePanelId(panelId);
+      navigateToDirectory(panelState[panelId].currentPath, panelId);
     }
   });
 
   // Render grid in the panel's grid container
   const $gridContainer = $(`#panel-${panelId} .panel-grid`);
   w2ui[gridName].render($gridContainer[0]);
+
+  // Override reload button tooltip to "Refresh"
+  const reloadItem = w2ui[gridName].toolbar.get('w2ui-reload');
+  if (reloadItem) reloadItem.tooltip = 'Refresh';
   
   // Set initial header
   updateGridHeader(panelId, 'Loading...');
@@ -852,7 +1165,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       iconUrl = 'assets/folder-moved.svg';
     } else {
       const category = await window.electronAPI.getCategoryForDirectory(folder.path);
-      iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor);
+      iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, folder.initials || null);
     }
     
     // Use the same getRowClassName function for consistency with files
@@ -860,7 +1173,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     
     records.push({
       recid: recordId++,
-      icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain;">`, className),
+      icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`, className),
       filename: applyClass(folder.filename, className),
       filenameRaw: folder.filename,
       size: applyClass('-', className),
@@ -870,6 +1183,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       path: folder.path,
       changeState: folder.changeState,
       inode: folder.inode,
+      initials: folder.initials || null,
       dir_id: null, // Will be set from DB if needed
       orphan_id: folder.orphan_id || null,
       new_dir_id: folder.new_dir_id || null
@@ -885,9 +1199,9 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     // Determine which file icon to use based on changeState
     let iconSvg;
     if (file.changeState === 'moved') {
-      iconSvg = '<img src="assets/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+      iconSvg = '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">';
     } else {
-      iconSvg = '<img src="assets/file.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+      iconSvg = '<img src="assets/icons/file.svg" style="width: 20px; height: 20px; object-fit: contain;">';
     }
     
     records.push({
@@ -920,6 +1234,107 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     grid.refresh();
     console.log(`Grid for panel ${panelId} populated with ${records.length} rows`);
   }
+}
+
+/**
+ * Inline initials editor — shows a small popup input over the icon cell.
+ * The user types up to 2 characters; on confirm the icon regenerates and
+ * the value is persisted to dirs.initials via IPC.
+ */
+function openInitialsEditor(record, panelId) {
+  // Remove any existing editor
+  const existing = document.getElementById('initials-editor-popup');
+  if (existing) existing.remove();
+
+  // Find the icon cell DOM element for this record
+  const grid = panelState[panelId].w2uiGrid;
+  if (!grid) return;
+  const gridName = `grid-panel-${panelId}`;
+  const rowEl = document.querySelector(`#grid_${gridName}_rec_${record.recid}`);
+  if (!rowEl) return;
+  const iconCell = rowEl.querySelector('td:first-child');
+  if (!iconCell) return;
+
+  const rect = iconCell.getBoundingClientRect();
+
+  const popup = document.createElement('div');
+  popup.id = 'initials-editor-popup';
+  popup.style.cssText = `
+    position: fixed;
+    left: ${rect.left}px;
+    top: ${rect.bottom + 2}px;
+    background: #fff;
+    border: 1px solid #2196F3;
+    border-radius: 4px;
+    padding: 4px 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  `;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.maxLength = 2;
+  input.value = record.initials || '';
+  input.placeholder = 'AB';
+  input.style.cssText = 'width: 36px; font-size: 13px; font-weight: bold; text-align: center; text-transform: uppercase; border: none; outline: none; padding: 2px;';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.textContent = '✓';
+  confirmBtn.title = 'Save initials';
+  confirmBtn.style.cssText = 'padding: 2px 6px; cursor: pointer; background: #2196F3; color: white; border: none; border-radius: 3px; font-size: 12px;';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = '✕';
+  clearBtn.title = 'Clear initials';
+  clearBtn.style.cssText = 'padding: 2px 6px; cursor: pointer; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;';
+
+  popup.appendChild(input);
+  popup.appendChild(confirmBtn);
+  popup.appendChild(clearBtn);
+  document.body.appendChild(popup);
+  input.focus();
+  input.select();
+
+  async function applyInitials(value) {
+    popup.remove();
+    const newInitials = value ? value.trim().slice(0, 2).toUpperCase() : null;
+    await window.electronAPI.saveDirectoryInitials(record.path, newInitials);
+    // Refresh the icon cell in-place
+    record.initials = newInitials;
+    const category = await window.electronAPI.getCategoryForDirectory(record.path);
+    const iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, newInitials);
+    const className = getRowClassName(record.changeState);
+    record.icon = className
+      ? `<div class="${className}"><img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials"></div>`
+      : `<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`;
+    grid.refreshCell(record.recid, 'icon');
+    // Refresh favorites list in case this directory is favorited
+    await renderFavoritesList();
+  }
+
+  confirmBtn.addEventListener('click', () => applyInitials(input.value));
+  clearBtn.addEventListener('click', () => applyInitials(''));
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') applyInitials(input.value);
+    if (e.key === 'Escape') popup.remove();
+    // Force uppercase as user types
+    input.value = input.value.toUpperCase();
+  });
+  input.addEventListener('input', () => { input.value = input.value.toUpperCase(); });
+
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('mousedown', function outsideClick(e) {
+      if (!popup.contains(e.target)) {
+        popup.remove();
+        document.removeEventListener('mousedown', outsideClick);
+      }
+    });
+  }, 0);
 }
 
 /**
@@ -2249,11 +2664,12 @@ function clearPanelState(panelId) {
     checksumQueueIndex: 0,
     checksumCancelled: false,
     showDateCreated: false,
-    backgroundRefreshTimer: null,
-    lastRefreshInterval: null,
     hasBeenViewed: false
   };
-  
+
+  // Unregister from backend background refresh
+  window.electronAPI.unregisterWatchedPath(panelId);
+
   // Note: Grid header is hidden along with the grid
   const $panel = $(`#panel-${panelId}`);
   setPanelPathValidity(panelId, true);
@@ -2467,6 +2883,19 @@ function attachPanelEventListeners(panelId) {
     $panel.find('.btn-panel-remove-overlay').off('click').on('click', function() {
       removePanel(panelId);
     });
+    
+    // Add panel button on panel 2 landing page
+    if (panelId === 2) {
+      $panel.find('.btn-add-panel-landing').off('click').on('click', function() {
+        if (visiblePanels < 4) {
+          visiblePanels++;
+          const newPanelId = visiblePanels;
+          $(`#panel-${newPanelId}`).show();
+          attachPanelEventListeners(newPanelId);
+          updatePanelLayout();
+        }
+      });
+    }
   }
 }
 
@@ -2614,6 +3043,11 @@ function attachEventListeners() {
   // Settings modal close button
   $('#btn-settings-close').click(function() {
     hideSettingsModal();
+  });
+
+  // Sidebar Settings button
+  $('#btn-sidebar-settings').click(function() {
+    showSettingsModal();
   });
 
   // Settings modal overlay click to close
@@ -2871,60 +3305,8 @@ function hideSettingsModal() {
     w2ui['hotkeys-grid'].destroy();
   }
   
-  // Ensure background refresh timer is active for active panel
-  setupBackgroundRefreshTimer(activePanelId).catch(err => {
-    console.warn('Error setting up background refresh after closing settings:', err);
-  });
 }
 
-/**
- * Setup background refresh timer for a panel
- */
-async function setupBackgroundRefreshTimer(panelId) {
-  try {
-    // Stop existing timer
-    stopBackgroundRefreshTimer(panelId);
-    
-    // Get current settings
-    const settings = await window.electronAPI.getSettings();
-    
-    // Only setup if enabled
-    if (settings.background_refresh_enabled && settings.background_refresh_interval > 0) {
-      const interval = settings.background_refresh_interval * 1000; // Convert to milliseconds
-      const currentInterval = settings.background_refresh_interval;
-      const lastInterval = panelState[panelId].lastRefreshInterval;
-      
-      // Only log if interval changed or first time setup
-      if (lastInterval !== currentInterval) {
-        console.log(`Background refresh running at ${currentInterval} second intervals`);
-        panelState[panelId].lastRefreshInterval = currentInterval;
-      }
-      
-      panelState[panelId].backgroundRefreshTimer = setInterval(() => {
-        const state = panelState[panelId];
-        if (state && state.currentPath) {
-          // Refresh the panel by navigating to current path without adding to history
-          // This will suppress visual updates if no changes are detected
-          navigateToDirectory(state.currentPath, panelId, false).catch(err => {
-            console.error(`Background refresh failed for panel ${panelId}:`, err);
-          });
-        }
-      }, interval);
-    }
-  } catch (err) {
-    console.warn('Error in setupBackgroundRefreshTimer:', err);
-  }
-}
-
-/**
- * Stop background refresh timer for a panel
- */
-function stopBackgroundRefreshTimer(panelId) {
-  if (panelState[panelId] && panelState[panelId].backgroundRefreshTimer) {
-    clearInterval(panelState[panelId].backgroundRefreshTimer);
-    panelState[panelId].backgroundRefreshTimer = null;
-  }
-}
 
 /**
  * Open history modal for a selected file/directory
@@ -3324,8 +3706,8 @@ async function saveBrowserSettings() {
     
     alert('All browser settings saved successfully');
     
-    // Setup background refresh timer for the active panel
-    await setupBackgroundRefreshTimer(activePanelId);
+    // Restart backend background refresh with updated settings
+    window.electronAPI.startBackgroundRefresh(backgroundRefreshEnabled, backgroundRefreshInterval);
     
     // Refresh the current directory if hide dot directory changed
     if (hideDotDirectory) {
@@ -3637,6 +4019,13 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
     contextMenu.push(setCategoryOption);
   }
 
+  // Add "Add to Favorites" for any selection with 1+ directories
+  if (directoryCount > 0) {
+    addSeparator(contextMenu);
+    const label = directoryCount > 1 ? `Add ${directoryCount} folders to Favorites` : 'Add to Favorites';
+    contextMenu.push({ id: 'add-to-favorites', text: label, icon: 'fa fa-star' });
+  }
+
   // Add "Acknowledge & Remove" for orphaned files/folders
   if (orphanCount > 0) {
     addSeparator(contextMenu);
@@ -3750,6 +4139,14 @@ async function handleContextMenuClick(event, panelId) {
     }
   }
   
+  // Handle "Add to Favorites" click
+  if (menuItemId === 'add-to-favorites') {
+    const dirPaths = selectedRecords.filter(r => r.isFolder).map(r => r.path);
+    for (const dirPath of dirPaths) {
+      await addToFavorites(dirPath);
+    }
+  }
+
   // Handle "Acknowledge & Remove" for orphan items
   if (menuItemId.startsWith('acknowledge-orphan-')) {
     const orphanId = parseInt(menuItemId.replace('acknowledge-orphan-', ''));

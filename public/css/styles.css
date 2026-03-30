@@ -518,7 +518,7 @@ textarea {
 .btn-panel-remove-overlay {
   position: absolute;
   top: 10px;
-  right: 10px;
+  right: 38px;
   padding: 4px 8px;
   background: #f44336;
   color: white;
@@ -536,6 +536,30 @@ textarea {
 
 .btn-panel-remove-overlay:active {
   background: #c62828;
+}
+
+/* Add Panel Button on Panel 2 Landing Page */
+.btn-add-panel-landing {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  padding: 4px 8px;
+  background: #4CAF50;
+  color: white;
+  border: none;
+  font-weight: bold;
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 5;
+  transition: all 0.2s ease;
+}
+
+.btn-add-panel-landing:hover {
+  background: #388E3C;
+}
+
+.btn-add-panel-landing:active {
+  background: #2E7D32;
 }
 
 .panel-notes-view {
@@ -710,6 +734,7 @@ hr {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    line-height: 1.2;
 }
 
 /* Settings Button Styles */
@@ -1043,6 +1068,36 @@ hr {
   padding: 4px 0;
 }
 
+.sidebar-footer {
+  padding: 8px;
+  background: #f0f0f0;
+  border-top: 1px solid #ddd;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.sidebar-footer button {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.sidebar-footer button:hover {
+  background: #1976D2;
+}
+
+.sidebar-footer button:active {
+  background: #1565C0;
+}
+
 /* Sidebar Tree Items */
 .sidebar-item {
   display: flex;
@@ -1077,7 +1132,7 @@ hr {
 }
 
 .sidebar-toggle-arrow.collapsed {
-  transform: rotate(-90deg);
+  /* Arrow points right when collapsed */
 }
 
 .sidebar-toggle-arrow.no-children {
@@ -1108,3 +1163,171 @@ hr {
 .sidebar-item-indent-3 { padding-left: 52px; }
 .sidebar-item-indent-4 { padding-left: 68px; }
 .sidebar-item-indent-5 { padding-left: 84px; }
+
+/* =====================
+   Favorites Section
+   ===================== */
+
+#favorites-section {
+  flex-shrink: 0;
+  border-bottom: 1px solid #ddd;
+}
+
+.favorites-section-header {
+  padding: 8px 12px 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+  background: #f5f5f5;
+}
+
+#favorites-list {
+  padding: 2px 0 4px 0;
+}
+
+.favorite-item {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 2px 4px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease;
+  margin: 0 4px;
+  border-radius: 3px;
+}
+
+.favorite-item:hover {
+  background-color: #efefef;
+}
+
+.favorite-item-selected {
+  background-color: #e3f2fd;
+}
+
+.favorite-item-drag-handle {
+  width: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #bbb;
+  cursor: grab;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.favorite-item:hover .favorite-item-drag-handle {
+  opacity: 1;
+}
+
+.favorite-item-drag-handle:active {
+  cursor: grabbing;
+}
+
+.favorite-item-icon {
+  width: 16px;
+  flex-shrink: 0;
+  font-size: 13px;
+  margin-right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.favorite-item-label {
+  flex: 1;
+  font-size: 12px;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 2px;
+  pointer-events: none;
+}
+
+.favorite-item.drag-over-top {
+  border-top: 2px solid #2196F3;
+}
+
+.favorite-item.drag-over-bottom {
+  border-bottom: 2px solid #2196F3;
+}
+
+.favorite-item.dragging {
+  opacity: 0.4;
+}
+
+/* Favorites right-click context menu */
+#favorites-context-menu {
+  position: fixed;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+  z-index: 9999;
+  min-width: 160px;
+  padding: 3px 0;
+  font-size: 12px;
+  display: none;
+}
+
+#favorites-context-menu .fav-menu-item {
+  padding: 5px 16px;
+  cursor: pointer;
+  color: #333;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  white-space: nowrap;
+}
+
+#favorites-context-menu .fav-menu-item:hover {
+  background: #e8f0fe;
+}
+
+#favorites-context-menu .fav-menu-separator {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 3px 0;
+}
+
+#favorites-context-menu .fav-menu-item.has-submenu::after {
+  content: '▶';
+  font-size: 9px;
+  margin-left: auto;
+  padding-left: 12px;
+  color: #888;
+}
+
+#favorites-context-menu .fav-submenu {
+  position: absolute;
+  left: 100%;
+  top: -3px;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+  min-width: 120px;
+  padding: 3px 0;
+  display: none;
+  z-index: 10000;
+}
+
+#favorites-context-menu .fav-menu-item:hover > .fav-submenu {
+  display: block;
+}
+
+#favorites-context-menu .fav-submenu .fav-menu-item {
+  padding: 5px 16px;
+}
+
+.fav-menu-item-remove {
+  color: #c0392b !important;
+}

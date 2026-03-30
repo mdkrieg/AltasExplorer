@@ -20,10 +20,22 @@
 
   <!-- Sidebar Content (will be rendered into w2layout's left panel) -->
   <div id="sidebar-content" style="display: none; width: 100%; height: 100%; flex-direction: column;">
+    <!-- Favorites Section -->
+    <div id="favorites-section">
+      <div class="favorites-section-header">
+        <span>Favorites</span>
+      </div>
+      <div id="favorites-list"></div>
+    </div>
+    <!-- This PC Section -->
     <div class="sidebar-header">
       <h3>This PC</h3>
     </div>
     <div id="sidebar-tree" class="sidebar-tree"></div>
+    <div class="sidebar-footer">
+      <button id="btn-sidebar-settings" class="btn-panel-settings" style="width: 100%; padding: 8px; margin: 0;">
+        <img src="assets/icons/settings-white.svg" style="width: 20px; height: 20px; object-fit: contain; margin:-5px; margin-right:2px"> Settings</button>
+    </div>
   </div>
 
   <!-- Panel Container (will be rendered into w2layout's main panel) -->
@@ -39,8 +51,6 @@
             <input class="panel-path-input" type="text" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit;">
             <div style="float: right;">
               <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-              <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
-              <button class="btn-panel-settings" style="padding: 4px 8px; margin-right: 5px;">Settings</button>
               <button id="btn-view" style="padding: 4px 8px; margin-right: 5px;">View</button>
               <button id="btn-add-panel" style="padding: 4px 8px; background: #4CAF50; color: white; border: none; font-weight: bold;">+</button>
             </div>
@@ -56,13 +66,13 @@
             <input class="panel-path-input" type="text" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit;">
             <div style="float: right;">
               <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-              <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
               <button class="btn-panel-remove">✕</button>
             </div>
           </div>
           <div class="panel-content" style="width: 100%; height: 100%; position: relative; display: flex; flex-direction: column;">
             <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px; position: relative;">
               <button class="btn-panel-remove-overlay">✕</button>
+              <button class="btn-add-panel-landing">+</button>
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px; background-color: #ccc; color: #666; cursor: not-allowed;" disabled>Select directory</button></div>
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
             </div>
@@ -91,7 +101,6 @@
             <input class="panel-path-input" type="text" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit;">
             <div style="float: right;">
               <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-              <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
               <button class="btn-panel-remove">✕</button>
             </div>
           </div>
@@ -126,7 +135,6 @@
             <input class="panel-path-input" type="text" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit;">
             <div style="float: right;">
               <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-              <button class="btn-panel-refresh" style="padding: 4px 8px; margin-right: 5px;">Refresh</button>
               <button class="btn-panel-remove">✕</button>
             </div>
           </div>
@@ -162,7 +170,7 @@
 
   <!-- Settings Modal -->
   <div id="settings-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
-    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 8px; width: 900px; height: 600px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 8px; width: 900px; max-width: calc(100vw - 40px); min-width: 400px; height: 600px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
       <div style="display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #ddd;">
         <h2 style="margin: 0; flex: 1;">Settings</h2>
         <button id="btn-settings-close" style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>

@@ -129,6 +129,14 @@ class DatabaseService {
   }
 
   /**
+   * Update the initials label for a directory (max 2 chars)
+   */
+  updateDirectoryInitials(dirname, initials) {
+    const stmt = this.db.prepare('UPDATE dirs SET initials = ? WHERE dirname = ?');
+    return stmt.run(initials ? initials.slice(0, 2).toUpperCase() : null, dirname);
+  }
+
+  /**
    * Insert or update file metadata
    */
   upsertFile(fileData) {

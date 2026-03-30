@@ -20,7 +20,8 @@ class IconService {
     const candidates = [
       process.resourcesPath ? path.join(process.resourcesPath, 'icons') : null,
       process.resourcesPath ? path.join(process.resourcesPath, 'resources', 'icons') : null,
-      path.join(__dirname, '..', 'resources', 'icons')
+      path.join(__dirname, '..', 'resources', 'icons'),
+      path.join(__dirname, '..', 'assets', 'icons')
     ].filter(Boolean);
 
     for (const dir of candidates) {
@@ -90,77 +91,99 @@ class IconService {
 
   /**
    * Generate a taskbar-ready icon by:
-   * 1. Loading folder.png
-   * 2. Replacing black pixels with textColor
-   * 3. Adding a solid background with bgColor
-   * 4. Resizing to 64x64 (standard Electron taskbar)
+   * 1. Tinting folder-inside.png (white mask) with bgColor → fills the folder interior
+   * 2. Tinting folder.png (black outline) with outlineColor → the folder outline
+   * 3. Optionally rendering 1–2 initials as SVG text in the textColor over the icon
+   * 4. Compositing all layers, preserving transparency throughout
+   * 5. Resizing to 64x64 (standard Electron taskbar)
    */
-  async generateWindowIcon(bgColor, textColor) {
+  async generateWindowIcon(bgColor, outlineColor, initials = null) {
     try {
-      if (!fs.existsSync(ICON_SOURCE)) {
-        logger.warn('Icon source file not found:', ICON_SOURCE);
+      const insideSource = path.join(USER_ICONS_DIR, 'folder-inside.png');
+      const outlineSource = ICON_SOURCE; // folder.png
+
+      if (!fs.existsSync(outlineSource)) {
+        logger.warn('Icon source file not found:', outlineSource);
+        return null;
+      }
+      if (!fs.existsSync(insideSource)) {
+        logger.warn('folder-inside.png not found:', insideSource);
         return null;
       }
 
       const bgRGB = this.parseRGB(bgColor);
-      const textRGB = this.parseRGB(textColor);
+      const outlineRGB = this.parseRGB(outlineColor);
 
-      // Load the source icon
-      let image = sharp(ICON_SOURCE);
+      // --- folder-inside.png: replace all visible pixels with bgColor ---
+      const { data: insideData, info: insideInfo } = await sharp(insideSource)
+        .raw().toBuffer({ resolveWithObject: true });
 
-      // Get metadata to preserve aspect ratio
-      const metadata = await image.metadata();
-      const size = Math.max(metadata.width, metadata.height);
-
-      // Create a background canvas with bgColor and composite the folder icon on top
-      const background = Buffer.alloc(size * size * 4);
-      for (let i = 0; i < background.length; i += 4) {
-        background[i] = bgRGB.r;     // R
-        background[i + 1] = bgRGB.g; // G
-        background[i + 2] = bgRGB.b; // B
-        background[i + 3] = 255;     // A
-      }
-
-      // Composite: convert black pixels to textColor, white/transparent to bgColor
-      const iconBuffer = await image
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-
-      const { data, info } = iconBuffer;
-
-      // Replace colors in the icon
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        const a = data[i + 3];
-
-        // If pixel is black or very dark (folder outline), replace with textColor
-        const brightness = (r + g + b) / 3;
-        if (brightness < 50 && a > 200) {
-          data[i] = textRGB.r;
-          data[i + 1] = textRGB.g;
-          data[i + 2] = textRGB.b;
-          // Keep alpha as is
-        }
-        // If pixel is transparent, make it background color
-        else if (a < 200) {
-          data[i] = bgRGB.r;
-          data[i + 1] = bgRGB.g;
-          data[i + 2] = bgRGB.b;
-          data[i + 3] = 255;
+      for (let i = 0; i < insideData.length; i += 4) {
+        if (insideData[i + 3] > 10) {
+          insideData[i]     = bgRGB.r;
+          insideData[i + 1] = bgRGB.g;
+          insideData[i + 2] = bgRGB.b;
+          // preserve alpha for smooth anti-aliased edges
         }
       }
 
-      // Resize to 64x64 and return as PNG
-      const iconPng = await sharp(data, {
-        raw: {
-          width: info.width,
-          height: info.height,
-          channels: info.channels
+      const insideColored = await sharp(insideData, {
+        raw: { width: insideInfo.width, height: insideInfo.height, channels: insideInfo.channels }
+      }).png().toBuffer();
+
+      // --- folder.png: replace dark pixels with outlineColor ---
+      const { data: outlineData, info: outlineInfo } = await sharp(outlineSource)
+        .raw().toBuffer({ resolveWithObject: true });
+
+      for (let i = 0; i < outlineData.length; i += 4) {
+        const brightness = (outlineData[i] + outlineData[i + 1] + outlineData[i + 2]) / 3;
+        if (outlineData[i + 3] > 10 && brightness < 128) {
+          outlineData[i]     = outlineRGB.r;
+          outlineData[i + 1] = outlineRGB.g;
+          outlineData[i + 2] = outlineRGB.b;
         }
-      })
-        .resize(64, 64, { fit: 'contain' })
+      }
+
+      const outlineColored = await sharp(outlineData, {
+        raw: { width: outlineInfo.width, height: outlineInfo.height, channels: outlineInfo.channels }
+      }).png().toBuffer();
+
+      // --- Build composite layers array ---
+      const compositeLayers = [{ input: outlineColored, blend: 'over' }];
+
+      // --- Optionally overlay initials as SVG text ---
+      // Render at 2× native canvas size for crisp text, then downscale
+      if (initials && initials.trim().length > 0) {
+        const label = initials.trim().slice(0, 2).toUpperCase();
+        const w = insideInfo.width;
+        const h = insideInfo.height;
+        const scale = 2;
+        const sw = w * scale;
+        const sh = h * scale;
+        // Font size: ~40% of scaled height, positioned in the lower folder body area
+        const fontSize = Math.round(sh * 0.40);
+        const cx = Math.round(sw / 2);
+        const cy = Math.round(sh * 0.68);
+        const textHex = `#${outlineRGB.r.toString(16).padStart(2,'0')}${outlineRGB.g.toString(16).padStart(2,'0')}${outlineRGB.b.toString(16).padStart(2,'0')}`;
+        // Use Impact/Arial Black for dense, pixel-friendly rendering
+        const svgText = Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${sw}" height="${sh}">` +
+          `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle"` +
+          ` font-family="Verdana, Tahoma, 'Segoe UI', sans-serif" font-size="${fontSize}" font-weight="700"` +
+          ` fill="${textHex}" letter-spacing="-1">${label}</text>` +
+          `</svg>`
+        );
+        // Render text at 2× then downscale to native size for sharpness
+        const textLayer = await sharp(svgText)
+          .resize(w, h, { fit: 'fill', kernel: 'lanczos3' })
+          .png()
+          .toBuffer();
+        compositeLayers.push({ input: textLayer, blend: 'over' });
+      }
+
+      // --- Composite: fill (bgColor) as base, then outline, then optional text ---
+      const iconPng = await sharp(insideColored)
+        .composite(compositeLayers)
         .png()
         .toBuffer();
 

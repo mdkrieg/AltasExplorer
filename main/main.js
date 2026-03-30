@@ -64,10 +64,46 @@ function createWindow() {
 }
 
 /**
+ * Sync ~/.atlasexplorer/icons → public/assets/icons at startup
+ */
+function syncIconAssets() {
+  const srcDir = path.join(os.homedir(), '.atlasexplorer', 'icons');
+  const destDir = path.join(__dirname, '..', 'public', 'assets', 'icons');
+  const assetsDir = path.join(__dirname, '..', 'public', 'assets');
+
+  try {
+    // Delete public/assets entirely, then recreate icons destination
+    if (fsSync.existsSync(assetsDir)) {
+      fsSync.rmSync(assetsDir, { recursive: true, force: true });
+      logger.info('Deleted public/assets');
+    }
+    fsSync.mkdirSync(destDir, { recursive: true });
+
+    if (!fsSync.existsSync(srcDir)) {
+      logger.warn('Icon source directory does not exist:', srcDir);
+      return;
+    }
+
+    const files = fsSync.readdirSync(srcDir);
+    let copied = 0;
+    for (const file of files) {
+      if (/\.(png|svg)$/i.test(file)) {
+        fsSync.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+        copied++;
+      }
+    }
+    logger.info(`Synced ${copied} icon(s) to public/assets/icons`);
+  } catch (err) {
+    logger.error('Error syncing icon assets:', err.message);
+  }
+}
+
+/**
  * Initialize the application
  */
 function initialize() {
   logger.info('Initializing application');
+  syncIconAssets();
   db.initialize();
   
   // Load default window icon
@@ -80,9 +116,9 @@ function initialize() {
 /**
  * Update the main window icon based on category colors
  */
-async function updateWindowIcon(category) {
+async function updateWindowIcon(category, initials = null) {
   try {
-    const iconBuffer = await icons.generateWindowIcon(category.bgColor, category.textColor);
+    const iconBuffer = await icons.generateWindowIcon(category.bgColor, category.textColor, initials);
     if (iconBuffer && mainWindow) {
       const nimg = nativeImage.createFromBuffer(iconBuffer);
       mainWindow.setIcon(nimg);
@@ -137,139 +173,139 @@ ipcMain.handle('get-root-drives', (event) => {
   }
 });
 
-/**
- * Database: Scan directory and upsert files
- */
-ipcMain.handle('scan-directory', (event, dirPath) => {
-  try {
-    // Validate path parameter
-    if (!dirPath || typeof dirPath !== 'string') {
-      logger.error(`scan-directory: Invalid path - received ${typeof dirPath}`);
-      return { success: false, error: 'Directory path must be a valid string' };
-    }
+// /**
+//  * Database: Scan directory and upsert files
+//  */
+// ipcMain.handle('scan-directory', (event, dirPath) => {
+//   try {
+//     // Validate path parameter
+//     if (!dirPath || typeof dirPath !== 'string') {
+//       logger.error(`scan-directory: Invalid path - received ${typeof dirPath}`);
+//       return { success: false, error: 'Directory path must be a valid string' };
+//     }
     
-    const normalizedPath = dirPath.trim();
-    if (!normalizedPath) {
-      logger.error('scan-directory: Empty path provided');
-      return { success: false, error: 'Directory path cannot be empty' };
-    }
+//     const normalizedPath = dirPath.trim();
+//     if (!normalizedPath) {
+//       logger.error('scan-directory: Empty path provided');
+//       return { success: false, error: 'Directory path cannot be empty' };
+//     }
     
-    // Get directory inode to track the directory itself
-    const dirStats = fs.getStats(normalizedPath);
-    if (!dirStats) {
-      return { success: false, error: 'Unable to read directory stats' };
-    }
+//     // Get directory inode to track the directory itself
+//     const dirStats = fs.getStats(normalizedPath);
+//     if (!dirStats) {
+//       return { success: false, error: 'Unable to read directory stats' };
+//     }
 
-    const dirInode = dirStats.inode;
+//     const dirInode = dirStats.inode;
 
-    // Get category for this directory
-    const category = categories.getCategoryForDirectory(dirPath);
-    const categoryName = category ? category.name : 'Default';
+//     // Get category for this directory
+//     const category = categories.getCategoryForDirectory(dirPath);
+//     const categoryName = category ? category.name : 'Default';
 
-    // Create or get the directory entry (returns dir_id)
-    const dirId = db.getOrCreateDirectory(dirPath, dirInode, categoryName);
+//     // Create or get the directory entry (returns dir_id)
+//     const dirId = db.getOrCreateDirectory(dirPath, dirInode, categoryName);
 
-    // Create/update dot entry for the directory itself
-    db.upsertFile({
-      inode: dirInode,
-      dir_id: dirId,
-      filename: '.',
-      dateModified: dirStats.dateModified,
-      dateCreated: dirStats.dateCreated,
-      size: 0
-    });
+//     // Create/update dot entry for the directory itself
+//     db.upsertFile({
+//       inode: dirInode,
+//       dir_id: dirId,
+//       filename: '.',
+//       dateModified: dirStats.dateModified,
+//       dateCreated: dirStats.dateCreated,
+//       size: 0
+//     });
 
-    // Get existing database files for this directory
-    const existingDbFiles = db.getFilesByDirId(dirId);
-    const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
+//     // Get existing database files for this directory
+//     const existingDbFiles = db.getFilesByDirId(dirId);
+//     const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
 
-    // Read and process files
-    const entries = fs.readDirectory(normalizedPath);
-    let insertedCount = 0;
-    let updatedCount = 0;
-    let deletedCount = 0;
+//     // Read and process files
+//     const entries = fs.readDirectory(normalizedPath);
+//     let insertedCount = 0;
+//     let updatedCount = 0;
+//     let deletedCount = 0;
 
-    // Process filesystem entries: upsert files, track changes
-    for (const entry of entries) {
-      if (!entry.isDirectory) {
-        const dbFile = dbFileMap.get(entry.inode);
+//     // Process filesystem entries: upsert files, track changes
+//     for (const entry of entries) {
+//       if (!entry.isDirectory) {
+//         const dbFile = dbFileMap.get(entry.inode);
         
-        if (!dbFile) {
-          // New file
-          db.upsertFile({
-            inode: entry.inode,
-            dir_id: dirId,
-            filename: entry.filename,
-            dateModified: entry.dateModified,
-            dateCreated: entry.dateCreated,
-            size: entry.size
-          });
-          insertedCount++;
-        } else if (dbFile.dateModified !== entry.dateModified || dbFile.size !== entry.size) {
-          // File changed - update it
-          db.upsertFile({
-            inode: entry.inode,
-            dir_id: dirId,
-            filename: entry.filename,
-            dateModified: entry.dateModified,
-            dateCreated: entry.dateCreated,
-            size: entry.size
-          });
-          updatedCount++;
-        }
+//         if (!dbFile) {
+//           // New file
+//           db.upsertFile({
+//             inode: entry.inode,
+//             dir_id: dirId,
+//             filename: entry.filename,
+//             dateModified: entry.dateModified,
+//             dateCreated: entry.dateCreated,
+//             size: entry.size
+//           });
+//           insertedCount++;
+//         } else if (dbFile.dateModified !== entry.dateModified || dbFile.size !== entry.size) {
+//           // File changed - update it
+//           db.upsertFile({
+//             inode: entry.inode,
+//             dir_id: dirId,
+//             filename: entry.filename,
+//             dateModified: entry.dateModified,
+//             dateCreated: entry.dateCreated,
+//             size: entry.size
+//           });
+//           updatedCount++;
+//         }
         
-        // Mark as processed
-        dbFileMap.delete(entry.inode);
-      } else {
-        // Track subdirectories with dot placeholder file
-        const existingDir = db.getDirectory(entry.path);
-        let subDirId;
-        if (!existingDir) {
-          // New subdirectory - create entry in dirs table and get its ID
-          subDirId = db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
-          insertedCount++;
-        } else {
-          // Get existing directory's ID
-          subDirId = existingDir.id;
-        }
+//         // Mark as processed
+//         dbFileMap.delete(entry.inode);
+//       } else {
+//         // Track subdirectories with dot placeholder file
+//         const existingDir = db.getDirectory(entry.path);
+//         let subDirId;
+//         if (!existingDir) {
+//           // New subdirectory - create entry in dirs table and get its ID
+//           subDirId = db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
+//           insertedCount++;
+//         } else {
+//           // Get existing directory's ID
+//           subDirId = existingDir.id;
+//         }
         
-        // Create/update dot file entry for directory tracking with the child directory's own dir_id
-        db.upsertFile({
-          inode: entry.inode,
-          dir_id: subDirId,
-          filename: '.',
-          dateModified: entry.dateModified,
-          dateCreated: entry.dateCreated,
-          size: 0
-        });
+//         // Create/update dot file entry for directory tracking with the child directory's own dir_id
+//         db.upsertFile({
+//           inode: entry.inode,
+//           dir_id: subDirId,
+//           filename: '.',
+//           dateModified: entry.dateModified,
+//           dateCreated: entry.dateCreated,
+//           size: 0
+//         });
         
-        dbFileMap.delete(entry.inode);
-      }
-    }
+//         dbFileMap.delete(entry.inode);
+//       }
+//     }
 
-    // Process deletions: remaining files in dbFileMap are no longer on filesystem
-    for (const [inode, dbFile] of dbFileMap) {
-      try {
-        db.deleteFile(inode, dirId);
-        deletedCount++;
-      } catch (err) {
-        logger.error(`Error deleting file ${dbFile.filename}:`, err.message);
-      }
-    }
+//     // Process deletions: remaining files in dbFileMap are no longer on filesystem
+//     for (const [inode, dbFile] of dbFileMap) {
+//       try {
+//         db.deleteFile(inode, dirId);
+//         deletedCount++;
+//       } catch (err) {
+//         logger.error(`Error deleting file ${dbFile.filename}:`, err.message);
+//       }
+//     }
 
-    return {
-      success: true,
-      count: entries.filter(e => !e.isDirectory).length,
-      category: categoryName,
-      inserted: insertedCount,
-      updated: updatedCount,
-      deleted: deletedCount
-    };
-  } catch (err) {
-    logger.error('Error scanning directory:', err.message);
-    return { success: false, error: err.message };
-  }
-});
+//     return {
+//       success: true,
+//       count: entries.filter(e => !e.isDirectory).length,
+//       category: categoryName,
+//       inserted: insertedCount,
+//       updated: updatedCount,
+//       deleted: deletedCount
+//     };
+//   } catch (err) {
+//     logger.error('Error scanning directory:', err.message);
+//     return { success: false, error: err.message };
+//   }
+// });
 
 /**
  * Database: Get files from a directory
@@ -628,11 +664,11 @@ ipcMain.handle('is-directory', (event, dirPath) => {
 /**
  * Window Icon: Update icon for category
  */
-ipcMain.handle('update-window-icon', async (event, categoryName) => {
+ipcMain.handle('update-window-icon', async (event, { categoryName, initials }) => {
   try {
     const category = categories.getCategory(categoryName);
     if (category) {
-      await updateWindowIcon(category);
+      await updateWindowIcon(category, initials || null);
       return { success: true };
     }
     return { error: 'Category not found' };
@@ -645,9 +681,9 @@ ipcMain.handle('update-window-icon', async (event, categoryName) => {
 /**
  * Generate folder icon with category colors
  */
-ipcMain.handle('generate-folder-icon', async (event, { bgColor, textColor }) => {
+ipcMain.handle('generate-folder-icon', async (event, { bgColor, textColor, initials }) => {
   try {
-    const iconBuffer = await icons.generateWindowIcon(bgColor, textColor);
+    const iconBuffer = await icons.generateWindowIcon(bgColor, textColor, initials || null);
     if (iconBuffer) {
       // Convert to base64 data URL
       return 'data:image/png;base64,' + iconBuffer.toString('base64');
@@ -656,6 +692,32 @@ ipcMain.handle('generate-folder-icon', async (event, { bgColor, textColor }) => 
   } catch (err) {
     logger.error('Error generating folder icon:', err.message);
     return null;
+  }
+});
+
+/**
+ * Directory Initials: Get initials for a directory
+ */
+ipcMain.handle('get-directory-initials', (event, dirPath) => {
+  try {
+    const dir = db.getDirectory(dirPath);
+    return dir ? (dir.initials || null) : null;
+  } catch (err) {
+    logger.error('Error getting directory initials:', err.message);
+    return null;
+  }
+});
+
+/**
+ * Directory Initials: Save initials for a directory
+ */
+ipcMain.handle('save-directory-initials', (event, { dirPath, initials }) => {
+  try {
+    db.updateDirectoryInitials(dirPath, initials);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error saving directory initials:', err.message);
+    return { success: false, error: err.message };
   }
 });
 
@@ -708,10 +770,63 @@ ipcMain.handle('render-markdown', async (event, content) => {
   }
 });
 
+// ============================================
+// Background Refresh (backend-driven)
+// ============================================
+
+let bgRefreshTimer = null;
+const bgWatchedPaths = new Map(); // panelId → dirPath
+
+function startBackgroundRefresh(enabled, interval) {
+  if (bgRefreshTimer) {
+    clearInterval(bgRefreshTimer);
+    bgRefreshTimer = null;
+  }
+  if (enabled && interval > 0) {
+    bgRefreshTimer = setInterval(() => {
+      for (const [panelId, dirPath] of bgWatchedPaths) {
+        try {
+          const result = doScanDirectoryWithComparison(dirPath, false);
+          if (result.success && result.hasChanges && mainWindow) {
+            mainWindow.webContents.send('directory-changed', { panelId, dirPath });
+          }
+        } catch (err) {
+          logger.error(`Background refresh error for panel ${panelId} (${dirPath}):`, err.message);
+        }
+      }
+    }, interval * 1000);
+    logger.info(`Background refresh started at ${interval}s intervals`);
+  }
+}
+
+ipcMain.handle('start-background-refresh', (event, { enabled, interval }) => {
+  startBackgroundRefresh(enabled, interval);
+  return { success: true };
+});
+
+ipcMain.handle('stop-background-refresh', () => {
+  if (bgRefreshTimer) {
+    clearInterval(bgRefreshTimer);
+    bgRefreshTimer = null;
+    logger.info('Background refresh stopped');
+  }
+  return { success: true };
+});
+
+ipcMain.handle('register-watched-path', (event, { panelId, dirPath }) => {
+  bgWatchedPaths.set(panelId, dirPath);
+  return { success: true };
+});
+
+ipcMain.handle('unregister-watched-path', (event, { panelId }) => {
+  bgWatchedPaths.delete(panelId);
+  return { success: true };
+});
+
 /**
- * File Change Detection: Scan directory with comparison
+ * Core scan logic (shared by IPC handler and background refresh timer)
  */
-ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNavigation = true) => {
+function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
   try {
     // Validate path parameter
     if (!dirPath || typeof dirPath !== 'string') {
@@ -763,7 +878,6 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
         // For files, determine change state
         const dbFile = dbFileMap.get(entry.inode);
         let changeState = 'unchanged';
-        let previousDateModified = null;
 
         if (!dbFile) {
           // New file
@@ -771,7 +885,6 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
         } else if (dbFile.dateModified !== entry.dateModified) {
           // Date modified changed
           changeState = 'dateModified';
-          previousDateModified = dbFile.dateModified;
         }
 
         // If category has checksum enabled, mark file for checksum calculation
@@ -801,7 +914,8 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
 
         entriesWithChanges.push({
           ...entry,
-          changeState
+          changeState,
+          initials: existingDir ? (existingDir.initials || null) : null
         });
       }
     }
@@ -980,6 +1094,8 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
     // (it's stored in DB but not in filesystem, so we need to add it manually)
     const dotFileRecord = db.getFileByInode(dirInode, dirId);
     if (dotFileRecord && dotFileRecord.filename === '.') {
+      // Read current dir record to get saved initials
+      const dirRecord = db.getDirectory(normalizedPath);
       entriesWithChanges.unshift({
         inode: dirInode,
         filename: '.',
@@ -989,6 +1105,7 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
         dateCreated: dirStats.dateCreated,
         path: dirPath,
         changeState: 'unchanged',
+        initials: dirRecord ? (dirRecord.initials || null) : null,
         orphan_id: null,
         new_dir_id: null
       });
@@ -1015,6 +1132,13 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
     logger.error('Error scanning directory with comparison:', err.message);
     return { success: false, error: err.message };
   }
+}
+
+/**
+ * File Change Detection: Scan directory with comparison (IPC handler)
+ */
+ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNavigation = true) => {
+  return doScanDirectoryWithComparison(dirPath, isManualNavigation);
 });
 
 /**

@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getRootDrives: () => ipcRenderer.invoke('get-root-drives'),
   
   // Database operations
-  scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
+  // scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
   scanDirectoryWithComparison: (dirPath, isManualNavigation = true) => ipcRenderer.invoke('scan-directory-with-comparison', dirPath, isManualNavigation),
   getFilesInDirectory: (dirPath) => ipcRenderer.invoke('get-files-in-directory', dirPath),
 
@@ -100,12 +100,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveHotkeys: (hotkeyData) => ipcRenderer.invoke('save-hotkeys', hotkeyData),
   
   // Window icon update
-  updateWindowIcon: (categoryName) =>
-    ipcRenderer.invoke('update-window-icon', categoryName),
+  updateWindowIcon: (categoryName, initials) =>
+    ipcRenderer.invoke('update-window-icon', { categoryName, initials }),
 
   // Generate folder icon
-  generateFolderIcon: (bgColor, textColor) =>
-    ipcRenderer.invoke('generate-folder-icon', { bgColor, textColor }),
+  generateFolderIcon: (bgColor, textColor, initials) =>
+    ipcRenderer.invoke('generate-folder-icon', { bgColor, textColor, initials }),
+  
+  // Directory initials
+  getDirectoryInitials: (dirPath) =>
+    ipcRenderer.invoke('get-directory-initials', dirPath),
+  saveDirectoryInitials: (dirPath, initials) =>
+    ipcRenderer.invoke('save-directory-initials', { dirPath, initials }),
   
   // Window control
   closeWindow: () => ipcRenderer.invoke('close-window'),
@@ -123,5 +129,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileHistory: (inode) => ipcRenderer.invoke('get-file-history', inode),
   
   // Database operations
-  reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database')
+  reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),
+
+  // Background refresh (backend-driven)
+  startBackgroundRefresh: (enabled, interval) => ipcRenderer.invoke('start-background-refresh', { enabled, interval }),
+  stopBackgroundRefresh: () => ipcRenderer.invoke('stop-background-refresh'),
+  registerWatchedPath: (panelId, dirPath) => ipcRenderer.invoke('register-watched-path', { panelId, dirPath }),
+  unregisterWatchedPath: (panelId) => ipcRenderer.invoke('unregister-watched-path', { panelId }),
+  onDirectoryChanged: (callback) => ipcRenderer.on('directory-changed', (event, data) => callback(data))
 });
