@@ -3432,8 +3432,8 @@ async function openHistoryModal(selectedRecord) {
     // Create summary view below grid with initial selection (first/newest record)
     createHistorySummaryView(fullState, 0);
     
-    // Show modal
-    $('#history-modal').show();
+    // Show modal (use flex so the flexbox centering works)
+    $('#history-modal').css('display', 'flex');
   } catch (err) {
     console.error('Error opening history modal:', err);
     alert('Error opening history: ' + err.message);

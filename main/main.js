@@ -982,7 +982,6 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
           // Date modified changed: store only the change
           try {
             db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
-              filename: entry.filename,
               dateModified: entry.dateModified
             });
           } catch (err) {
