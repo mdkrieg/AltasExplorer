@@ -695,6 +695,19 @@ ipcMain.handle('generate-folder-icon', async (event, { bgColor, textColor, initi
   }
 });
 
+ipcMain.handle('generate-tag-icon', async (event, { bgColor, textColor }) => {
+  try {
+    const iconBuffer = await icons.generateTagIcon(bgColor, textColor);
+    if (iconBuffer) {
+      return 'data:image/png;base64,' + iconBuffer.toString('base64');
+    }
+    return null;
+  } catch (err) {
+    logger.error('Error generating tag icon:', err.message);
+    return null;
+  }
+});
+
 /**
  * Directory Initials: Get initials for a directory
  */
@@ -887,14 +900,25 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
           changeState = 'dateModified';
         }
 
-        // If category has checksum enabled, mark file for checksum calculation
+        // If category has checksum enabled, mark file for checksum calculation only when needed:
+        // - new file (no DB record yet)
+        // - dateModified changed (content may have changed, recalculate)
+        // - no stored checksum (first-time calculation for an existing file)
         if (category && category.enableChecksum) {
-          changeState = 'checksumPending';
+          const needsChecksum = !dbFile ||
+                                changeState === 'dateModified' ||
+                                !dbFile.checksumValue;
+          if (needsChecksum) {
+            changeState = 'checksumPending';
+          }
         }
 
         entriesWithChanges.push({
           ...entry,
           changeState,
+          dir_id: dirId,
+          checksumValue: (dbFile && dbFile.checksumValue) ? dbFile.checksumValue : null,
+          checksumStatus: (dbFile && dbFile.checksumStatus) ? dbFile.checksumStatus : null,
         });
         
         // Mark as processed
@@ -959,8 +983,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
           try {
             db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
               filename: entry.filename,
-              dateModified: entry.dateModified,
-              previousDateModified: dbFile.dateModified
+              dateModified: entry.dateModified
             });
           } catch (err) {
             logger.error(`Error recording file history for date change ${entry.filename}:`, err.message);
@@ -1146,7 +1169,9 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
  */
 ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId }) => {
   try {
-    const result = await checksum.calculateMD5(filePath);
+    // Retrieve previously stored checksum for comparison
+    const existingChecksum = db.getFileChecksum(inode, dirId);
+    const result = await checksum.compareChecksum(filePath, existingChecksum);
 
     if (result.error) {
       // Update with error status
@@ -1155,6 +1180,8 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
         success: false, 
         checksum: null, 
         status: 'error',
+        changed: false,
+        hadPreviousChecksum: existingChecksum !== null,
         error: result.error 
       };
     }
@@ -1166,6 +1193,8 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
       success: true, 
       checksum: result.value, 
       status: 'calculated',
+      changed: result.changed,
+      hadPreviousChecksum: existingChecksum !== null,
       error: null 
     };
   } catch (err) {
@@ -1175,6 +1204,8 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
       success: false, 
       checksum: null, 
       status: 'error',
+      changed: false,
+      hadPreviousChecksum: false,
       error: err.message 
     };
   }
@@ -1204,8 +1235,7 @@ ipcMain.handle('update-file-modification-date', (event, { dirPath, inode, newDat
     try {
       db.insertFileHistory(inode, dir.id, file.id, {
         filename: file.filename,
-        dateModified: newDateModified,
-        previousDateModified: file.dateModified
+        dateModified: newDateModified
       });
 
       // Get the newly inserted record to set acknowledgedAt

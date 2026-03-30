@@ -14,10 +14,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, notesFilePath: null },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, notesFilePath: null },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, notesFilePath: null },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, notesFilePath: null }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -416,9 +416,16 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
         !r.isFolder && r.changeState === 'checksumPending'
       );
       
-      if (filesToChecksum.length > 0 && isManualNavigation) {
-        console.log(`Starting checksum calculation for ${filesToChecksum.length} files`);
-        startChecksumQueue(filesToChecksum, panelId, dirPath);
+      if (filesToChecksum.length > 0) {
+        // Start queue for both manual navigation and background refresh.
+        // Don't restart if a queue is already actively running for this panel.
+        const queueIdle = !state.checksumQueue ||
+                          state.checksumCancelled ||
+                          state.checksumQueueIndex >= state.checksumQueue.length;
+        if (queueIdle) {
+          console.log(`Starting checksum calculation for ${filesToChecksum.length} files (panel ${panelId})`);
+          startChecksumQueue(filesToChecksum, panelId, dirPath);
+        }
       }
     }
   } catch (err) {
@@ -1076,6 +1083,21 @@ async function initializeGridForPanel(panelId) {
         navigateToDirectory(record.path, panelId);
         return;
       }
+
+      // Check if double-clicking notes.txt — open notes viewer in a new (or current) panel
+      if (record && record.filenameRaw && record.filenameRaw.toLowerCase() === 'notes.txt') {
+        if (visiblePanels < 4) {
+          visiblePanels++;
+          const newPanelId = visiblePanels;
+          $(`#panel-${newPanelId}`).show();
+          attachPanelEventListeners(newPanelId);
+          updatePanelLayout();
+          setTimeout(() => showNotesView(newPanelId, record.path), 150);
+        } else {
+          showNotesView(panelId, record.path);
+        }
+        return;
+      }
     },
     onContextMenu: function(event) {
       if (event.detail.recid) {
@@ -1215,13 +1237,13 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       dateCreated: file.dateCreated ? new Date(file.dateCreated).toLocaleDateString() : '-',
       dateCreatedRaw: file.dateCreated,
       checksum: checksumCell,
-      checksumStatus: null, // Will store 'pending', 'calculated', 'error'
-      checksumValue: null, // Will store the actual hash
+      checksumStatus: file.checksumStatus || null,
+      checksumValue: file.checksumValue || null,
       isFolder: false,
       path: file.path,
       changeState: file.changeState,
       inode: file.inode,
-      dir_id: null, // Will be set from DB if needed
+      dir_id: file.dir_id || null,
       orphan_id: file.orphan_id || null,
       new_dir_id: file.new_dir_id || null
     });
@@ -1390,8 +1412,12 @@ function getChecksumCell(file, changeState) {
     return '<div class="file-checksum-pending"><span style="animation: spin 1s linear infinite;">⟳</span> Pending</div>';
   }
   
-  // Show checksum value if available (checksumValue should be set after calculation)
-  // For now, show dash as placeholder - will be updated by calculateChecksumForFile
+  // Show stored checksum value if available from DB
+  if (file.checksumValue) {
+    const shortHash = file.checksumValue.substring(0, 12) + '...';
+    return `<span title="${file.checksumValue}" style="cursor: help;">${shortHash}</span>`;
+  }
+
   return '—';
 }
 
@@ -1470,7 +1496,7 @@ async function calculateChecksumForFile(record, panelId, dirPath) {
     const result = await window.electronAPI.calculateFileChecksum(
       record.path,
       record.inode,
-      null // dir_id not needed in renderer
+      record.dir_id
     );
 
     if (result.success) {
@@ -1481,8 +1507,11 @@ async function calculateChecksumForFile(record, panelId, dirPath) {
       const shortHash = result.checksum ? result.checksum.substring(0, 12) + '...' : '—';
       record.checksum = `<span title="${result.checksum || ''}" style="cursor: help;">${shortHash}</span>`;
       
-      // Update record's changeState based on comparison result
-      record.changeState = 'checksumChanged';
+      // Only mark as checksumChanged if there was a previous checksum AND it changed
+      // Otherwise leave the existing changeState intact (e.g. 'new', 'dateModified')
+      if (result.changed && result.hadPreviousChecksum) {
+        record.changeState = 'checksumChanged';
+      }
       record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
     } else {
       // Mark as error
@@ -2022,7 +2051,11 @@ function setupBadgeDragHandles() {
     // Badge 3: Resize vertical and horizontal dividers (all-scroll)
     // Badge 4: Resize sidebar and horizontal divider (all-scroll)
     
-    if (layout === 2) {
+    if (layout === 1) {
+      if (panelId === 1) {
+        startBadgeDragSidebar(e);
+      }
+    } else if (layout === 2) {
       if (panelId === 1) {
         startBadgeDragSidebar(e);
       } else {
@@ -2374,6 +2407,43 @@ async function initializeMonacoLoader() {
         require(['vs/editor/editor.main'], function() {
           console.log('Monaco editor loader initialized');
           monacoLoaded = true;
+
+          // Register tag autocomplete (#tagname) for notes editor
+          ['markdown', 'plaintext'].forEach(lang => {
+            monaco.languages.registerCompletionItemProvider(lang, {
+              triggerCharacters: ['#'],
+              provideCompletionItems: async (model, position) => {
+                const textUntilPosition = model.getValueInRange({
+                  startLineNumber: position.lineNumber,
+                  startColumn: 1,
+                  endLineNumber: position.lineNumber,
+                  endColumn: position.column
+                });
+                const match = textUntilPosition.match(/#(\w*)$/);
+                if (!match) return { suggestions: [] };
+
+                const startCol = position.column - match[0].length;
+                const range = {
+                  startLineNumber: position.lineNumber,
+                  endLineNumber: position.lineNumber,
+                  startColumn: startCol,
+                  endColumn: position.column
+                };
+
+                const tags = await window.electronAPI.getTagsList();
+                const suggestions = tags.map(tag => ({
+                  label: `#${tag.name}`,
+                  kind: monaco.languages.CompletionItemKind.Value,
+                  insertText: `#${tag.name}`,
+                  filterText: `#${tag.name}`,
+                  range: range,
+                  documentation: tag.description || ''
+                }));
+                return { suggestions };
+              }
+            });
+          });
+
           resolve();
         });
       }
@@ -2417,9 +2487,12 @@ function createMonacoEditorInstance(containerElement) {
 }
 /**
  * Show notes view for a panel
+ * @param {number} panelId - The panel to show notes in
+ * @param {string} [notesPathOverride] - Explicit path to notes.txt; defaults to panel 1's current directory
  */
-async function showNotesView(panelId) {
-  const notesPath = panelState[1].currentPath + '\\notes.txt';
+async function showNotesView(panelId, notesPathOverride) {
+  const notesPath = notesPathOverride || (panelState[1].currentPath + '\\notes.txt');
+  panelState[panelId].notesFilePath = notesPath;
   const $notesView = $(`#panel-${panelId} .panel-notes-view`);
   const $notesEditorContainer = $notesView.find('.notes-editor-container');
   const $notesContentView = $notesView.find('.notes-content-view');
@@ -2555,7 +2628,7 @@ async function toggleNotesEditMode(panelId) {
   } else {
     // Save and exit edit mode
     const content = monacoEditor ? monacoEditor.getValue() : '';
-    const notesPath = panelState[1].currentPath + '\\notes.txt';
+    const notesPath = panelState[panelId].notesFilePath || (panelState[1].currentPath + '\\notes.txt');
     
     try {
       await window.electronAPI.writeNotesFile(notesPath, content);
@@ -2831,7 +2904,7 @@ function attachPanelEventListeners(panelId) {
   const $panel = $(`#panel-${panelId}`);
   
   // Set active panel when clicking anywhere in the panel (except on interactive elements)
-  $panel.click(function(e) {
+  $panel.off('click.panelActive').on('click.panelActive', function(e) {
     // Don't retrigger for buttons that have their own handlers
     if (!$(e.target).is('button') && !$(e.target).closest('button').length) {
       setActivePanelId(panelId);
@@ -2843,7 +2916,7 @@ function attachPanelEventListeners(panelId) {
   
   // Select button (panels 2-4 only)
   if (panelId > 1) {
-    $panel.find('.btn-panel-select').click(function() {
+    $panel.find('.btn-panel-select').off('click').on('click', function() {
       setActivePanelId(panelId);
       // If a directory is selected from panel-1, navigate to it and hide landing page
       if (panel1SelectedDirectoryPath) {
@@ -2855,22 +2928,22 @@ function attachPanelEventListeners(panelId) {
     });
     
     // Notes button
-    $panel.find('.btn-panel-notes').click(async function() {
+    $panel.find('.btn-panel-notes').off('click').on('click', async function() {
       await showNotesView(panelId);
     });
     
     // Notes edit button
-    $panel.find('.btn-notes-edit').click(async function() {
+    $panel.find('.btn-notes-edit').off('click').on('click', async function() {
       await toggleNotesEditMode(panelId);
     });
     
     // Notes save button
-    $panel.find('.btn-notes-save').click(async function() {
+    $panel.find('.btn-notes-save').off('click').on('click', async function() {
       await toggleNotesEditMode(panelId);
     });
     
     // Notes back button
-    $panel.find('.btn-notes-back').click(function() {
+    $panel.find('.btn-notes-back').off('click').on('click', function() {
       hideNotesView(panelId);
     });
     
@@ -3268,24 +3341,23 @@ function setupHotkeysResizableDivider() {
  */
 async function showSettingsModal() {
   
+  // Reset lazy-init tracking for this modal session
+  initializedSettingsTabs = new Set(['category']);
+
   // Show modal FIRST so containers have proper dimensions
   $('#settings-modal').show();
   
-  // Ensure Category Settings tab is active (this will also call resize after tab becomes visible)
+  // Ensure Category Settings tab is active
   switchSettingsTab('category');
   
-  // Initialize grids and forms AFTER modal is visible with proper dimensions
+  // Initialize categories grid and forms (category tab is already visible)
   await initializeCategoriesGrid();
   await initializeCategoriesForm();
-  await initializeTagsGrid();
-  await initializeTagsForm();
   await initializeBrowserSettingsForm();
-  await initializeHotkeysGrid();
   
-  // Setup resizable dividers
+  // Setup category resizable divider
+  // Tags/hotkeys dividers are set up lazily when their tab is first opened
   setupResizableDivider();
-  setupTagResizableDivider();
-  setupHotkeysResizableDivider();
   
 }
 
@@ -3294,6 +3366,7 @@ async function showSettingsModal() {
  */
 function hideSettingsModal() {
   $('#settings-modal').hide();
+  initializedSettingsTabs = new Set();
   // Destroy w2ui grids
   if (w2ui['categories-grid']) {
     w2ui['categories-grid'].destroy();
@@ -3543,7 +3616,7 @@ function formatAttributeValue(attr, value) {
     return '-';
   }
   
-  if (attr === 'dateModified' || attr === 'previousDateModified' || attr === 'dateCreated') {
+  if (attr === 'dateModified' || attr === 'dateCreated') {
     if (typeof value === 'number') {
       return new Date(value).toLocaleString();
     }
@@ -3591,13 +3664,15 @@ function switchSettingsTab(tabName) {
   // For tabs that need flex layout (category, tag, hotkeys), use flex display
   if (tabName === 'category' || tabName === 'tag' || tabName === 'hotkeys') {
     $tab.css('display', 'flex');
-    // Resize grid after tab becomes visible (needed for w2ui)
-    if (tabName === 'category' && w2ui['categories-grid']) {
-      setTimeout(() => w2ui['categories-grid'].resize(), 0);
-    } else if (tabName === 'tag' && w2ui['tags-grid']) {
-      setTimeout(() => w2ui['tags-grid'].resize(), 0);
-    } else if (tabName === 'hotkeys' && w2ui['hotkeys-grid']) {
-      setTimeout(() => w2ui['hotkeys-grid'].resize(), 0);
+    // Lazy-init: tags/hotkeys grids are initialized here (after the tab is
+    // visible) rather than upfront, so w2ui always measures a real container
+    // width and the 100% column renders correctly on first open.
+    if (tabName === 'tag' && !initializedSettingsTabs.has('tag')) {
+      initializedSettingsTabs.add('tag');
+      initializeTagsGrid().then(() => initializeTagsForm()).then(() => setupTagResizableDivider());
+    } else if (tabName === 'hotkeys' && !initializedSettingsTabs.has('hotkeys')) {
+      initializedSettingsTabs.add('hotkeys');
+      initializeHotkeysGrid().then(() => setupHotkeysResizableDivider());
     }
   } else {
     $tab.show();
@@ -4208,6 +4283,9 @@ let tagFormState = {
   editingName: null
 };
 
+// Tracks which settings tabs have had their grids initialized in the current modal session
+let initializedSettingsTabs = new Set();
+
 /**
  * Convert HEX color to RGB string format
  */
@@ -4555,7 +4633,7 @@ async function initializeTagsGrid() {
   // Generate all icons in parallel BEFORE creating grid
   try {
     const iconPromises = records.map(record =>
-      window.electronAPI.generateFolderIcon(record.bgColor, record.textColor)
+      window.electronAPI.generateTagIcon(record.bgColor, record.textColor)
         .then(iconUrl => {
           if (iconUrl) {
             record.iconUrl = iconUrl;
@@ -4619,6 +4697,16 @@ async function initializeTagsGrid() {
 /**
  * Initialize hotkeys grid
  */
+
+/**
+ * Normalize a stored hotkey combo to PascalCase display form.
+ * e.g. "ctrl+s" → "Ctrl+S", "alt+Left" → "Alt+Left", "ctrl+shift+f5" → "Ctrl+Shift+F5"
+ */
+function formatHotkeyDisplay(combo) {
+  if (!combo) return '';
+  return combo.split('+').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('+');
+}
+
 async function initializeHotkeysGrid() {
   const gridName = 'hotkeys-grid';
   
@@ -4655,9 +4743,10 @@ async function initializeHotkeysGrid() {
       footer: false
     },
     columns: [
-      { field: 'context', text: 'Context', size: '100px', resizable: true, sortable: true },
+      { field: 'context', text: 'Context', size: '130px', resizable: true, sortable: true },
       { field: 'action', text: 'Action', size: '150px', resizable: true, sortable: true },
-      { field: 'hotkey', text: 'Hotkey', size: '100%', resizable: true, sortable: false }
+      { field: 'hotkey', text: 'Hotkey', size: '100%', resizable: true, sortable: false,
+        render: (record) => formatHotkeyDisplay(record.hotkey) }
     ],
     records: records,
     onClick: function(event) {

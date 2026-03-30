@@ -106,6 +106,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Generate folder icon
   generateFolderIcon: (bgColor, textColor, initials) =>
     ipcRenderer.invoke('generate-folder-icon', { bgColor, textColor, initials }),
+
+  // Generate tag icon
+  generateTagIcon: (bgColor, textColor) =>
+    ipcRenderer.invoke('generate-tag-icon', { bgColor, textColor }),
   
   // Directory initials
   getDirectoryInitials: (dirPath) =>

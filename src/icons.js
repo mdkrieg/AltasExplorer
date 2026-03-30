@@ -193,6 +193,72 @@ class IconService {
       return null;
     }
   }
+
+  /**
+   * Generate a tag icon by tinting tag-internal.png with bgColor and tag.png
+   * outline with outlineColor. No initials overlay.
+   */
+  async generateTagIcon(bgColor, outlineColor) {
+    try {
+      const internalSource = path.join(USER_ICONS_DIR, 'tag-internal.png');
+      const outlineSource  = path.join(USER_ICONS_DIR, 'tag.png');
+
+      if (!fs.existsSync(outlineSource)) {
+        logger.warn('tag.png not found:', outlineSource);
+        return null;
+      }
+      if (!fs.existsSync(internalSource)) {
+        logger.warn('tag-internal.png not found:', internalSource);
+        return null;
+      }
+
+      const bgRGB      = this.parseRGB(bgColor);
+      const outlineRGB = this.parseRGB(outlineColor);
+
+      // Tint tag-internal.png with bgColor
+      const { data: internalData, info: internalInfo } = await sharp(internalSource)
+        .raw().toBuffer({ resolveWithObject: true });
+
+      for (let i = 0; i < internalData.length; i += 4) {
+        if (internalData[i + 3] > 10) {
+          internalData[i]     = bgRGB.r;
+          internalData[i + 1] = bgRGB.g;
+          internalData[i + 2] = bgRGB.b;
+        }
+      }
+
+      const internalColored = await sharp(internalData, {
+        raw: { width: internalInfo.width, height: internalInfo.height, channels: internalInfo.channels }
+      }).png().toBuffer();
+
+      // Tint tag.png dark pixels with outlineColor
+      const { data: outlineData, info: outlineInfo } = await sharp(outlineSource)
+        .raw().toBuffer({ resolveWithObject: true });
+
+      for (let i = 0; i < outlineData.length; i += 4) {
+        const brightness = (outlineData[i] + outlineData[i + 1] + outlineData[i + 2]) / 3;
+        if (outlineData[i + 3] > 10 && brightness < 128) {
+          outlineData[i]     = outlineRGB.r;
+          outlineData[i + 1] = outlineRGB.g;
+          outlineData[i + 2] = outlineRGB.b;
+        }
+      }
+
+      const outlineColored = await sharp(outlineData, {
+        raw: { width: outlineInfo.width, height: outlineInfo.height, channels: outlineInfo.channels }
+      }).png().toBuffer();
+
+      const iconPng = await sharp(internalColored)
+        .composite([{ input: outlineColored, blend: 'over' }])
+        .png()
+        .toBuffer();
+
+      return iconPng;
+    } catch (err) {
+      logger.error('Error generating tag icon:', err.message);
+      return null;
+    }
+  }
 }
 
 module.exports = new IconService();
