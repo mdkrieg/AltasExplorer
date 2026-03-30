@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Database operations
   scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
-  scanDirectoryWithComparison: (dirPath) => ipcRenderer.invoke('scan-directory-with-comparison', dirPath),
+  scanDirectoryWithComparison: (dirPath, isManualNavigation = true) => ipcRenderer.invoke('scan-directory-with-comparison', dirPath, isManualNavigation),
   getFilesInDirectory: (dirPath) => ipcRenderer.invoke('get-files-in-directory', dirPath),
 
   // File change detection

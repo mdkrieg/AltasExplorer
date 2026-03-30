@@ -162,6 +162,97 @@ button:active {
   background: white;
 }
 
+/* Panel Dividers for Resizing */
+.panel-divider {
+  position: absolute;
+  background-color: transparent;
+  z-index: 100;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.panel-divider::before {
+  content: '';
+  position: absolute;
+  background-color: #d0d0d0;
+  pointer-events: none;
+  transition: width 0.1s ease, height 0.1s ease, background-color 0.1s ease;
+}
+
+.panel-divider.vertical {
+  width: 4px;
+  cursor: ew-resize;
+  top: 0;
+  bottom: 0;
+}
+
+.panel-divider.vertical::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+}
+
+.panel-divider.vertical:hover::before,
+.panel-divider.vertical.dragging::before {
+  width: 4px;
+  background-color: #a0a0a0;
+}
+
+.panel-divider.vertical.dragging::before {
+  background-color: #808080;
+  transition: none;
+}
+
+.panel-divider.horizontal {
+  height: 4px;
+  cursor: ns-resize;
+  left: 0;
+  right: 0;
+}
+
+.panel-divider.horizontal::before {
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 1px;
+}
+
+.panel-divider.horizontal:hover::before,
+.panel-divider.horizontal.dragging::before {
+  height: 4px;
+  background-color: #a0a0a0;
+}
+
+.panel-divider.horizontal.dragging::before {
+  background-color: #808080;
+  transition: none;
+}
+
+/* Make badge a drag handle */
+.panel-number {
+  cursor: grab;
+}
+
+.panel-number:active {
+  cursor: grabbing;
+}
+
+/* Badge cursors based on layout and panel */
+.layout-2 #panel-1 .panel-number { cursor: ew-resize; }
+.layout-2 #panel-2 .panel-number { cursor: ew-resize; }
+
+.layout-3 #panel-1 .panel-number { cursor: ew-resize; }
+.layout-3 #panel-2 .panel-number { cursor: ew-resize; }
+.layout-3 #panel-3 .panel-number { cursor: all-scroll; }
+
+.layout-4 #panel-1 .panel-number { cursor: ew-resize; }
+.layout-4 #panel-2 .panel-number { cursor: ew-resize; }
+.layout-4 #panel-3 .panel-number { cursor: all-scroll; }
+.layout-4 #panel-4 .panel-number { cursor: all-scroll; }
+
 /* Layout 1: Single panel (full width/height) */
 .layout-1 {
   grid-template-columns: 1fr;
@@ -250,14 +341,14 @@ button:active {
 .layout-4 #panel-3 {
   display: flex !important;
   flex-direction: column;
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 2;
 }
 
 .layout-4 #panel-4 {
   display: flex !important;
   flex-direction: column;
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 2;
 }
 
@@ -350,6 +441,7 @@ textarea {
   background: white;
   border-radius: 4px;
   overflow-y: auto;
+  user-select: none;
 }
 
 .panel-landing-page h3 {

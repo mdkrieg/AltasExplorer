@@ -14,10 +14,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null, lastRefreshInterval: null, hasBeenViewed: false },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null, lastRefreshInterval: null, hasBeenViewed: false },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null, lastRefreshInterval: null, hasBeenViewed: false },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, backgroundRefreshTimer: null, lastRefreshInterval: null, hasBeenViewed: false }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -38,6 +38,16 @@ let sidebarState = {
   expandedPaths: new Set(),
   selectedPath: null,
   drives: []
+};
+
+// Panel divider state - tracks resizable divider positions and drag state
+let panelDividerState = {
+  verticalPixels: 400,  // Left panel width in pixels (fixed size)
+  horizontalPixels: 300, // Top panel height in pixels (fixed size)
+  isResizingVertical: false,
+  isResizingHorizontal: false,
+  minPanelWidth: 200,   // Minimum panel width in pixels
+  minPanelHeight: 100,  // Minimum panel height in pixels
 };
 
 // W2Layout instance
@@ -121,6 +131,9 @@ async function initialize() {
 
     // Set initial layout to 1 panel
     switchLayout(1);
+
+    // Initialize panel dividers
+    initializeDividers();
 
     if (homePath) {
       await navigateToDirectory(homePath, 1);
@@ -259,6 +272,12 @@ function attachGridHeaderEventListeners(panelId) {
     $header.find('#btn-add-panel').off('click').on('click', function() {
       if (visiblePanels < 4) {
         visiblePanels++;
+        const newPanelId = visiblePanels;
+        $(`#panel-${newPanelId}`).show();
+        
+        // Reattach event listeners for the newly visible panel
+        attachPanelEventListeners(newPanelId);
+        
         updatePanelLayout();
       }
     });
@@ -267,6 +286,7 @@ function attachGridHeaderEventListeners(panelId) {
   // Remove button (panels 2-4 only)
   if (panelId > 1) {
     $header.find('.btn-panel-remove').off('click').on('click', function() {
+      console.log('Close button clicked for panel', panelId);
       removePanel(panelId);
     });
   }
@@ -294,7 +314,12 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       normalizedPath += '\\';
     }
     
-    console.log(`Navigating panel ${panelId} to:`, normalizedPath);
+    // Only log on manual navigation (when adding to history), not on background refresh
+    const isManualNavigation = addToHistory !== false;
+    const isFirstView = !panelState[panelId].hasBeenViewed;
+    if (isManualNavigation || isFirstView) {
+      console.log(`Navigating panel ${panelId} to:`, normalizedPath);
+    }
     
     const state = panelState[panelId];
     state.currentPath = normalizedPath;
@@ -329,15 +354,18 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
 
     // Scan directory and populate files
     const scanResult = await window.electronAPI.scanDirectoryWithComparison(normalizedPath);
-    console.log('Scan result:', scanResult);
 
     if (!scanResult.success) {
       throw new Error(scanResult.error || 'Failed to scan directory');
     }
 
+    // Only log on first view or manual navigation, skip logs during background refresh
+    if (isManualNavigation || isFirstView) {
+      console.log('Scan successful, entries:', scanResult.entries ? scanResult.entries.length : 0);
+    }
+
     // Get category for this directory
     const category = await window.electronAPI.getCategoryForDirectory(normalizedPath);
-    console.log('Category for directory:', category);
     state.currentCategory = category;
 
     // Update window icon if this is the active panel
@@ -347,7 +375,6 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
 
     // Use entries from scan result (already has changeState metadata)
     const entries = scanResult.success ? scanResult.entries : [];
-    console.log('Entries count:', entries ? entries.length : 0);
 
     // Populate file grid for this panel
     await populateFileGrid(entries, category, panelId);
@@ -361,6 +388,9 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       requestAnimationFrame(() => gridToResize.resize());
     }
 
+    // Mark this panel as having been viewed
+    panelState[panelId].hasBeenViewed = true;
+
     // Start async checksum calculation if category has it enabled
     if (category && category.enableChecksum) {
       // Collect files that need checksum calculation
@@ -369,7 +399,7 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
         !r.isFolder && r.changeState === 'checksumPending'
       );
       
-      if (filesToChecksum.length > 0) {
+      if (filesToChecksum.length > 0 && isManualNavigation) {
         console.log(`Starting checksum calculation for ${filesToChecksum.length} files`);
         startChecksumQueue(filesToChecksum, panelId, dirPath);
       }
@@ -1251,7 +1281,515 @@ async function switchLayout(layoutNumber) {
         grid.resize();
       }
     }
-  }, 100);
+    
+    // Setup dividers and badges after grids are resized
+    setupDividers();
+    setupBadgeDragHandles();
+  }, 150);
+}
+
+/**
+ * Initialize panel dividers based on localStorage or defaults
+ */
+function initializeDividers() {
+  // Load divider positions from localStorage (as fixed pixel widths/heights)
+  panelDividerState.verticalPixels = parseFloat(localStorage.getItem('panelDividerVertical') || '400');
+  panelDividerState.horizontalPixels = parseFloat(localStorage.getItem('panelDividerHorizontal') || '300');
+  
+  console.log('initializeDividers - loaded from localStorage:', panelDividerState);
+  
+  // Initial setup after a brief delay to allow layout to settle
+  setTimeout(() => {
+    console.log('initializeDividers - calling setupDividers');
+    setupDividers();
+  }, 150);
+  
+  // Handle window resize to maintain percentage-based positioning
+  $(window).on('resize.panelDivider', () => {
+    setupDividers();
+  });
+  
+  // Also listen to w2layout resize event to catch sidebar resizing
+  if (w2layoutInstance) {
+    w2layoutInstance.on('resize', () => {
+      console.log('w2layout resized, updating dividers');
+      setupDividers();
+      // Resize all grids so content fills the new size
+      for (let panelId = 1; panelId <= 4; panelId++) {
+        const grid = panelState[panelId].w2uiGrid;
+        if (grid) {
+          grid.resize();
+        }
+      }
+    });
+  }
+}
+
+/**
+ * Setup dividers for current layout
+ */
+function setupDividers() {
+  const layout = currentLayout;
+  
+  // Show/hide dividers based on layout
+  const $verticalDivider = $('#panel-divider-vertical');
+  const $horizontalDivider = $('#panel-divider-horizontal');
+  const $container = $('#panel-container');
+  
+  console.log('setupDividers called for layout:', layout, 'Container size:', $container.width(), 'x', $container.height());
+  
+  // Only layouts 2, 3, and 4 have dividers
+  const hasVerticalDivider = layout >= 2;
+  const hasHorizontalDivider = layout >= 3;
+  
+  if (hasVerticalDivider) {
+    console.log('Showing vertical divider');
+    $verticalDivider.css('display', 'block');
+    updateGridColumns();
+    positionVerticalDivider();
+  } else {
+    console.log('Hiding vertical divider');
+    $verticalDivider.css('display', 'none');
+    // Reset columns to single column
+    $container.css('grid-template-columns', '1fr');
+  }
+  
+  if (hasHorizontalDivider) {
+    console.log('Showing horizontal divider');
+    $horizontalDivider.css('display', 'block');
+    updateGridRows();
+    positionHorizontalDivider();
+  } else {
+    console.log('Hiding horizontal divider');
+    $horizontalDivider.css('display', 'none');
+    // Reset rows to single row
+    $container.css('grid-template-rows', '1fr');
+  }
+}
+
+/**
+ * Position and setup vertical divider for dragging
+ */
+function positionVerticalDivider() {
+  const $container = $('#panel-container');
+  const $divider = $('#panel-divider-vertical');
+  
+  const containerWidth = $container.width();
+  const containerHeight = $container.height();
+  
+  if (containerWidth === 0 || containerHeight === 0) {
+    console.log('Container has no size yet, skipping vertical divider positioning');
+    return;
+  }
+  
+  // Use fixed pixel position for left panel
+  const dividerX = panelDividerState.verticalPixels;
+  
+  console.log('Positioning vertical divider:', {
+    containerWidth,
+    containerHeight,
+    leftPanelWidth: panelDividerState.verticalPixels,
+    dividerX,
+    computed: { left: dividerX - 2, top: 0, height: containerHeight }
+  });
+  
+  $divider.css({
+    left: (dividerX - 2) + 'px',
+    top: 0,
+    height: containerHeight + 'px',
+    display: 'block'
+  });
+  
+  console.log('Vertical divider CSS applied:', {
+    left: $divider.css('left'),
+    top: $divider.css('top'),
+    height: $divider.css('height'),
+    width: $divider.css('width'),
+    position: $divider.css('position'),
+    display: $divider.css('display'),
+    zIndex: $divider.css('z-index')
+  });
+  
+  // Remove old event handlers
+  $divider.off('mousedown.panelResize');
+  
+  // Add drag handler
+  $divider.on('mousedown.panelResize', function(e) {
+    console.log('Vertical divider drag started');
+    e.preventDefault();
+    e.stopPropagation();
+    panelDividerState.isResizingVertical = true;
+    $divider.addClass('dragging');
+    
+    const startX = e.pageX;
+    const startPixels = panelDividerState.verticalPixels;
+    
+    $(document).on('mousemove.panelResizeVertical', function(moveEvent) {
+      const deltaX = moveEvent.pageX - startX;
+      const newPixels = startPixels + deltaX;
+      
+      // Enforce minimum widths and maximum right panel width
+      const maxPixels = containerWidth - panelDividerState.minPanelWidth;
+      const constrainedPixels = Math.max(panelDividerState.minPanelWidth, Math.min(maxPixels, newPixels));
+      panelDividerState.verticalPixels = constrainedPixels;
+      
+      // Update grid columns
+      updateGridColumns();
+      
+      // Reposition divider
+      positionVerticalDivider();
+      
+      // In layout 3, also reposition horizontal divider since it depends on vertical divider position
+      if (currentLayout === 3) {
+        positionHorizontalDivider();
+      }
+    });
+    
+    $(document).on('mouseup.panelResizeVertical', function() {
+      $(document).off('mousemove.panelResizeVertical mouseup.panelResizeVertical');
+      panelDividerState.isResizingVertical = false;
+      $divider.removeClass('dragging');
+      
+      // Save to localStorage
+      localStorage.setItem('panelDividerVertical', panelDividerState.verticalPixels);
+      
+      // Trigger grid resize
+      for (let panelId = 1; panelId <= 4; panelId++) {
+        const grid = panelState[panelId].w2uiGrid;
+        if (grid) {
+          grid.resize();
+        }
+      }
+    });
+  });
+}
+
+/**
+ * Position and setup horizontal divider for dragging
+ */
+function positionHorizontalDivider() {
+  const $container = $('#panel-container');
+  const $divider = $('#panel-divider-horizontal');
+  
+  const containerWidth = $container.width();
+  const containerHeight = $container.height();
+  
+  if (containerWidth === 0 || containerHeight === 0) {
+    console.log('Container has no size yet, skipping horizontal divider positioning');
+    return;
+  }
+  
+  // Use fixed pixel position for top panel
+  const dividerY = panelDividerState.horizontalPixels;
+  
+  // In 3-panel mode, horizontal divider should only span the right side (from vertical divider to right edge)
+  // In 4-panel mode, it spans the full width
+  let dividerLeft = 0;
+  let dividerWidth = containerWidth;
+  
+  if (currentLayout === 3) {
+    // In layout 3, horizontal divider only spans the right side
+    dividerLeft = panelDividerState.verticalPixels;
+    dividerWidth = containerWidth - panelDividerState.verticalPixels;
+  }
+  
+  console.log('Positioning horizontal divider:', {
+    containerWidth,
+    containerHeight,
+    topPanelHeight: panelDividerState.horizontalPixels,
+    dividerY,
+    dividerLeft,
+    dividerWidth,
+    computed: { left: dividerLeft, top: dividerY - 2, width: dividerWidth }
+  });
+  
+  $divider.css({
+    left: dividerLeft + 'px',
+    top: (dividerY - 2) + 'px',
+    width: dividerWidth + 'px',
+    display: 'block'
+  });
+  
+  // Remove old event handlers
+  $divider.off('mousedown.panelResize');
+  
+  // Add drag handler
+  $divider.on('mousedown.panelResize', function(e) {
+    console.log('Horizontal divider drag started');
+    e.preventDefault();
+    e.stopPropagation();
+    panelDividerState.isResizingHorizontal = true;
+    $divider.addClass('dragging');
+    
+    const startY = e.pageY;
+    const startPixels = panelDividerState.horizontalPixels;
+    
+    $(document).on('mousemove.panelResizeHorizontal', function(moveEvent) {
+      const deltaY = moveEvent.pageY - startY;
+      const newPixels = startPixels + deltaY;
+      
+      // Enforce minimum heights and maximum bottom panel height
+      const maxPixels = containerHeight - panelDividerState.minPanelHeight;
+      const constrainedPixels = Math.max(panelDividerState.minPanelHeight, Math.min(maxPixels, newPixels));
+      panelDividerState.horizontalPixels = constrainedPixels;
+      
+      // Update grid rows
+      updateGridRows();
+      
+      // Reposition divider
+      positionHorizontalDivider();
+    });
+    
+    $(document).on('mouseup.panelResizeHorizontal', function() {
+      $(document).off('mousemove.panelResizeHorizontal mouseup.panelResizeHorizontal');
+      panelDividerState.isResizingHorizontal = false;
+      $divider.removeClass('dragging');
+      
+      // Save to localStorage
+      localStorage.setItem('panelDividerHorizontal', panelDividerState.horizontalPixels);
+      
+      // Trigger grid resize
+      for (let panelId = 1; panelId <= 4; panelId++) {
+        const grid = panelState[panelId].w2uiGrid;
+        if (grid) {
+          grid.resize();
+        }
+      }
+    });
+  });
+}
+
+/**
+ * Update CSS grid columns based on vertical divider position
+ */
+function updateGridColumns() {
+  const leftWidth = panelDividerState.verticalPixels;
+  const $container = $('#panel-container');
+  // Left panel stays fixed width, right panel expands/contracts
+  const gridTemplateColumns = `${leftWidth}px 1fr`;
+  console.log('Updating grid columns to:', gridTemplateColumns, '(left panel fixed at', leftWidth, 'px)');
+  $container.css('grid-template-columns', gridTemplateColumns);
+}
+
+/**
+ * Update CSS grid rows based on horizontal divider position
+ */
+function updateGridRows() {
+  const topHeight = panelDividerState.horizontalPixels;
+  const $container = $('#panel-container');
+  // Top panels stay fixed height, bottom panels expand/contract
+  const gridTemplateRows = `${topHeight}px 1fr`;
+  console.log('Updating grid rows to:', gridTemplateRows, '(top panels fixed at', topHeight, 'px)');
+  $container.css('grid-template-rows', gridTemplateRows);
+}
+
+/**
+ * Setup badge drag handlers for resizing dividers
+ */
+function setupBadgeDragHandles() {
+  // Each badge will allow dragging specific dividers based on panel position
+  $('.panel-number').off('mousedown.badgeDrag');
+  
+  $('.panel-number').on('mousedown.badgeDrag', function(e) {
+    e.preventDefault();
+    
+    const $panelNumber = $(this);
+    const panelId = parseInt($panelNumber.text());
+    
+    const $panel = $(`#panel-${panelId}`);
+    if (!$panel.is(':visible')) return;
+    
+    const layout = currentLayout;
+    
+    // Badge drag behaviors:
+    // Badge 1: Resize sidebar (ew-resize)
+    // Badge 2: Resize vertical divider (ew-resize)
+    // Badge 3: Resize vertical and horizontal dividers (all-scroll)
+    // Badge 4: Resize sidebar and horizontal divider (all-scroll)
+    
+    if (layout === 2) {
+      if (panelId === 1) {
+        startBadgeDragSidebar(e);
+      } else {
+        startBadgeDragVertical(e);
+      }
+    } else if (layout === 3) {
+      if (panelId === 1) {
+        startBadgeDragSidebar(e);
+      } else if (panelId === 2) {
+        startBadgeDragVertical(e);
+      } else if (panelId === 3) {
+        startBadgeDragBoth(e, 'vertical-and-horizontal');
+      }
+    } else if (layout === 4) {
+      if (panelId === 1) {
+        startBadgeDragSidebar(e);
+      } else if (panelId === 2) {
+        startBadgeDragVertical(e);
+      } else if (panelId === 3) {
+        startBadgeDragBoth(e, 'vertical-and-horizontal');
+      } else if (panelId === 4) {
+        startBadgeDragBoth(e, 'sidebar-and-horizontal');
+      }
+    }
+  });
+}
+
+/**
+ * Drag sidebar resizer (Badge 1)
+ */
+function startBadgeDragSidebar(e) {
+  const startX = e.pageX;
+  const startSidebarWidth = w2layoutInstance.get('left').size;
+  
+  console.log('Badge 1 drag started. Initial sidebar width:', startSidebarWidth);
+  $('body').css('cursor', 'ew-resize');
+  
+  $(document).on('mousemove.badgeDragSidebar', function(moveEvent) {
+    const deltaX = moveEvent.pageX - startX;
+    const newWidth = startSidebarWidth + deltaX;
+    
+    // Enforce minimum sidebar width (e.g., 150px) and max width
+    const minWidth = 150;
+    const maxWidth = window.innerWidth - 300; // Leave room for main panel
+    const constrainedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+    
+    console.log('Badge 1 drag: deltaX=', deltaX, 'newWidth=', constrainedWidth);
+    
+    // Set the new size (w2ui uses 'size' not 'width')
+    w2layoutInstance.set('left', { size: constrainedWidth });
+    w2layoutInstance.resize();
+    
+    // Resize all grids so content fills the new size
+    for (let panelId = 1; panelId <= 4; panelId++) {
+      const grid = panelState[panelId].w2uiGrid;
+      if (grid) {
+        grid.resize();
+      }
+    }
+  });
+  
+  $(document).on('mouseup.badgeDragSidebar', function() {
+    $(document).off('mousemove.badgeDragSidebar mouseup.badgeDragSidebar');
+    $('body').css('cursor', 'default');
+    console.log('Badge 1 drag ended');
+  });
+}
+
+/**
+ * Drag vertical divider (Badge 2)
+ */
+function startBadgeDragVertical(e) {
+  const $container = $('#panel-container');
+  const containerWidth = $container.width();
+  const startX = e.pageX;
+  const startPixels = panelDividerState.verticalPixels;
+  
+  $('body').css('cursor', 'ew-resize');
+  
+  $(document).on('mousemove.badgeDragVertical', function(moveEvent) {
+    const deltaX = moveEvent.pageX - startX;
+    const newPixels = startPixels + deltaX;
+    
+    const maxPixels = containerWidth - panelDividerState.minPanelWidth;
+    const constrainedPixels = Math.max(panelDividerState.minPanelWidth, Math.min(maxPixels, newPixels));
+    panelDividerState.verticalPixels = constrainedPixels;
+    
+    updateGridColumns();
+    positionVerticalDivider();
+    
+    // In layout 3, also reposition horizontal divider since it depends on vertical divider position
+    if (currentLayout === 3) {
+      positionHorizontalDivider();
+    }
+  });
+  
+  $(document).on('mouseup.badgeDragVertical', function() {
+    $(document).off('mousemove.badgeDragVertical mouseup.badgeDragVertical');
+    $('body').css('cursor', 'default');
+    localStorage.setItem('panelDividerVertical', panelDividerState.verticalPixels);
+    
+    for (let panelId = 1; panelId <= 4; panelId++) {
+      const grid = panelState[panelId].w2uiGrid;
+      if (grid) {
+        grid.resize();
+      }
+    }
+    
+    // Re-attach divider drag handler in its new position
+    positionVerticalDivider();
+    if (currentLayout === 3) {
+      positionHorizontalDivider();
+    }
+  });
+}
+
+/**
+ * Drag both dividers with direction detection (Badges 3 and 4)
+ */
+function startBadgeDragBoth(e, dragMode) {
+  const $container = $('#panel-container');
+  const containerWidth = $container.width();
+  const containerHeight = $container.height();
+  const startX = e.pageX;
+  const startY = e.pageY;
+  const startVerticalPixels = panelDividerState.verticalPixels;
+  const startHorizontalPixels = panelDividerState.horizontalPixels;
+  const startSidebarWidth = dragMode === 'sidebar-and-horizontal' ? w2layoutInstance.get('left').size : null;
+
+  $('body').css('cursor', 'all-scroll');
+
+  $(document).on('mousemove.badgeDragBoth', function(moveEvent) {
+    const deltaX = moveEvent.pageX - startX;
+    const deltaY = moveEvent.pageY - startY;
+
+    if (dragMode === 'vertical-and-horizontal') {
+      // Move vertical divider with X
+      const newVPixels = startVerticalPixels + deltaX;
+      const maxVPixels = containerWidth - panelDividerState.minPanelWidth;
+      panelDividerState.verticalPixels = Math.max(panelDividerState.minPanelWidth, Math.min(maxVPixels, newVPixels));
+      updateGridColumns();
+      positionVerticalDivider();
+      if (currentLayout === 3) {
+        positionHorizontalDivider();
+      }
+    } else if (dragMode === 'sidebar-and-horizontal') {
+      // Move sidebar with X
+      const newSidebarWidth = startSidebarWidth + deltaX;
+      const constrainedSidebarWidth = Math.max(150, Math.min(window.innerWidth - 300, newSidebarWidth));
+      w2layoutInstance.set('left', { size: constrainedSidebarWidth });
+      w2layoutInstance.resize();
+    }
+
+    // Move horizontal divider with Y (both modes)
+    const newHPixels = startHorizontalPixels + deltaY;
+    const maxHPixels = containerHeight - panelDividerState.minPanelHeight;
+    panelDividerState.horizontalPixels = Math.max(panelDividerState.minPanelHeight, Math.min(maxHPixels, newHPixels));
+    updateGridRows();
+    positionHorizontalDivider();
+
+    // Resize grids during drag
+    for (let panelId = 1; panelId <= 4; panelId++) {
+      const grid = panelState[panelId].w2uiGrid;
+      if (grid) grid.resize();
+    }
+  });
+
+  $(document).on('mouseup.badgeDragBoth', function() {
+    $(document).off('mousemove.badgeDragBoth mouseup.badgeDragBoth');
+    $('body').css('cursor', 'default');
+
+    localStorage.setItem('panelDividerVertical', panelDividerState.verticalPixels);
+    localStorage.setItem('panelDividerHorizontal', panelDividerState.horizontalPixels);
+
+    for (let panelId = 1; panelId <= 4; panelId++) {
+      const grid = panelState[panelId].w2uiGrid;
+      if (grid) grid.resize();
+    }
+
+    positionVerticalDivider();
+    positionHorizontalDivider();
+  });
 }
 
 /**
@@ -1640,6 +2178,16 @@ async function toggleNotesEditMode(panelId) {
 function updatePanelLayout() {
   const $container = $('#panel-container');
   $container.removeClass('layout-1 layout-2 layout-3 layout-4').addClass(`layout-${visiblePanels}`);
+  
+  // Update current layout and setup dividers
+  currentLayout = visiblePanels;
+  
+  // Give layout time to apply before positioning dividers
+  setTimeout(() => {
+    console.log('updatePanelLayout: setting up dividers for layout', visiblePanels);
+    setupDividers();
+    setupBadgeDragHandles();
+  }, 100);
 }
 
 /**
@@ -1696,7 +2244,14 @@ function clearPanelState(panelId) {
     navigationHistory: [],
     navigationIndex: -1,
     currentCategory: null,
-    selectMode: false
+    selectMode: false,
+    checksumQueue: null,
+    checksumQueueIndex: 0,
+    checksumCancelled: false,
+    showDateCreated: false,
+    backgroundRefreshTimer: null,
+    lastRefreshInterval: null,
+    hasBeenViewed: false
   };
   
   // Note: Grid header is hidden along with the grid
@@ -1907,6 +2462,11 @@ function attachPanelEventListeners(panelId) {
     $panel.find('.btn-panel-remove').off('click').on('click', function() {
       removePanel(panelId);
     });
+    
+    // Landing page overlay close button (panels 2-4 only)
+    $panel.find('.btn-panel-remove-overlay').off('click').on('click', function() {
+      removePanel(panelId);
+    });
   }
 }
 
@@ -2018,7 +2578,12 @@ function attachEventListeners() {
   $('#btn-add-panel').click(function() {
     if (visiblePanels < 4) {
       visiblePanels++;
-      $(`#panel-${visiblePanels}`).show();
+      const newPanelId = visiblePanels;
+      $(`#panel-${newPanelId}`).show();
+      
+      // Reattach event listeners for the newly visible panel
+      attachPanelEventListeners(newPanelId);
+      
       updatePanelLayout();
     }
   });
@@ -2326,18 +2891,25 @@ async function setupBackgroundRefreshTimer(panelId) {
     // Only setup if enabled
     if (settings.background_refresh_enabled && settings.background_refresh_interval > 0) {
       const interval = settings.background_refresh_interval * 1000; // Convert to milliseconds
+      const currentInterval = settings.background_refresh_interval;
+      const lastInterval = panelState[panelId].lastRefreshInterval;
+      
+      // Only log if interval changed or first time setup
+      if (lastInterval !== currentInterval) {
+        console.log(`Background refresh running at ${currentInterval} second intervals`);
+        panelState[panelId].lastRefreshInterval = currentInterval;
+      }
       
       panelState[panelId].backgroundRefreshTimer = setInterval(() => {
         const state = panelState[panelId];
         if (state && state.currentPath) {
           // Refresh the panel by navigating to current path without adding to history
+          // This will suppress visual updates if no changes are detected
           navigateToDirectory(state.currentPath, panelId, false).catch(err => {
-            console.warn(`Background refresh failed for panel ${panelId}:`, err);
+            console.error(`Background refresh failed for panel ${panelId}:`, err);
           });
         }
       }, interval);
-      
-      console.log(`Background refresh timer setup for panel ${panelId}: every ${settings.background_refresh_interval} seconds`);
     }
   } catch (err) {
     console.warn('Error in setupBackgroundRefreshTimer:', err);
@@ -2351,7 +2923,6 @@ function stopBackgroundRefreshTimer(panelId) {
   if (panelState[panelId] && panelState[panelId].backgroundRefreshTimer) {
     clearInterval(panelState[panelId].backgroundRefreshTimer);
     panelState[panelId].backgroundRefreshTimer = null;
-    console.log(`Background refresh timer stopped for panel ${panelId}`);
   }
 }
 

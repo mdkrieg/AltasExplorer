@@ -19,9 +19,6 @@ class FilesystemService {
       return [];
     }
     
-    // Log the actual path being read for debugging future edge cases
-    logger.info(`Reading directory contents from: ${normalizedPath}`);
-    
     const entries = fs.readdirSync(normalizedPath);
     const files = [];
     const folders = [];

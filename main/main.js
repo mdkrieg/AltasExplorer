@@ -154,8 +154,6 @@ ipcMain.handle('scan-directory', (event, dirPath) => {
       return { success: false, error: 'Directory path cannot be empty' };
     }
     
-    logger.info(`Scanning directory: ${normalizedPath}`);
-    
     // Get directory inode to track the directory itself
     const dirStats = fs.getStats(normalizedPath);
     if (!dirStats) {
@@ -713,7 +711,7 @@ ipcMain.handle('render-markdown', async (event, content) => {
 /**
  * File Change Detection: Scan directory with comparison
  */
-ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
+ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNavigation = true) => {
   try {
     // Validate path parameter
     if (!dirPath || typeof dirPath !== 'string') {
@@ -726,8 +724,6 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
       logger.error('scan-directory-with-comparison: Empty path provided');
       return { success: false, error: 'Directory path cannot be empty' };
     }
-    
-    logger.info(`Scanning directory (with comparison): ${normalizedPath}`);
     
     // Get directory inode to track the directory itself
     const dirStats = fs.getStats(normalizedPath);
@@ -908,7 +904,6 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
       try {
         // Skip "." entries - they represent the directory itself and should be ignored
         if (dbFile.filename === '.') {
-          logger.info(`Skipping "." entry for directory ${dirPath}`);
           continue;
         }
         
@@ -999,12 +994,22 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath) => {
       });
     }
 
+    // Count entries with actual changes (not 'unchanged')
+    const changedEntries = entriesWithChanges.filter(e => e.changeState !== 'unchanged');
+    const hasChanges = changedEntries.length > 0;
+
+    // Log if browsing to a new directory (manual navigation) or if there are actual changes
+    if (isManualNavigation || hasChanges) {
+      logger.info(`Scanning directory: ${normalizedPath} - ${changedEntries.length} changes detected`);
+    }
+
     return {
       success: true,
       count: entriesWithChanges.filter(e => !e.isDirectory).length,
       entries: entriesWithChanges,
       category: categoryName,
-      categoryData: category
+      categoryData: category,
+      hasChanges: hasChanges
     };
   } catch (err) {
     logger.error('Error scanning directory with comparison:', err.message);
