@@ -600,6 +600,23 @@ ipcMain.handle('delete-tag', (event, name) => {
 });
 
 /**
+ * Tags: Add a tag to a directory or file
+ */
+ipcMain.handle('add-tag-to-item', (event, { path, tagName, isDirectory, inode, dir_id }) => {
+  try {
+    if (isDirectory) {
+      db.addTagToDirectory(path, tagName);
+    } else {
+      db.addTagToFile(inode, dir_id, tagName);
+    }
+    return { success: true };
+  } catch (err) {
+    logger.error('Error adding tag to item:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * Settings: Get settings
  */
 ipcMain.handle('get-settings', () => {

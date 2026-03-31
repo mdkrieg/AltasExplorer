@@ -14,10 +14,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0 },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0 },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0 },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0 }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -26,6 +26,7 @@ let panel1SelectedDirectoryName = null;
 
 let activePanelId = 1;
 let allCategories = {};
+let allTags = [];
 let currentLayout = 1;
 let fileEditMode = false;
 let visiblePanels = 1;
@@ -141,6 +142,9 @@ async function initialize() {
 
     // Load categories
     await loadCategories();
+
+    // Load tags list for context menu
+    await loadTagsList();
 
     // Load hotkeys
     await loadHotkeysFromStorage();
@@ -304,6 +308,60 @@ function attachGridHeaderEventListeners(panelId) {
 }
 
 /**
+ * Return the portion of entryPath that is relative to rootPath.
+ * Both are absolute Windows-style paths. Returns '.' when they are equal.
+ */
+function getRelativePathFromRoot(rootPath, entryPath) {
+  const root = rootPath.endsWith('\\') ? rootPath.slice(0, -1) : rootPath;
+  if (entryPath.toLowerCase() === root.toLowerCase()) {
+    return '.';
+  }
+  if (entryPath.toLowerCase().startsWith(root.toLowerCase() + '\\')) {
+    return entryPath.substring(root.length + 1);
+  }
+  return entryPath; // fallback — shouldn't happen in normal use
+}
+
+/**
+ * Recursively scan a directory tree up to maxDepth levels deep.
+ * Returns a flat array of entries. Each entry has a `displayFilename` property
+ * set to its path relative to rootPath (for use in the Name column).
+ * "." entries from non-root directories are omitted.
+ */
+async function scanDirectoryTree(rootPath, maxDepth, currentPath, currentDepth) {
+  if (currentPath === undefined) currentPath = rootPath;
+  if (currentDepth === undefined) currentDepth = 0;
+
+  const isRoot = (currentDepth === 0);
+  const scanResult = await window.electronAPI.scanDirectoryWithComparison(currentPath, isRoot);
+  if (!scanResult.success) return [];
+
+  const entries = scanResult.entries || [];
+  const processed = [];
+
+  for (const entry of entries) {
+    // Omit "." entries from subdirectory scans — only the root "." is kept
+    if (entry.filename === '.' && !isRoot) continue;
+
+    processed.push({
+      ...entry,
+      displayFilename: getRelativePathFromRoot(rootPath, entry.path)
+    });
+  }
+
+  // Recurse into subdirectories if we haven't reached the depth limit
+  if (currentDepth < maxDepth) {
+    const subdirs = entries.filter(e => e.isDirectory && e.filename !== '.');
+    for (const subdir of subdirs) {
+      const childEntries = await scanDirectoryTree(rootPath, maxDepth, subdir.path, currentDepth + 1);
+      processed.push(...childEntries);
+    }
+  }
+
+  return processed;
+}
+
+/**
  * Navigate to a directory in a specific panel
  */
 async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
@@ -333,7 +391,15 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     }
     
     const state = panelState[panelId];
+    const previousPath = state.currentPath;
     state.currentPath = normalizedPath;
+
+    // Reset depth when navigating to a different directory
+    if (normalizedPath !== previousPath) {
+      state.depth = 0;
+      const depthInput = document.getElementById(`depth-input-${panelId}`);
+      if (depthInput) depthInput.value = 0;
+    }
     
     // Update navigation history
     if (addToHistory) {
@@ -390,8 +456,14 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     // Use entries from scan result (already has changeState metadata)
     const entries = scanResult.success ? scanResult.entries : [];
 
+    // If depth > 0, walk subdirectories and aggregate all entries with relative paths
+    const depth = panelState[panelId].depth || 0;
+    const allEntries = depth > 0
+      ? await scanDirectoryTree(normalizedPath, depth)
+      : entries;
+
     // Populate file grid for this panel
-    await populateFileGrid(entries, category, panelId);
+    await populateFileGrid(allEntries, category, panelId);
 
     // Update grid header with path and buttons
     updateGridHeader(panelId, normalizedPath);
@@ -1020,19 +1092,13 @@ async function initializeGridForPanel(panelId) {
   // Build columns dynamically based on panel state
   const state = panelState[panelId];
   const columns = [
-    { field: 'icon', text: '', size: '40px', resizable: false, sortable: false },
-    { field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true },
-    { field: 'size', text: 'Size', size: '120px', resizable: true, sortable: true, align: 'right' },
-    { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true }
+    { field: 'icon', text: '', size: '40px', resizable: false, sortable: false, hideable: false },
+    { field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true, hideable: false },
+    { field: 'size', text: 'Size', size: '60px', resizable: true, sortable: true, align: 'right' },
+    { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true },
+    { field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
+    { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false }
   ];
-  
-  // Add optional DateCreated column if enabled for this panel
-  if (state.showDateCreated) {
-    columns.push({ field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true });
-  }
-  
-  // Always add checksum at the end
-  columns.push({ field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false });
 
   // Use w2grid constructor directly
   w2ui[gridName] = new w2grid({
@@ -1042,6 +1108,19 @@ async function initializeGridForPanel(panelId) {
       header: true,
       toolbar: true,
       footer: true
+    },
+    toolbar: {
+      items: [
+        {
+          type: 'html',
+          id: 'depth-control',
+          html: `<div style="display:inline-flex;align-items:center;gap:4px;padding:0 8px;">
+                   <label style="font-size:12px;color:#555;white-space:nowrap;">Depth</label>
+                   <input id="depth-input-${panelId}" type="number" min="0" max="99" value="${panelState[panelId].depth || 0}"
+                     style="width:46px;padding:1px 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;text-align:center;">
+                 </div>`
+        }
+      ]
     },
     columns: columns,
     records: [],
@@ -1109,28 +1188,29 @@ async function initializeGridForPanel(panelId) {
     },
     onContextMenu: function(event) {
       if (event.detail.recid) {
+        // Prevent w2ui from showing its built-in context menu
+        event.preventDefault();
         setActivePanelId(panelId);
-        
+
         // Get all selected records
         const selectedRecIds = this.getSelection();
         const selectedRecords = selectedRecIds.map(recid => this.records[recid - 1]);
-        
-        // If no selected records, don't show menu
-        if (selectedRecords.length === 0) {
-          return;
-        }
-        
-        // Generate w2ui-compatible context menu
-        const contextMenu = generateW2UIContextMenu(selectedRecords, visiblePanels);
-        
-        // Set the contextMenu on this grid
-        this.contextMenu = contextMenu;
+
+        if (selectedRecords.length === 0) return;
+
+        // Build and show custom flyout context menu
+        const menuItems = generateW2UIContextMenu(selectedRecords, visiblePanels);
+        const origEvent = event.detail.originalEvent;
+        showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId);
       }
     },
-    onContextMenuClick: function(event) {
-      console.log('Context menu click:', event);
-      // Handle context menu item clicks
-      handleContextMenuClick(event, panelId);
+    onColumnOnOff: function(event) {
+      // Sync dateCreated column visibility to panel state
+      if (event.detail.field === 'dateCreated') {
+        const col = this.getColumn('dateCreated');
+        // col.hidden reflects the state BEFORE the toggle fires
+        panelState[panelId].showDateCreated = !!col.hidden; // hidden→true means it's being shown
+      }
     },
     onReload: function(event) {
       event.preventDefault();
@@ -1146,7 +1226,20 @@ async function initializeGridForPanel(panelId) {
   // Override reload button tooltip to "Refresh"
   const reloadItem = w2ui[gridName].toolbar.get('w2ui-reload');
   if (reloadItem) reloadItem.tooltip = 'Refresh';
-  
+
+  // Attach depth input change handler via event delegation
+  $(document).off('change.depth', `#depth-input-${panelId}`)
+    .on('change.depth', `#depth-input-${panelId}`, function() {
+      let val = parseInt($(this).val(), 10);
+      if (isNaN(val) || val < 0) val = 0;
+      if (val > 99) val = 99;
+      $(this).val(val);
+      panelState[panelId].depth = val;
+      if (panelState[panelId].currentPath) {
+        navigateToDirectory(panelState[panelId].currentPath, panelId, false);
+      }
+    });
+
   // Set initial header
   updateGridHeader(panelId, 'Loading...');
   
@@ -1204,7 +1297,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     records.push({
       recid: recordId++,
       icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`, className),
-      filename: applyClass(folder.filename, className),
+      filename: applyClass(folder.displayFilename || folder.filename, className),
       filenameRaw: folder.filename,
       size: applyClass('-', className),
       dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
@@ -1237,7 +1330,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     records.push({
       recid: recordId++,
       icon: applyClass(iconSvg, className),
-      filename: applyClass(file.filename, className),
+      filename: applyClass(file.displayFilename || file.filename, className),
       filenameRaw: file.filename,
       size: applyClass(formatBytes(file.size), className),
       dateModified: dateModifiedContent,
@@ -1565,6 +1658,18 @@ async function loadCategories() {
     allCategories = await window.electronAPI.loadCategories();
   } catch (err) {
     console.error('Error loading categories:', err);
+  }
+}
+
+/**
+ * Load configured tags list for context menu use
+ */
+async function loadTagsList() {
+  try {
+    allTags = await window.electronAPI.getTagsList();
+  } catch (err) {
+    console.error('Error loading tags list:', err);
+    allTags = [];
   }
 }
 
@@ -4094,29 +4199,32 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
     contextMenu.push({
       id:"open-in",
       text: 'Open In',
-      icon: 'fa fa-folder-open',
       items: availablePanels.map(panelNum => ({
         id: `open-in-${panelNum}`,
-        text: `Panel ${panelNum}`,
-        icon: 'fa fa-folder-open'
+        text: `Panel ${panelNum}`
       }))
     });
     // Build "Set Category" menu items for each category
-    let setCategoryOption = {
+    contextMenu.push({
       id: 'set-category-label',
-      text: 'Set Category',
-      icon: 'fa fa-tag'
-    };
-    if (isMultiSelect) {
-      setCategoryOption.text = 'Set Category (applies to all)';
-    }
-    // Add category items
-    setCategoryOption.items = Object.keys(allCategories).map(categoryName => ({
-      id: `set-category-${categoryName}`,
-      text: categoryName,
-      icon: 'fa fa-tag'
-    }));;
-    contextMenu.push(setCategoryOption);
+      text: isMultiSelect ? 'Set Category (all)' : 'Set Category',
+      items: Object.keys(allCategories).map(categoryName => ({
+        id: `set-category-${categoryName}`,
+        text: categoryName
+      }))
+    });
+  }
+
+  // Add "Add Tag" for any selection (directories and/or files)
+  if (allTags.length > 0) {
+    contextMenu.push({
+      id: 'add-tag-label',
+      text: isMultiSelect ? 'Add Tag (all)' : 'Add Tag',
+      items: allTags.map(tag => ({
+        id: `add-tag-${tag.name}`,
+        text: tag.name
+      }))
+    });
   }
 
   // Add "Add to Favorites" for any selection with 1+ directories
@@ -4284,15 +4392,22 @@ async function handleContextMenuClick(event, panelId) {
   }
   
   // Handle "Toggle Date Created" column visibility
-  if (menuItemId === 'toggle-date-created') {
-    const state = panelState[activePanelId];
-    state.showDateCreated = !state.showDateCreated;
-    
-    // Reinitialize the grid with new column configuration
-    await initializeGridForPanel(activePanelId);
-    
-    // Refresh the current directory to reload the grid with new columns
-    await navigateToDirectory(state.currentPath, activePanelId);
+  // Handle "Add Tag" clicks
+  if (menuItemId.startsWith('add-tag-') && menuItemId !== 'add-tag-label') {
+    const tagName = menuItemId.replace('add-tag-', '');
+    try {
+      for (const record of selectedRecords) {
+        await window.electronAPI.addTagToItem({
+          path: record.path,
+          tagName,
+          isDirectory: record.isFolder,
+          inode: record.inode,
+          dir_id: record.dir_id
+        });
+      }
+    } catch (err) {
+      alert('Error adding tag: ' + err.message);
+    }
   }
 }
 
@@ -5223,9 +5338,164 @@ async function resetHotkeyToDefault() {
     });
 }
 
+// ==================== Custom Context Menu ====================
+
+/**
+ * Hide and remove any open custom context menu and its submenus
+ */
+function hideCustomContextMenu() {
+  document.getElementById('custom-ctx-menu')?.remove();
+  document.querySelectorAll('.custom-ctx-submenu').forEach(el => el.remove());
+}
+
+/**
+ * Build a single menu container element.
+ * Items with an `items` array get a flyout submenu on hover.
+ */
+function buildMenuEl(items, panelId) {
+  const menu = document.createElement('div');
+  menu.className = 'custom-ctx-menu';
+
+  let activeSubEl = null;
+  let subHideTimer = null;
+
+  const clearHideTimer = () => clearTimeout(subHideTimer);
+
+  const startHideTimer = () => {
+    subHideTimer = setTimeout(() => {
+      if (activeSubEl) { activeSubEl.remove(); activeSubEl = null; }
+    }, 200);
+  };
+
+  for (const item of items) {
+    if (item.text === '--') {
+      const sep = document.createElement('div');
+      sep.className = 'custom-ctx-separator';
+      menu.appendChild(sep);
+      continue;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'custom-ctx-item';
+
+    const label = document.createElement('span');
+    label.className = 'custom-ctx-label';
+    label.textContent = item.text;
+    row.appendChild(label);
+
+    const hasSub = Array.isArray(item.items) && item.items.length > 0;
+
+    if (hasSub) {
+      const arrow = document.createElement('span');
+      arrow.className = 'custom-ctx-arrow';
+      arrow.textContent = '›';
+      row.appendChild(arrow);
+    }
+
+    row.addEventListener('mouseenter', () => {
+      clearHideTimer();
+      menu.querySelectorAll('.custom-ctx-item').forEach(r => r.classList.remove('active'));
+      row.classList.add('active');
+
+      if (hasSub) {
+        // Replace any open submenu with this item's submenu
+        if (activeSubEl) { activeSubEl.remove(); activeSubEl = null; }
+
+        const sub = buildMenuEl(item.items, panelId);
+        sub.classList.add('custom-ctx-submenu');
+        const rowRect = row.getBoundingClientRect();
+        sub.style.left = (rowRect.right + 2) + 'px';
+        sub.style.top = rowRect.top + 'px';
+        document.body.appendChild(sub);
+        activeSubEl = sub;
+
+        // Adjust if off-screen (after paint)
+        requestAnimationFrame(() => {
+          const sRect = sub.getBoundingClientRect();
+          if (sRect.right > window.innerWidth) sub.style.left = (rowRect.left - sRect.width - 2) + 'px';
+          if (sRect.bottom > window.innerHeight) sub.style.top = (rowRect.top - (sRect.bottom - window.innerHeight)) + 'px';
+        });
+
+        // Grace period when moving from parent row to submenu
+        sub.addEventListener('mouseenter', () => clearHideTimer());
+        sub.addEventListener('mouseleave', () => startHideTimer());
+      } else {
+        // Non-submenu row: close any open submenu immediately
+        if (activeSubEl) { activeSubEl.remove(); activeSubEl = null; }
+      }
+    });
+
+    if (hasSub) {
+      row.addEventListener('mouseleave', () => startHideTimer());
+    }
+
+    if (!hasSub) {
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideCustomContextMenu();
+        handleContextMenuClick({ detail: { menuItem: item } }, panelId);
+      });
+    }
+
+    menu.appendChild(row);
+  }
+
+  return menu;
+}
+
+/**
+ * Show a custom flyout-capable context menu at the given viewport coordinates
+ */
+function showCustomContextMenu(items, x, y, panelId) {
+  hideCustomContextMenu();
+
+  const menu = buildMenuEl(items, panelId);
+  menu.id = 'custom-ctx-menu';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  document.body.appendChild(menu);
+
+  // Adjust position to stay within viewport
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
+  });
+
+  // Dismiss on outside click or Escape
+  setTimeout(() => {
+    const onOutside = (e) => {
+      if (!e.target.closest?.('#custom-ctx-menu') && !e.target.closest?.('.custom-ctx-submenu')) {
+        hideCustomContextMenu();
+        document.removeEventListener('mousedown', onOutside);
+        document.removeEventListener('keydown', onEsc);
+      }
+    };
+    const onEsc = (e) => {
+      if (e.key === 'Escape') {
+        hideCustomContextMenu();
+        document.removeEventListener('mousedown', onOutside);
+        document.removeEventListener('keydown', onEsc);
+      }
+    };
+    document.addEventListener('mousedown', onOutside);
+    document.addEventListener('keydown', onEsc);
+  }, 0);
+}
+
 // Initialize on document ready
 console.log('Page loaded, waiting for jQuery...');
 $(document).ready(function() {
   console.log('Document ready, starting initialization...');
+
+  // Always hide any open context menus on any right-click anywhere
+  document.addEventListener('contextmenu', () => {
+    hideCustomContextMenu();
+    // Also dismiss any open w2ui column-header menu overlay
+    if (typeof w2menu !== 'undefined') {
+      try { w2menu.hide(); } catch {}
+    }
+  }, true);
+
   initialize();
 });

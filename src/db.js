@@ -323,6 +323,34 @@ class DatabaseService {
   }
 
   /**
+   * Add a tag to a directory (appends to existing tags JSON array)
+   */
+  addTagToDirectory(dirname, tagName) {
+    const row = this.db.prepare('SELECT tags FROM dirs WHERE dirname = ?').get(dirname);
+    let current = [];
+    if (row && row.tags) {
+      try { current = JSON.parse(row.tags); } catch {}
+      if (!Array.isArray(current)) current = [];
+    }
+    if (!current.includes(tagName)) current.push(tagName);
+    this.db.prepare('UPDATE dirs SET tags = ? WHERE dirname = ?').run(JSON.stringify(current), dirname);
+  }
+
+  /**
+   * Add a tag to a file (appends to existing tags JSON array)
+   */
+  addTagToFile(inode, dir_id, tagName) {
+    const row = this.db.prepare('SELECT tags FROM files WHERE inode = ? AND dir_id = ?').get(inode, dir_id);
+    let current = [];
+    if (row && row.tags) {
+      try { current = JSON.parse(row.tags); } catch {}
+      if (!Array.isArray(current)) current = [];
+    }
+    if (!current.includes(tagName)) current.push(tagName);
+    this.db.prepare('UPDATE files SET tags = ? WHERE inode = ? AND dir_id = ?').run(JSON.stringify(current), inode, dir_id);
+  }
+
+  /**
    * Validate changeValue JSON against whitelist of allowed keys
    * Allowed keys: filename, dateModified, filesizeBytes, checksumValue, checksumStatus, dirname, category, status
    */

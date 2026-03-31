@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveTag: (tagData) =>
     ipcRenderer.invoke('save-tag', tagData),
   deleteTag: (name) => ipcRenderer.invoke('delete-tag', name),
+  addTagToItem: (data) => ipcRenderer.invoke('add-tag-to-item', data),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
