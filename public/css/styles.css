@@ -906,6 +906,10 @@ hr {
   font-weight: 500;
 }
 
+.file-perm-error {
+  color: #666666;
+}
+
 .file-content-view blockquote {
   border-left: 4px solid #ddd;
   padding: 0 12px;

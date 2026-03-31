@@ -14,10 +14,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0 },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0 },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0 },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0 }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1 },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1 },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1 },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1 }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -323,42 +323,278 @@ function getRelativePathFromRoot(rootPath, entryPath) {
 }
 
 /**
- * Recursively scan a directory tree up to maxDepth levels deep.
- * Returns a flat array of entries. Each entry has a `displayFilename` property
- * set to its path relative to rootPath (for use in the Name column).
- * "." entries from non-root directories are omitted.
+ * Stop an in-progress tree scan for a panel.
  */
-async function scanDirectoryTree(rootPath, maxDepth, currentPath, currentDepth) {
-  if (currentPath === undefined) currentPath = rootPath;
-  if (currentDepth === undefined) currentDepth = 0;
+function stopScan(panelId) {
+  panelState[panelId].scanCancelled = true;
+}
 
-  const isRoot = (currentDepth === 0);
-  const scanResult = await window.electronAPI.scanDirectoryWithComparison(currentPath, isRoot);
-  if (!scanResult.success) return [];
+/**
+ * Show or hide the scanning indicator (Stop button + status text).
+ */
+function setScanIndicator(panelId, scanning) {
+  const stopBtn = document.getElementById(`btn-stop-scan-${panelId}`);
+  const statusEl = document.getElementById(`scan-status-${panelId}`);
+  if (stopBtn) stopBtn.style.display = scanning ? 'inline-block' : 'none';
+  if (statusEl) statusEl.style.display = scanning ? 'inline' : 'none';
+}
 
-  const entries = scanResult.entries || [];
-  const processed = [];
+/**
+ * Build w2ui record objects from an array of entries without touching the grid.
+ * Uses iconCache and categoryCache (Maps) to avoid duplicate IPC calls within a
+ * single scan session — caches are keyed by path (category) or color+initials (icons).
+ */
+async function buildGridRecords(entries, panelId, iconCache, categoryCache) {
+  const state = panelState[panelId];
+  const records = [];
 
-  for (const entry of entries) {
-    // Omit "." entries from subdirectory scans — only the root "." is kept
-    if (entry.filename === '.' && !isRoot) continue;
+  function applyClass(content, className) {
+    if (!className) return content;
+    return `<div class="${className}">${content}</div>`;
+  }
 
-    processed.push({
-      ...entry,
-      displayFilename: getRelativePathFromRoot(rootPath, entry.path)
+  const folders = entries.filter(e => e.isDirectory);
+  const files   = entries.filter(e => !e.isDirectory);
+
+  for (const folder of folders) {
+    let iconUrl;
+    if (folder.changeState === 'moved') {
+      iconUrl = 'assets/folder-moved.svg';
+    } else {
+      let cat = categoryCache.get(folder.path);
+      if (!cat) {
+        cat = await window.electronAPI.getCategoryForDirectory(folder.path);
+        categoryCache.set(folder.path, cat);
+      }
+      const iconKey = `${cat.bgColor}:${cat.textColor}:${folder.initials || ''}`;
+      iconUrl = iconCache.get(iconKey);
+      if (!iconUrl) {
+        iconUrl = await window.electronAPI.generateFolderIcon(cat.bgColor, cat.textColor, folder.initials || null);
+        iconCache.set(iconKey, iconUrl);
+      }
+    }
+
+    const className = getRowClassName(folder.changeState);
+    records.push({
+      recid: state.recidCounter++,
+      icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`, className),
+      filename: applyClass(folder.displayFilename || folder.filename, className),
+      filenameRaw: folder.filename,
+      size: applyClass('-', className),
+      dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
+      perms: applyClass(getPermsCell(folder), className),
+      checksum: applyClass('—', className),
+      isFolder: true,
+      path: folder.path,
+      changeState: folder.changeState,
+      inode: folder.inode,
+      initials: folder.initials || null,
+      dir_id: null,
+      orphan_id: folder.orphan_id || null,
+      new_dir_id: folder.new_dir_id || null
     });
   }
 
-  // Recurse into subdirectories if we haven't reached the depth limit
-  if (currentDepth < maxDepth) {
-    const subdirs = entries.filter(e => e.isDirectory && e.filename !== '.');
-    for (const subdir of subdirs) {
-      const childEntries = await scanDirectoryTree(rootPath, maxDepth, subdir.path, currentDepth + 1);
-      processed.push(...childEntries);
+  for (const file of files) {
+    const className = getRowClassName(file.changeState);
+
+    // Permission error: question icon, dark grey, blanked stats
+    if (file.changeState === 'permError') {
+      const iconSvg = '<img src="assets/icons/file-question.png" style="width: 20px; height: 20px; object-fit: contain;">';
+      records.push({
+        recid: state.recidCounter++,
+        icon: applyClass(iconSvg, className),
+        filename: applyClass(file.displayFilename || file.filename, className),
+        filenameRaw: file.filename,
+        size: applyClass('—', className),
+        dateModified: applyClass('—', className),
+        dateModifiedRaw: null,
+        dateCreated: '—',
+        dateCreatedRaw: null,
+        perms: applyClass(getPermsCell(file), className),
+        checksum: applyClass('—', className),
+        checksumStatus: null,
+        checksumValue: null,
+        isFolder: false,
+        path: file.path,
+        changeState: 'permError',
+        inode: file.inode,
+        dir_id: file.dir_id || null,
+        orphan_id: null,
+        new_dir_id: null
+      });
+      continue;
     }
+
+    const dateModifiedContent = getDateModifiedCell(file, file.changeState);
+    const checksumCell = getChecksumCell(file, file.changeState);
+    const iconSvg = file.changeState === 'moved'
+      ? '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">'
+      : '<img src="assets/icons/file.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+
+    records.push({
+      recid: state.recidCounter++,
+      icon: applyClass(iconSvg, className),
+      filename: applyClass(file.displayFilename || file.filename, className),
+      filenameRaw: file.filename,
+      size: applyClass(formatBytes(file.size), className),
+      dateModified: dateModifiedContent,
+      dateModifiedRaw: file.dateModified,
+      dateCreated: file.dateCreated ? new Date(file.dateCreated).toLocaleDateString() : '-',
+      dateCreatedRaw: file.dateCreated,
+      perms: applyClass(getPermsCell(file), className),
+      checksum: checksumCell,
+      checksumStatus: file.checksumStatus || null,
+      checksumValue: file.checksumValue || null,
+      isFolder: false,
+      path: file.path,
+      changeState: file.changeState,
+      inode: file.inode,
+      dir_id: file.dir_id || null,
+      orphan_id: file.orphan_id || null,
+      new_dir_id: file.new_dir_id || null
+    });
   }
 
-  return processed;
+  return records;
+}
+
+/**
+ * Append pre-built records to the panel grid, triggering an incremental refresh.
+ */
+function addRecordsToGrid(records, panelId) {
+  if (!records || records.length === 0) return;
+  const grid = panelState[panelId].w2uiGrid;
+  if (!grid) return;
+  grid.add(records);
+}
+
+/**
+ * Drain the pendingDirs queue for panelId, scanning each directory and appending
+ * its entries to the grid as results arrive.  Exits immediately if the scan is
+ * cancelled or the scanToken has changed (i.e. a new navigation started).
+ */
+async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, token) {
+  const state = panelState[panelId];
+
+  while (state.pendingDirs.length > 0 && !state.scanCancelled && state.scanToken === token) {
+    const { path: dirPath, maxDepth, currentDepth } = state.pendingDirs.shift();
+
+    const scanResult = await window.electronAPI.scanDirectoryWithComparison(dirPath, false);
+
+    // Guard: navigation or stop may have occurred while the IPC call was in-flight
+    if (state.scanCancelled || state.scanToken !== token) break;
+    if (!scanResult.success) continue;
+
+    const rawEntries = scanResult.entries || [];
+    const entries = rawEntries
+      .filter(e => e.filename !== '.')  // always drop the subdir's own '.' entry
+      .map(e => ({ ...e, displayFilename: getRelativePathFromRoot(rootPath, e.path) }));
+
+    const records = await buildGridRecords(entries, panelId, iconCache, categoryCache);
+
+    // Guard again after the async icon / category fetches
+    if (state.scanCancelled || state.scanToken !== token) break;
+
+    addRecordsToGrid(records, panelId);
+
+    // Queue subdirectories for the next level if depth allows
+    if (currentDepth < maxDepth) {
+      const subdirs = rawEntries.filter(e => e.isDirectory && e.filename !== '.');
+      for (const subdir of subdirs) {
+        state.pendingDirs.push({ path: subdir.path, maxDepth, currentDepth: currentDepth + 1 });
+      }
+    }
+  }
+}
+
+/**
+ * Resume a previously stopped tree scan using the saved pendingDirs queue.
+ * Existing grid records are preserved; only the outstanding directories are scanned.
+ */
+async function resumeScan(panelId) {
+  const state = panelState[panelId];
+  if (state.scanInProgress || !state.pendingDirs || state.pendingDirs.length === 0) return;
+
+  state.scanCancelled = false;
+  state.scanInProgress = true;
+  state.scanToken = (state.scanToken + 1) % 1000000;
+  const token = state.scanToken;
+
+  setScanIndicator(panelId, true);
+
+  const settings = await window.electronAPI.getSettings();
+  const hideDotDirectory = settings.hide_dot_directory || false;
+  const iconCache = new Map();
+  const categoryCache = new Map();
+
+  await processPendingDirs(panelId, state.currentPath, iconCache, categoryCache, token);
+
+  if (state.scanToken === token) {
+    state.scanInProgress = false;
+    setScanIndicator(panelId, false);
+  }
+}
+
+/**
+ * Streaming replacement for scanDirectoryTree.
+ * Shows root-directory entries immediately, then scans sub-directories one at a
+ * time and appends their entries to the grid — giving real-time count updates and
+ * allowing the user to stop / resume mid-scan.
+ */
+async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
+  const state = panelState[panelId];
+
+  // Cancel any previous scan for this panel and claim a new token
+  state.scanCancelled = true;
+  state.pendingDirs = [];
+  state.scanToken = (state.scanToken + 1) % 1000000;
+  const token = state.scanToken;
+
+  state.scanCancelled = false;
+  state.scanInProgress = true;
+  state.recidCounter = 1;
+
+  setScanIndicator(panelId, true);
+
+  const settings = await window.electronAPI.getSettings();
+  const hideDotDirectory = settings.hide_dot_directory || false;
+
+  const iconCache    = new Map();
+  const categoryCache = new Map();
+
+  // Clear grid immediately so the user sees the panel reset before results arrive
+  const grid = state.w2uiGrid;
+  if (grid) { grid.clear(); }
+
+  // --- Scan root directory ---
+  const rootScan = await window.electronAPI.scanDirectoryWithComparison(rootPath, true);
+  if (!rootScan.success || state.scanToken !== token) {
+    if (state.scanToken === token) { state.scanInProgress = false; setScanIndicator(panelId, false); }
+    return;
+  }
+
+  const rootRaw = rootScan.entries || [];
+  const rootEntries = rootRaw
+    .filter(e => !hideDotDirectory || e.filename !== '.')
+    .map(e => ({ ...e, displayFilename: getRelativePathFromRoot(rootPath, e.path) }));
+
+  const rootRecords = await buildGridRecords(rootEntries, panelId, iconCache, categoryCache);
+  if (state.scanToken === token) addRecordsToGrid(rootRecords, panelId);
+
+  // --- Queue subdirectories for incremental streaming ---
+  if (maxDepth > 0 && state.scanToken === token) {
+    const subdirs = rootRaw.filter(e => e.isDirectory && e.filename !== '.');
+    for (const subdir of subdirs) {
+      state.pendingDirs.push({ path: subdir.path, maxDepth, currentDepth: 1 });
+    }
+    await processPendingDirs(panelId, rootPath, iconCache, categoryCache, token);
+  }
+
+  if (state.scanToken === token) {
+    state.scanInProgress = false;
+    setScanIndicator(panelId, false);
+  }
 }
 
 /**
@@ -391,6 +627,13 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     }
     
     const state = panelState[panelId];
+
+    // Cancel any in-progress tree scan so stale results don't land in the new view
+    if (state.scanInProgress) {
+      state.scanCancelled = true;
+      state.pendingDirs = [];
+    }
+
     const previousPath = state.currentPath;
     state.currentPath = normalizedPath;
 
@@ -456,14 +699,14 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     // Use entries from scan result (already has changeState metadata)
     const entries = scanResult.success ? scanResult.entries : [];
 
-    // If depth > 0, walk subdirectories and aggregate all entries with relative paths
+    // If depth > 0, stream entries into the grid incrementally as sub-dirs are scanned;
+    // otherwise populate with the already-available single-directory entries.
     const depth = panelState[panelId].depth || 0;
-    const allEntries = depth > 0
-      ? await scanDirectoryTree(normalizedPath, depth)
-      : entries;
-
-    // Populate file grid for this panel
-    await populateFileGrid(allEntries, category, panelId);
+    if (depth > 0) {
+      await scanDirectoryTreeStreaming(normalizedPath, depth, panelId);
+    } else {
+      await populateFileGrid(entries, category, panelId);
+    }
 
     // Update grid header with path and buttons
     updateGridHeader(panelId, normalizedPath);
@@ -1097,6 +1340,7 @@ async function initializeGridForPanel(panelId) {
     { field: 'size', text: 'Size', size: '60px', resizable: true, sortable: true, align: 'right' },
     { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true },
     { field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
+    { field: 'perms', text: 'Perms', size: '48px', resizable: true, sortable: true },
     { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false }
   ];
 
@@ -1118,6 +1362,17 @@ async function initializeGridForPanel(panelId) {
                    <label style="font-size:12px;color:#555;white-space:nowrap;">Depth</label>
                    <input id="depth-input-${panelId}" type="number" min="0" max="99" value="${panelState[panelId].depth || 0}"
                      style="width:46px;padding:1px 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;text-align:center;">
+                 </div>`
+        },
+        {
+          type: 'html',
+          id: 'scan-controls',
+          html: `<div style="display:inline-flex;align-items:center;gap:6px;padding:0 4px;">
+                   <button id="btn-stop-scan-${panelId}"
+                     style="display:none;padding:2px 10px;background:#c62828;color:white;border:none;border-radius:3px;cursor:pointer;font-weight:bold;font-size:12px;"
+                     title="Stop the current scan">&#9632; Stop</button>
+                   <span id="scan-status-${panelId}"
+                     style="display:none;font-size:11px;color:#1565C0;font-style:italic;">Scanning…</span>
                  </div>`
         }
       ]
@@ -1215,7 +1470,13 @@ async function initializeGridForPanel(panelId) {
     onReload: function(event) {
       event.preventDefault();
       setActivePanelId(panelId);
-      navigateToDirectory(panelState[panelId].currentPath, panelId);
+      const s = panelState[panelId];
+      // If a scan was stopped mid-way, resume it; otherwise do a full rescan
+      if (!s.scanInProgress && s.pendingDirs && s.pendingDirs.length > 0) {
+        resumeScan(panelId);
+      } else {
+        navigateToDirectory(s.currentPath, panelId);
+      }
     }
   });
 
@@ -1226,6 +1487,12 @@ async function initializeGridForPanel(panelId) {
   // Override reload button tooltip to "Refresh"
   const reloadItem = w2ui[gridName].toolbar.get('w2ui-reload');
   if (reloadItem) reloadItem.tooltip = 'Refresh';
+
+  // Wire up the Stop button — use event delegation so it survives toolbar re-renders
+  $(document).off(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`)
+    .on(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`, function() {
+      stopScan(panelId);
+    });
 
   // Attach depth input change handler via event delegation
   $(document).off('change.depth', `#depth-input-${panelId}`)
@@ -1301,6 +1568,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       filenameRaw: folder.filename,
       size: applyClass('-', className),
       dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
+      perms: applyClass(getPermsCell(folder), className),
       checksum: applyClass('—', className),
       isFolder: true,
       path: folder.path,
@@ -1316,6 +1584,35 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
   // Then add files
   for (const file of files) {
     const className = getRowClassName(file.changeState);
+
+    // Permission error: show with question icon, dark grey, blanked stats
+    if (file.changeState === 'permError') {
+      const iconSvg = '<img src="assets/icons/file-question.png" style="width: 20px; height: 20px; object-fit: contain;">';
+      records.push({
+        recid: recordId++,
+        icon: applyClass(iconSvg, className),
+        filename: applyClass(file.displayFilename || file.filename, className),
+        filenameRaw: file.filename,
+        size: applyClass('—', className),
+        dateModified: applyClass('—', className),
+        dateModifiedRaw: null,
+        dateCreated: '—',
+        dateCreatedRaw: null,
+        perms: applyClass(getPermsCell(file), className),
+        checksum: applyClass('—', className),
+        checksumStatus: null,
+        checksumValue: null,
+        isFolder: false,
+        path: file.path,
+        changeState: 'permError',
+        inode: file.inode,
+        dir_id: file.dir_id || null,
+        orphan_id: null,
+        new_dir_id: null
+      });
+      continue;
+    }
+
     const dateModifiedContent = getDateModifiedCell(file, file.changeState);
     const checksumCell = getChecksumCell(file, file.changeState);
     
@@ -1337,6 +1634,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       dateModifiedRaw: file.dateModified, // Store raw timestamp for acknowledgment
       dateCreated: file.dateCreated ? new Date(file.dateCreated).toLocaleDateString() : '-',
       dateCreatedRaw: file.dateCreated,
+      perms: applyClass(getPermsCell(file), className),
       checksum: checksumCell,
       checksumStatus: file.checksumStatus || null,
       checksumValue: file.checksumValue || null,
@@ -1353,8 +1651,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
   // Update grid records for this panel
   const grid = state.w2uiGrid;
   if (grid) {
-    grid.records = records;
-    grid.refresh();
+    grid.clear();
+    grid.add(records);
     console.log(`Grid for panel ${panelId} populated with ${records.length} rows`);
   }
 }
@@ -1475,9 +1773,33 @@ function getRowClassName(changeState) {
       return 'file-orphan';
     case 'moved':
       return 'file-moved';
+    case 'permError':
+      return 'file-perm-error';
     default:
       return '';
   }
+}
+
+/**
+ * Format a permissions object as a short display string.
+ */
+function formatPerms(perms) {
+  if (!perms) return '?';
+  if (perms.read && perms.write) return 'rw';
+  if (perms.read)  return 'r';
+  if (perms.write) return 'w';
+  return '--';
+}
+
+/**
+ * Render permission text with a tooltip containing raw stats.mode.
+ */
+function getPermsCell(entry) {
+  const permsText = formatPerms(entry.perms);
+  const modeText = (entry.mode === null || entry.mode === undefined)
+    ? 'mode: unknown'
+    : `mode: ${entry.mode}`;
+  return `<span title="${modeText}" style="cursor: help;">${permsText}</span>`;
 }
 
 /**

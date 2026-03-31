@@ -2,6 +2,18 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
 
+/**
+ * Probe read and write access for a path without throwing.
+ * Returns { read: bool, write: bool }.
+ */
+function checkAccess(fullPath) {
+  let read = false;
+  let write = false;
+  try { fs.accessSync(fullPath, fs.constants.R_OK); read = true; } catch {}
+  try { fs.accessSync(fullPath, fs.constants.W_OK); write = true; } catch {}
+  return { read, write };
+}
+
 class FilesystemService {
   /**
    * Read directory contents and return file/folder info with inode and stats
@@ -28,6 +40,7 @@ class FilesystemService {
         const fullPath = path.join(normalizedPath, entry);
         const stats = fs.statSync(fullPath);
         const inode = stats.ino.toString(); // Get inode
+        const perms = checkAccess(fullPath);
 
         const fileInfo = {
           inode,
@@ -36,7 +49,10 @@ class FilesystemService {
           size: stats.size,
           dateModified: stats.mtime.getTime(),
           dateCreated: stats.birthtime.getTime(),
-          path: fullPath
+          path: fullPath,
+          mode: stats.mode,
+          perms,
+          permError: false
         };
 
         if (stats.isDirectory()) {
@@ -46,6 +62,20 @@ class FilesystemService {
         }
       } catch (err) {
         logger.warn(`Error reading ${entry}:`, err.message);
+        // Include the entry as a permission-error item so it renders in the grid
+        files.push({
+          inode: '-1:' + entry,
+          filename: entry,
+          isDirectory: false,
+          size: 0,
+          dateModified: null,
+          dateCreated: null,
+          path: path.join(normalizedPath, entry),
+          mode: null,
+          perms: { read: false, write: false },
+          permError: true,
+          permErrorCode: err.code || 'UNKNOWN'
+        });
       }
     }
 
@@ -65,7 +95,10 @@ class FilesystemService {
         size: stats.size,
         dateModified: stats.mtime.getTime(),
         dateCreated: stats.birthtime.getTime(),
-        path: filePath
+        path: filePath,
+        mode: stats.mode,
+        perms: checkAccess(filePath),
+        permError: false
       };
     } catch (err) {
       logger.warn(`Error getting stats for ${filePath}:`, err.message);
@@ -115,7 +148,7 @@ class FilesystemService {
         }
       } catch (err) {
         // Drive not accessible, skip it
-        logger.debug(`Drive ${drive} not accessible: ${err.message}`);
+        logger.warn(`Drive ${drive} not accessible: ${err.message}`);
       }
     }
     

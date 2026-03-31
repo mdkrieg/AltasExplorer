@@ -43,6 +43,7 @@ class DatabaseService {
         dateModified INTEGER,
         dateCreated INTEGER,
         size INTEGER,
+        mode INTEGER,
         checksumValue TEXT,
         checksumStatus TEXT,
         tags TEXT,
@@ -80,6 +81,13 @@ class DatabaseService {
     `;
 
     this.db.exec(schema);
+
+    // Runtime migration for existing databases created before files.mode existed
+    const fileCols = this.db.prepare('PRAGMA table_info(files)').all();
+    const hasModeCol = fileCols.some(col => col.name === 'mode');
+    if (!hasModeCol) {
+      this.db.exec('ALTER TABLE files ADD COLUMN mode INTEGER');
+    }
   }
 
   /**
@@ -141,13 +149,14 @@ class DatabaseService {
    */
   upsertFile(fileData) {
     const stmt = this.db.prepare(`
-      INSERT INTO files (inode, dir_id, filename, dateModified, dateCreated, size, tags)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO files (inode, dir_id, filename, dateModified, dateCreated, size, mode, tags)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(inode, dir_id) DO UPDATE SET
         filename = excluded.filename,
         dateModified = excluded.dateModified,
         dateCreated = excluded.dateCreated,
         size = excluded.size,
+        mode = excluded.mode,
         tags = excluded.tags
     `);
 
@@ -158,6 +167,7 @@ class DatabaseService {
       fileData.dateModified || null,
       fileData.dateCreated || null,
       fileData.size || 0,
+      fileData.mode ?? null,
       fileData.tags || null
     );
   }
@@ -355,7 +365,7 @@ class DatabaseService {
    * Allowed keys: filename, dateModified, filesizeBytes, checksumValue, checksumStatus, dirname, category, status
    */
   validateChangeValue(changeValue) {
-    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'dirname', 'category', 'status'];
+    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'dirname', 'category', 'status', 'mode'];
     
     // Check if it's valid JSON
     let obj;

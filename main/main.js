@@ -816,7 +816,7 @@ function startBackgroundRefresh(enabled, interval) {
     bgRefreshTimer = setInterval(() => {
       for (const [panelId, dirPath] of bgWatchedPaths) {
         try {
-          const result = doScanDirectoryWithComparison(dirPath, false);
+          const result = doScanDirectoryWithComparison(dirPath, false, true);
           if (result.success && result.hasChanges && mainWindow) {
             mainWindow.webContents.send('directory-changed', { panelId, dirPath });
           }
@@ -856,7 +856,7 @@ ipcMain.handle('unregister-watched-path', (event, { panelId }) => {
 /**
  * Core scan logic (shared by IPC handler and background refresh timer)
  */
-function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
+function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBackgroundRefresh = false) {
   try {
     // Validate path parameter
     if (!dirPath || typeof dirPath !== 'string') {
@@ -892,7 +892,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
       filename: '.',
       dateModified: dirStats.dateModified,
       dateCreated: dirStats.dateCreated,
-      size: 0
+      size: 0,
+      mode: dirStats.mode ?? null
     });
 
     // IMPORTANT: Get existing database records BEFORE any modifications
@@ -904,7 +905,57 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
     const entriesWithChanges = [];
 
     for (const entry of entries) {
+      // Permission error entries: always persist in DB; hide from renderer on
+      // background refresh to avoid repetitive UI churn.
+      if (entry.permError) {
+        const permErrMode = -1;
+        const existingPermErr = dbFileMap.get(entry.inode);
+
+        db.upsertFile({
+          inode: entry.inode,
+          dir_id: dirId,
+          filename: entry.filename,
+          dateModified: null,
+          dateCreated: null,
+          size: 0,
+          mode: permErrMode
+        });
+
+        const permErrFileRecord = db.getFileByInode(entry.inode, dirId);
+        if (permErrFileRecord && (!existingPermErr || existingPermErr.mode !== permErrMode)) {
+          try {
+            db.insertFileHistory(entry.inode, dirId, permErrFileRecord.id, {
+              filename: entry.filename,
+              status: 'permError',
+              mode: permErrMode
+            });
+          } catch (err) {
+            logger.error(`Error recording permission history for ${entry.filename}:`, err.message);
+          }
+        }
+
+        dbFileMap.delete(entry.inode);
+
+        if (!isBackgroundRefresh) {
+          entriesWithChanges.push({
+            ...entry,
+            changeState: 'permError',
+            dir_id: dirId,
+            mode: permErrMode
+          });
+        }
+        continue;
+      }
+
       if (!entry.isDirectory) {
+        // If a permission-error placeholder exists for this filename, remove it
+        // now that we can stat the file again.
+        const stalePermErrInode = `-1:${entry.filename}`;
+        if (dbFileMap.has(stalePermErrInode)) {
+          db.deleteFile(stalePermErrInode, dirId);
+          dbFileMap.delete(stalePermErrInode);
+        }
+
         // For files, determine change state
         const dbFile = dbFileMap.get(entry.inode);
         let changeState = 'unchanged';
@@ -915,6 +966,9 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
         } else if (dbFile.dateModified !== entry.dateModified) {
           // Date modified changed
           changeState = 'dateModified';
+        } else if ((dbFile.mode ?? null) !== (entry.mode ?? null)) {
+          // File mode changed (permissions / attributes)
+          changeState = 'modeChanged';
         }
 
         // If category has checksum enabled, mark file for checksum calculation only when needed:
@@ -936,6 +990,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
           dir_id: dirId,
           checksumValue: (dbFile && dbFile.checksumValue) ? dbFile.checksumValue : null,
           checksumStatus: (dbFile && dbFile.checksumStatus) ? dbFile.checksumStatus : null,
+          perms: entry.perms || { read: false, write: false },
+          mode: entry.mode ?? null
         });
         
         // Mark as processed
@@ -956,13 +1012,18 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
         entriesWithChanges.push({
           ...entry,
           changeState,
-          initials: existingDir ? (existingDir.initials || null) : null
+          initials: existingDir ? (existingDir.initials || null) : null,
+          perms: entry.perms || { read: true, write: false },
+          mode: entry.mode ?? null
         });
       }
     }
 
     // Upsert all files with their new data and track changes in file_history
     for (const entry of entriesWithChanges) {
+      // Permission error entries are persisted earlier in the scan loop.
+      if (entry.changeState === 'permError') continue;
+
       if (!entry.isDirectory) {
         const dbFile = existingDbFiles.find(f => f.inode === entry.inode);
         
@@ -973,7 +1034,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
           filename: entry.filename,
           dateModified: entry.dateModified,
           dateCreated: entry.dateCreated,
-          size: entry.size
+          size: entry.size,
+          mode: entry.mode ?? null
         });
 
         // Get the file record to get its ID for history tracking
@@ -990,19 +1052,26 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
             db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
               filename: entry.filename,
               dateModified: entry.dateModified,
-              filesizeBytes: entry.size
+              filesizeBytes: entry.size,
+              mode: entry.mode ?? null
             });
           } catch (err) {
             logger.error(`Error recording file history for new file ${entry.filename}:`, err.message);
           }
-        } else if (dbFile.dateModified !== entry.dateModified) {
-          // Date modified changed: store only the change
-          try {
-            db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
-              dateModified: entry.dateModified
-            });
-          } catch (err) {
-            logger.error(`Error recording file history for date change ${entry.filename}:`, err.message);
+        } else {
+          const modeChanged = (dbFile.mode ?? null) !== (entry.mode ?? null);
+          const dateChanged = dbFile.dateModified !== entry.dateModified;
+
+          if (dateChanged || modeChanged) {
+            const historyPayload = {};
+            if (dateChanged) historyPayload.dateModified = entry.dateModified;
+            if (modeChanged) historyPayload.mode = entry.mode ?? null;
+
+            try {
+              db.insertFileHistory(entry.inode, dirId, fileRecord.id, historyPayload);
+            } catch (err) {
+              logger.error(`Error recording file history for ${entry.filename}:`, err.message);
+            }
           }
         }
       } else {
@@ -1026,7 +1095,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
           filename: '.',
           dateModified: entry.dateModified,
           dateCreated: entry.dateCreated,
-          size: 0
+          size: 0,
+          mode: entry.mode ?? null
         });
 
         // Get the dot file record for history tracking
@@ -1082,6 +1152,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
             size: dbFile.size,
             dateModified: dbFile.dateModified,
             dateCreated: dbFile.dateCreated,
+            mode: dbFile.mode ?? null,
             path: path.join(dirPath, dbFile.filename),
             changeState: 'moved',
             orphan_id: orphanId,
@@ -1114,6 +1185,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
             size: dbFile.size,
             dateModified: dbFile.dateModified,
             dateCreated: dbFile.dateCreated,
+            mode: dbFile.mode ?? null,
             path: path.join(dirPath, dbFile.filename),
             changeState: 'orphan',
             orphan_id: orphanId
@@ -1142,6 +1214,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true) {
         size: 0,
         dateModified: dirStats.dateModified,
         dateCreated: dirStats.dateCreated,
+        mode: dirStats.mode ?? null,
+        perms: dirStats.perms || { read: true, write: false },
         path: dirPath,
         changeState: 'unchanged',
         initials: dirRecord ? (dirRecord.initials || null) : null,
