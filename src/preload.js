@@ -49,8 +49,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFilesInDirectory: (dirPath) => ipcRenderer.invoke('get-files-in-directory', dirPath),
 
   // File change detection
-  calculateFileChecksum: (filePath, inode, dirId) => 
-    ipcRenderer.invoke('calculate-file-checksum', { filePath, inode, dirId }),
+  calculateFileChecksum: (filePath, inode, dirId, isManual = false) => 
+    ipcRenderer.invoke('calculate-file-checksum', { filePath, inode, dirId, isManual }),
   updateFileModificationDate: (dirPath, inode, newDateModified) => 
     ipcRenderer.invoke('update-file-modification-date', { dirPath, inode, newDateModified }),
 
@@ -132,6 +132,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // File history operations
   getFileHistory: (inode) => ipcRenderer.invoke('get-file-history', inode),
+  getFileRecordByPath: (filePath) => ipcRenderer.invoke('get-file-record-by-path', { filePath }),
+
+  // Notifications
+  getNotifications: () => ipcRenderer.invoke('get-notifications'),
+  getUnreadNotificationCount: () => ipcRenderer.invoke('get-unread-notification-count'),
+  markAllNotificationsRead: () => ipcRenderer.invoke('mark-all-notifications-read'),
   
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),

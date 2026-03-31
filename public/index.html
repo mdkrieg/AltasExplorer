@@ -20,6 +20,15 @@
 
   <!-- Sidebar Content (will be rendered into w2layout's left panel) -->
   <div id="sidebar-content" style="display: none; width: 100%; height: 100%; flex-direction: column;">
+    <!-- Sidebar Toolbar -->
+    <div id="sidebar-toolbar">
+      <button id="btn-sidebar-collapse" title="Collapse sidebar">&#10094;</button>
+      <button id="btn-sidebar-settings-toolbar" title="Settings">&#9881;</button>
+      <button id="btn-sidebar-notifications" title="Notifications">
+        &#128276;
+        <span id="notifications-badge"></span>
+      </button>
+    </div>
     <!-- Favorites Section -->
     <div id="favorites-section">
       <div class="favorites-section-header">
@@ -32,10 +41,6 @@
       <h3>This PC</h3>
     </div>
     <div id="sidebar-tree" class="sidebar-tree"></div>
-    <div class="sidebar-footer">
-      <button id="btn-sidebar-settings" class="btn-panel-settings" style="width: 100%; padding: 8px; margin: 0;">
-        <img src="assets/icons/settings-white.svg" style="width: 20px; height: 20px; object-fit: contain; margin:-5px; margin-right:2px"> Settings</button>
-    </div>
   </div>
 
   <!-- Panel Container (will be rendered into w2layout's main panel) -->
@@ -451,6 +456,20 @@
       </div>
 
       <button id="btn-layout-close" style="width: 100%; padding: 10px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+    </div>
+  </div>
+
+  <!-- Notifications Modal -->
+  <div id="notifications-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div style="background: white; border-radius: 8px; width: 90%; height: 80%; max-width: 900px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15); overflow: hidden;">
+      <div style="display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #ddd; flex-shrink: 0;">
+        <h2 style="margin: 0; flex: 1;">Notifications</h2>
+        <button id="btn-notifications-mark-all" style="padding: 6px 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px;">Mark All Read</button>
+        <button id="btn-notifications-close" style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+      </div>
+      <div style="flex: 1; overflow: hidden; padding: 15px 20px;">
+        <div id="notifications-grid" style="width: 100%; height: 100%;"></div>
+      </div>
     </div>
   </div>
 

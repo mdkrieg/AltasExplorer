@@ -41,6 +41,13 @@ let sidebarState = {
   drives: []
 };
 
+// Sidebar collapse state
+let sidebarCollapsed = false;
+let sidebarExpandedWidth = parseInt(localStorage.getItem('sidebarWidth') || '250');
+
+// Notifications
+let unreadNotificationCount = 0;
+
 // Panel divider state - tracks resizable divider positions and drag state
 let panelDividerState = {
   verticalPixels: 400,  // Left panel width in pixels (fixed size)
@@ -176,6 +183,17 @@ async function initialize() {
       bgSettings.background_refresh_enabled || false,
       bgSettings.background_refresh_interval || 30
     );
+
+    // Seed notification badge from persisted unread count
+    try {
+      const countResult = await window.electronAPI.getUnreadNotificationCount();
+      if (countResult.success) {
+        unreadNotificationCount = countResult.count;
+        updateNotificationBadge();
+      }
+    } catch (err) {
+      console.warn('Could not load notification count:', err);
+    }
 
     console.log('Initialization complete');
   } catch (err) {
@@ -1935,6 +1953,10 @@ async function calculateChecksumForFile(record, panelId, dirPath) {
       if (result.changed && result.hadPreviousChecksum) {
         record.changeState = 'checksumChanged';
       }
+      if (result.notificationCreated) {
+        unreadNotificationCount++;
+        updateNotificationBadge();
+      }
       record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
     } else {
       // Mark as error
@@ -2946,13 +2968,21 @@ async function showFileView(panelId, filePathOverride) {
     const settings = await window.electronAPI.getSettings();
     const fileFormat = settings.file_format || 'Markdown';
     
-    // Create Monaco editor instance if not exists
-    if (!monacoEditor) {
-      createMonacoEditorInstance($fileEditorContainer[0]);
-    }
+    // Always (re)create Monaco editor in this panel's container.
+    // The global monacoEditor may still reference an old/removed panel's DOM element,
+    // so recreating here ensures the editor is attached to the correct container.
+    createMonacoEditorInstance($fileEditorContainer[0]);
     
     // Try to read notes.txt
     const content = await window.electronAPI.readFileContent(filePath);
+
+    // Store the file's DB record so post-save checksum recalculation knows if tracking is enabled
+    try {
+      const fileRecord = await window.electronAPI.getFileRecordByPath(filePath);
+      panelState[panelId].fileViewRecord = fileRecord.success ? fileRecord : null;
+    } catch (_) {
+      panelState[panelId].fileViewRecord = null;
+    }
     
     // Set Monaco editor content and language
     if (monacoEditor) {
@@ -2992,10 +3022,8 @@ async function showFileView(panelId, filePathOverride) {
     fileEditMode = false;
   } catch (err) {
     // File doesn't exist, create empty notes
-    // Create Monaco editor instance if not exists
-    if (!monacoEditor) {
-      createMonacoEditorInstance($fileEditorContainer[0]);
-    }
+    // Always (re)create Monaco editor in this panel's container (same reason as above).
+    createMonacoEditorInstance($fileEditorContainer[0]);
     
     if (monacoEditor) {
       monacoEditor.setValue('');
@@ -3097,6 +3125,16 @@ async function toggleFileEditMode(panelId) {
       $editBtn.show().text('Edit').css('background', '#2196F3');
       $saveBtn.hide();
       fileEditMode = false;
+
+      // Auto-recalculate checksum if the directory has tracking enabled
+      const fileRecord = panelState[panelId].fileViewRecord;
+      if (fileRecord?.enableChecksum && fileRecord.inode && fileRecord.dir_id) {
+        try {
+          await window.electronAPI.calculateFileChecksum(filePath, fileRecord.inode, fileRecord.dir_id, false);
+        } catch (checksumErr) {
+          console.warn('Post-save checksum recalculation failed:', checksumErr.message);
+        }
+      }
     } catch (err) {
       alert('Error saving notes: ' + err.message);
     }
@@ -3570,9 +3608,19 @@ function attachEventListeners() {
     hideSettingsModal();
   });
 
-  // Sidebar Settings button
-  $('#btn-sidebar-settings').click(function() {
+  // Sidebar toolbar: Settings
+  $('#btn-sidebar-settings-toolbar').click(function() {
     showSettingsModal();
+  });
+
+  // Sidebar toolbar: Collapse / expand
+  $('#btn-sidebar-collapse').click(function() {
+    toggleSidebarCollapse();
+  });
+
+  // Sidebar toolbar: Notifications
+  $('#btn-sidebar-notifications').click(function() {
+    showNotificationsModal();
   });
 
   // Settings modal overlay click to close
@@ -3686,6 +3734,27 @@ function attachEventListeners() {
     if (e.target === this) {
       hideHistoryModal();
     }
+  });
+
+  // Notifications modal close button
+  $('#btn-notifications-close').click(function() {
+    hideNotificationsModal();
+  });
+
+  // Notifications modal overlay click to close
+  $('#notifications-modal').click(function(e) {
+    if (e.target === this) {
+      hideNotificationsModal();
+    }
+  });
+
+  // Notifications modal mark all read
+  $('#btn-notifications-mark-all').click(async function() {
+    await window.electronAPI.markAllNotificationsRead();
+    unreadNotificationCount = 0;
+    updateNotificationBadge();
+    // Reload grid to reflect read state
+    await loadNotifications();
   });
 }
 
@@ -3899,6 +3968,8 @@ async function openHistoryModal(selectedRecord) {
 function formatHistoryData(historyRecords, fullState) {
   // Priority order for change keys (lower number = higher priority)
   const KEY_PRIORITY = {
+    'dirname': 0,
+    'category': 0,
     'checksumValue': 1,
     'filename': 2,
     'dateModified': 3,
@@ -4103,6 +4174,100 @@ function hideHistoryModal() {
   if (w2ui['history-grid']) {
     w2ui['history-grid'].destroy();
   }
+}
+
+// ============================================
+// Sidebar Collapse
+// ============================================
+
+function toggleSidebarCollapse() {
+  const $sidebar = $('#sidebar-content');
+  sidebarCollapsed = !sidebarCollapsed;
+
+  if (sidebarCollapsed) {
+    sidebarExpandedWidth = w2layoutInstance.get('left').size;
+    localStorage.setItem('sidebarWidth', sidebarExpandedWidth);
+    $sidebar.addClass('sidebar-collapsed');
+    $('#btn-sidebar-collapse').html('&#10095;').attr('title', 'Expand sidebar');
+    w2layoutInstance.set('left', { size: 44 });
+  } else {
+    $sidebar.removeClass('sidebar-collapsed');
+    $('#btn-sidebar-collapse').html('&#10094;').attr('title', 'Collapse sidebar');
+    w2layoutInstance.set('left', { size: sidebarExpandedWidth });
+  }
+
+  w2layoutInstance.resize();
+  for (let panelId = 1; panelId <= 4; panelId++) {
+    const grid = panelState[panelId].w2uiGrid;
+    if (grid) grid.resize();
+  }
+}
+
+// ============================================
+// Notifications
+// ============================================
+
+function updateNotificationBadge() {
+  const $badge = $('#notifications-badge');
+  if (unreadNotificationCount > 0) {
+    $badge.text(unreadNotificationCount > 99 ? '99+' : unreadNotificationCount).show();
+  } else {
+    $badge.hide();
+  }
+}
+
+async function showNotificationsModal() {
+  $('#notifications-modal').css('display', 'flex');
+  await loadNotifications();
+}
+
+async function hideNotificationsModal() {
+  $('#notifications-modal').hide();
+  if (w2ui['notifications-grid']) {
+    w2ui['notifications-grid'].destroy();
+  }
+  await window.electronAPI.markAllNotificationsRead();
+  unreadNotificationCount = 0;
+  updateNotificationBadge();
+}
+
+async function loadNotifications() {
+  const result = await window.electronAPI.getNotifications();
+  if (!result.success) {
+    console.error('Error loading notifications:', result.error);
+    return;
+  }
+
+  if (w2ui['notifications-grid']) {
+    w2ui['notifications-grid'].destroy();
+  }
+
+  const records = (result.data || []).map((n, idx) => ({
+    recid: idx + 1,
+    detectedAt: n.created_at ? new Date(n.created_at).toLocaleString() : '—',
+    filename: n.filename || '—',
+    category: n.category || '—',
+    oldValue: n.old_value ? (n.old_value.substring(0, 12) + '...') : '—',
+    newValue: n.new_value ? (n.new_value.substring(0, 12) + '...') : '—',
+    isRead: n.read_at !== null
+  }));
+
+  $('#notifications-grid').w2grid({
+    name: 'notifications-grid',
+    style: 'width: 100%; height: 100%;',
+    show: { header: false, toolbar: false, footer: true },
+    columns: [
+      { field: 'detectedAt', text: 'Date',           size: '160px', resizable: true, sortable: true },
+      { field: 'filename',   text: 'File',            size: '30%',   resizable: true, sortable: true },
+      { field: 'category',   text: 'Category',        size: '15%',   resizable: true, sortable: true },
+      { field: 'oldValue',   text: 'Old Checksum',    size: '130px', resizable: true },
+      { field: 'newValue',   text: 'New Checksum',    size: '130px', resizable: true }
+    ],
+    records,
+    onLoad: function(event) { event.preventDefault(); }
+  });
+
+  $('#notifications-grid').w2render('notifications-grid');
 }
 
 /**
@@ -4581,6 +4746,13 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
     addSeparator(contextMenu);
     contextMenu.push({id:"view-history", text: 'History', icon: 'fa fa-history'});
   }
+
+  // Add "Calculate Checksum" for any selection with 1+ files
+  if (fileCount > 0) {
+    addSeparator(contextMenu);
+    const label = fileCount > 1 ? `Calculate Checksum (${fileCount} files)` : 'Calculate Checksum';
+    contextMenu.push({ id: 'calculate-checksum', text: label, icon: 'fa fa-hashtag' });
+  }
   
   return contextMenu;
 }
@@ -4667,6 +4839,37 @@ async function handleContextMenuClick(event, panelId) {
     } catch (err) {
       alert('Error opening history: ' + err.message);
     }
+  }
+
+  // Handle "Calculate Checksum" click — works for any file(s) regardless of category tracking
+  if (menuItemId === 'calculate-checksum') {
+    const fileRecords = selectedRecords.filter(r => !r.isFolder && r.inode && r.dir_id);
+    const grid = panelState[activePanelId].w2uiGrid;
+    for (const record of fileRecords) {
+      try {
+        const result = await window.electronAPI.calculateFileChecksum(
+          record.path, record.inode, record.dir_id, true
+        );
+        const gridRecord = grid ? grid.records.find(r => r.inode === record.inode && r.dir_id === record.dir_id) : null;
+        if (gridRecord) {
+          if (result.success) {
+            gridRecord.checksumStatus = result.status;
+            gridRecord.checksumValue = result.checksum;
+            const shortHash = result.checksum ? result.checksum.substring(0, 12) + '...' : '—';
+            gridRecord.checksum = `<span title="${result.checksum || ''}" style="cursor: help;">${shortHash}</span>`;
+            if (result.changed && result.hadPreviousChecksum) {
+              gridRecord.changeState = 'checksumChanged';
+            }
+          } else {
+            gridRecord.checksumStatus = 'error';
+            gridRecord.checksum = '<span style="color: #f00;">Error</span>';
+          }
+        }
+      } catch (err) {
+        console.error(`Error calculating checksum for ${record.filenameRaw || record.filename}:`, err.message);
+      }
+    }
+    if (grid) grid.refresh();
   }
   
   // Handle "Add to Favorites" click

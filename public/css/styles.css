@@ -780,9 +780,18 @@ hr {
   color: #4caf50;
 }
 
-.file-editor-container{
-  position:absolute;
-  top: 37px;
+.panel-file-view .w2ui-panel-title {
+  position: relative !important;
+  left: auto !important;
+  right: auto !important;
+  top: auto !important;
+  flex-shrink: 0;
+}
+
+.file-editor-container {
+  overflow: hidden;
+  min-height: 0;
+  position: relative;
 }
 
 /* Markdown Rendering Styles */
@@ -1078,34 +1087,78 @@ hr {
   padding: 4px 0;
 }
 
-.sidebar-footer {
-  padding: 8px;
-  background: #f0f0f0;
-  border-top: 1px solid #ddd;
+/* =====================
+   Sidebar Toolbar
+   ===================== */
+
+#sidebar-toolbar {
   display: flex;
   align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  background: #e8e8e8;
+  border-bottom: 1px solid #ddd;
   flex-shrink: 0;
 }
 
-.sidebar-footer button {
-  width: 100%;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  background: #2196F3;
-  color: white;
+#sidebar-toolbar button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  font-size: 15px;
+  background: none;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  color: #444;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease;
 }
 
-.sidebar-footer button:hover {
-  background: #1976D2;
+#sidebar-toolbar button:hover {
+  background: rgba(0, 0, 0, 0.08);
 }
 
-.sidebar-footer button:active {
-  background: #1565C0;
+#sidebar-toolbar button:active {
+  background: rgba(0, 0, 0, 0.14);
+}
+
+/* Notification badge */
+#notifications-badge {
+  display: none;
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  background: #e53935;
+  color: white;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  min-width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  padding: 0 2px;
+  pointer-events: none;
+}
+
+/* =====================
+   Sidebar Collapsed State
+   ===================== */
+
+#sidebar-content.sidebar-collapsed #favorites-section,
+#sidebar-content.sidebar-collapsed .sidebar-header,
+#sidebar-content.sidebar-collapsed #sidebar-tree {
+  display: none;
+}
+
+#sidebar-content.sidebar-collapsed #btn-sidebar-settings-toolbar,
+#sidebar-content.sidebar-collapsed #btn-sidebar-notifications {
+  display: none;
 }
 
 /* Sidebar Tree Items */

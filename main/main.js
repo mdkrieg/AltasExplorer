@@ -433,6 +433,18 @@ ipcMain.handle('update-category', (event, categoryData) => {
 ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName }) => {
   try {
     categories.setCategoryForDirectory(dirPath, categoryName);
+    // Record the category change in file_history via the directory's dot-file
+    try {
+      const dirEntry = db.getDirectory(dirPath);
+      if (dirEntry) {
+        const dotFile = db.getFileByInode(dirEntry.inode, dirEntry.id);
+        if (dotFile) {
+          db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, { category: categoryName });
+        }
+      }
+    } catch (histErr) {
+      logger.error('Error recording category history for directory:', histErr.message);
+    }
     return { success: true };
   } catch (err) {
     logger.error('Error assigning category:', err.message);
@@ -449,6 +461,18 @@ ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryNam
     for (const dirPath of dirPaths) {
       try {
         categories.setCategoryForDirectory(dirPath, categoryName);
+        // Record the category change in file_history via the directory's dot-file
+        try {
+          const dirEntry = db.getDirectory(dirPath);
+          if (dirEntry) {
+            const dotFile = db.getFileByInode(dirEntry.inode, dirEntry.id);
+            if (dotFile) {
+              db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, { category: categoryName });
+            }
+          }
+        } catch (histErr) {
+          logger.error(`Error recording category history for directory ${dirPath}:`, histErr.message);
+        }
         results.push({ path: dirPath, success: true });
       } catch (err) {
         logger.error(`Error assigning category to ${dirPath}:`, err.message);
@@ -1086,6 +1110,34 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             }
           }
         }
+
+        // Sync checksumStatus with category's tracking setting
+        if (!category || !category.enableChecksum) {
+          // Checksum tracking is disabled for this directory's category.
+          // If the file previously had a checksum calculated (or errored), mark it untracked
+          // and record the transition in history so the grid reflects the change.
+          // If checksumStatus is already null (never tracked), silently initialize to 'untracked'.
+          const prevStatus = dbFile ? dbFile.checksumStatus : null;
+          if (prevStatus === 'calculated' || prevStatus === 'error') {
+            try {
+              db.updateFileChecksum(entry.inode, dirId, null, 'untracked');
+              db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
+                checksumStatus: 'untracked'
+              });
+            } catch (err) {
+              logger.error(`Error marking checksum untracked for ${entry.filename}:`, err.message);
+            }
+          } else if (prevStatus === null) {
+            // First scan for this file with no tracking — silently initialize
+            try {
+              db.updateFileChecksum(entry.inode, dirId, null, 'untracked');
+            } catch (err) {
+              logger.error(`Error initializing checksum as untracked for ${entry.filename}:`, err.message);
+            }
+          }
+          // prevStatus === 'untracked' or 'manual' → already correct, no-op
+          // 'manual' means the user explicitly requested a one-off calculation; preserve it.
+        }
       } else {
         // Handle subdirectory dot entries
         const existingDir = db.getDirectory(entry.path);
@@ -1269,7 +1321,7 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
 /**
  * File Change Detection: Calculate checksum for a file
  */
-ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId }) => {
+ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId, isManual = false }) => {
   try {
     // Retrieve previously stored checksum for comparison
     const existingChecksum = db.getFileChecksum(inode, dirId);
@@ -1288,15 +1340,51 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
       };
     }
 
+    // Use 'manual' status for on-demand calculations so scans won't reset the value
+    const storedStatus = isManual ? 'manual' : 'calculated';
+
     // Update database with calculated checksum
-    db.updateFileChecksum(inode, dirId, result.value, 'calculated');
+    db.updateFileChecksum(inode, dirId, result.value, storedStatus);
+
+    let notificationCreated = false;
+    if (result.changed) {
+      try {
+        const filename = path.basename(filePath);
+        const fileRecord = db.getFileByInode(inode, dirId);
+        const dirRecord = db.getDirById(dirId);
+        const categoryName = dirRecord ? dirRecord.category : 'Default';
+        if (fileRecord) {
+          const historyResult = db.insertFileHistory(inode, dirId, fileRecord.id, {
+            checksumValue: result.value,
+            checksumStatus: storedStatus
+          });
+          // Only notify on actual content changes (not first-time initialization)
+          if (existingChecksum !== null) {
+            db.insertNotification(
+              historyResult.lastID,
+              'checksumChanged',
+              filename,
+              categoryName,
+              dirId,
+              inode,
+              existingChecksum,
+              result.value
+            );
+            notificationCreated = true;
+          }
+        }
+      } catch (notifErr) {
+        logger.error('Error creating checksum notification:', notifErr.message);
+      }
+    }
 
     return { 
       success: true, 
       checksum: result.value, 
-      status: 'calculated',
+      status: storedStatus,
       changed: result.changed,
       hadPreviousChecksum: existingChecksum !== null,
+      notificationCreated,
       error: null 
     };
   } catch (err) {
@@ -1310,6 +1398,36 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
       hadPreviousChecksum: false,
       error: err.message 
     };
+  }
+});
+
+/**
+ * File Change Detection: Resolve a file record and its category config from a full path
+ */
+ipcMain.handle('get-file-record-by-path', (event, { filePath }) => {
+  try {
+    const dirname = path.dirname(filePath);
+    const basename = path.basename(filePath);
+    const dirEntry = db.getDirectory(dirname);
+    if (!dirEntry) {
+      return { success: false, error: 'Directory not found in database' };
+    }
+    const fileRecord = db.getFileByFilename(dirEntry.id, basename);
+    if (!fileRecord) {
+      return { success: false, error: 'File not found in database' };
+    }
+    const category = categories.getCategoryForDirectory(dirname);
+    return {
+      success: true,
+      inode: fileRecord.inode,
+      dir_id: dirEntry.id,
+      checksumValue: fileRecord.checksumValue,
+      checksumStatus: fileRecord.checksumStatus,
+      enableChecksum: category ? !!category.enableChecksum : false
+    };
+  } catch (err) {
+    logger.error('Error getting file record by path:', err.message);
+    return { success: false, error: err.message };
   }
 });
 
@@ -1353,6 +1471,44 @@ ipcMain.handle('update-file-modification-date', (event, { dirPath, inode, newDat
     return { success: true };
   } catch (err) {
     console.error('Error updating file modification date:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Notifications: Get all notifications
+ */
+ipcMain.handle('get-notifications', () => {
+  try {
+    const notifications = db.getNotifications();
+    return { success: true, data: notifications };
+  } catch (err) {
+    logger.error('Error retrieving notifications:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Notifications: Get unread count
+ */
+ipcMain.handle('get-unread-notification-count', () => {
+  try {
+    return { success: true, count: db.getUnreadNotificationCount() };
+  } catch (err) {
+    logger.error('Error getting unread notification count:', err.message);
+    return { success: true, count: 0 };
+  }
+});
+
+/**
+ * Notifications: Mark all as read
+ */
+ipcMain.handle('mark-all-notifications-read', () => {
+  try {
+    db.markAllNotificationsRead();
+    return { success: true };
+  } catch (err) {
+    logger.error('Error marking notifications read:', err.message);
     return { success: false, error: err.message };
   }
 });

@@ -73,11 +73,28 @@ class DatabaseService {
         FOREIGN KEY (new_dir_id) REFERENCES dirs(id)
       );
 
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        history_id INTEGER,
+        type TEXT NOT NULL,
+        filename TEXT,
+        category TEXT,
+        dir_id INTEGER,
+        inode TEXT,
+        old_value TEXT,
+        new_value TEXT,
+        created_at INTEGER,
+        read_at INTEGER,
+        FOREIGN KEY (history_id) REFERENCES file_history(id),
+        FOREIGN KEY (dir_id) REFERENCES dirs(id)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_dirs_dirname ON dirs(dirname);
       CREATE INDEX IF NOT EXISTS idx_files_dir_id ON files(dir_id);
       CREATE INDEX IF NOT EXISTS idx_files_inode ON files(inode);
       CREATE INDEX IF NOT EXISTS idx_file_history_inode ON file_history(inode);
       CREATE INDEX IF NOT EXISTS idx_file_history_dir_id ON file_history(dir_id);
+      CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications(read_at);
     `;
 
     this.db.exec(schema);
@@ -137,6 +154,14 @@ class DatabaseService {
   }
 
   /**
+   * Get directory by id
+   */
+  getDirById(id) {
+    const stmt = this.db.prepare('SELECT * FROM dirs WHERE id = ?');
+    return stmt.get(id);
+  }
+
+  /**
    * Update the initials label for a directory (max 2 chars)
    */
   updateDirectoryInitials(dirname, initials) {
@@ -190,6 +215,16 @@ class DatabaseService {
       SELECT * FROM files WHERE inode = ? AND dir_id = ?
     `);
     return stmt.get(inode, dir_id);
+  }
+
+  /**
+   * Get a file by dir_id and filename
+   */
+  getFileByFilename(dir_id, filename) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM files WHERE dir_id = ? AND filename = ?
+    `);
+    return stmt.get(dir_id, filename);
   }
 
   /**
@@ -518,6 +553,50 @@ class DatabaseService {
       SELECT * FROM orphans WHERE dir_id = ?
     `);
     return stmt.all(dir_id);
+  }
+
+  // ============================================
+  // Notifications
+  // ============================================
+
+  /**
+   * Insert a notification record linked to a file_history entry
+   */
+  insertNotification(historyId, type, filename, category, dirId, inode, oldValue, newValue) {
+    const stmt = this.db.prepare(`
+      INSERT INTO notifications (history_id, type, filename, category, dir_id, inode, old_value, new_value, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    return stmt.run(historyId, type, filename, category, dirId, inode, oldValue, newValue, Date.now());
+  }
+
+  /**
+   * Get all notifications ordered by created_at DESC
+   */
+  getNotifications() {
+    const stmt = this.db.prepare(`
+      SELECT n.*, d.dirname
+      FROM notifications n
+      LEFT JOIN dirs d ON n.dir_id = d.id
+      ORDER BY n.created_at DESC
+    `);
+    return stmt.all();
+  }
+
+  /**
+   * Count unread notifications
+   */
+  getUnreadNotificationCount() {
+    const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM notifications WHERE read_at IS NULL`);
+    return stmt.get().count;
+  }
+
+  /**
+   * Mark all notifications as read
+   */
+  markAllNotificationsRead() {
+    const stmt = this.db.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL`);
+    return stmt.run(Date.now());
   }
 
   close() {
