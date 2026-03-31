@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+﻿const { contextBridge, ipcRenderer } = require('electron');
 
 /**
  * Console Bridging
@@ -123,8 +123,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   allowClose: () => ipcRenderer.send('allow-close-app'),
   
   // Notes file operations
-  readNotesFile: (notesPath) => ipcRenderer.invoke('read-notes-file', notesPath),
-  writeNotesFile: (notesPath, content) => ipcRenderer.invoke('write-notes-file', { notesPath, content }),
+  readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
+  writeFileContent: (filePath, content) => ipcRenderer.invoke('write-file-content', { filePath, content }),
   
   // Markdown rendering via IPC
   renderMarkdown: (content) => ipcRenderer.invoke('render-markdown', content),

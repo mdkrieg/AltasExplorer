@@ -1,4 +1,4 @@
-{
+﻿{
   "Panel Navigation": {
     "navigate_back": {
       "label": "Navigate Back",
@@ -36,14 +36,14 @@
       "default": "Escape"
     }
   },
-  "Notes": {
-    "edit_notes": {
-      "label": "Edit Notes",
+  "File": {
+    "edit_file": {
+      "label": "Edit File",
       "key": "Ctrl+e",
       "default": "F2"
     },
-    "save_notes": {
-      "label": "Save Notes",
+    "save_file": {
+      "label": "Save File",
       "key": "Ctrl+s",
       "default": "Ctrl+s"
     }

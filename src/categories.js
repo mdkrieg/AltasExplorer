@@ -1,4 +1,4 @@
-const fs = require('fs');
+﻿const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const logger = require('./logger');
@@ -207,15 +207,15 @@ class CategoryService {
       if (!settings.home_directory) {
         settings.home_directory = os.homedir();
       }
-      // Ensure notes_format exists with default
-      if (!settings.notes_format) {
-        settings.notes_format = 'Markdown';
+      // Ensure file_format exists with default
+      if (!settings.file_format) {
+        settings.file_format = 'Markdown';
       }
       return settings;
     } catch {
       return { 
         home_directory: os.homedir(),
-        notes_format: 'Markdown'
+        file_format: 'Markdown'
       };
     }
   }
@@ -247,8 +247,8 @@ class CategoryService {
           'cancel_path': { label: 'Cancel Path', key: 'Escape', default: 'Escape' }
         },
         'Notes': {
-          'edit_notes': { label: 'Edit Notes', key: 'F2', default: 'F2' },
-          'save_notes': { label: 'Save Notes', key: 'Ctrl+S', default: 'Ctrl+S' }
+          'edit_file': { label: 'Edit Notes', key: 'F2', default: 'F2' },
+          'save_file': { label: 'Save Notes', key: 'Ctrl+S', default: 'Ctrl+S' }
         }
       };
     }

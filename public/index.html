@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -74,21 +74,21 @@
               <button class="btn-panel-remove-overlay">✕</button>
               <button class="btn-add-panel-landing">+</button>
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px; background-color: #ccc; color: #666; cursor: not-allowed;" disabled>Select directory</button></div>
-              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-file" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
-            <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
+            <div class="panel-file-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
               <div class="w2ui-panel-title" style="display: none;">
-                <span class="notes-path" style="font-weight: bold; font-size: 12px;"></span>
+                <span class="file-path" style="font-weight: bold; font-size: 12px;"></span>
                 <div style="float: right;">
-                  <button class="btn-notes-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
-                  <button class="btn-notes-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
-                  <button class="btn-notes-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
+                  <button class="btn-file-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
+                  <button class="btn-file-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
+                  <button class="btn-file-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
                   <button class="btn-panel-remove">✕</button>
                 </div>
               </div>
-              <div class="notes-editor-container" style="flex: 1; display: none;"></div>
-              <div class="notes-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
+              <div class="file-editor-container" style="flex: 1; display: none;"></div>
+              <div class="file-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
             </div>
           </div>
         </div>
@@ -108,21 +108,21 @@
             <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px; position: relative;">
               <button class="btn-panel-remove-overlay">✕</button>
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px; background-color: #ccc; color: #666; cursor: not-allowed;" disabled>Select directory</button></div>
-              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-file" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
-            <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
+            <div class="panel-file-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
               <div class="w2ui-panel-title" style="display: none;">
-                <span class="notes-path" style="font-weight: bold; font-size: 12px;"></span>
+                <span class="file-path" style="font-weight: bold; font-size: 12px;"></span>
                 <div style="float: right;">
-                  <button class="btn-notes-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
-                  <button class="btn-notes-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
-                  <button class="btn-notes-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
+                  <button class="btn-file-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
+                  <button class="btn-file-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
+                  <button class="btn-file-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
                   <button class="btn-panel-remove">✕</button>
                 </div>
               </div>
-              <div class="notes-editor-container" style="flex: 1; display: none;"></div>
-              <div class="notes-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
+              <div class="file-editor-container" style="flex: 1; display: none;"></div>
+              <div class="file-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
             </div>
           </div>
         </div>
@@ -142,21 +142,21 @@
             <div class="panel-landing-page" style="flex: 1; display: flex; padding: 20px; gap: 30px; position: relative;">
               <button class="btn-panel-remove-overlay">✕</button>
               <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Browse</h3><button class="btn-panel-select" style="width: 100%; padding: 12px; margin-bottom: 10px; cursor: pointer; border-radius: 4px; background-color: #ccc; color: #666; cursor: not-allowed;" disabled>Select directory</button></div>
-              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-notes" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
+              <div style="flex: 1;"><h3 style="margin: 0 0 10px 0; font-size: 14px;">Notes</h3><button class="btn-panel-file" style="width: 100%; padding: 12px; cursor: pointer; border-radius: 4px;">notes.txt</button></div>
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
-            <div class="panel-notes-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
+            <div class="panel-file-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
               <div class="w2ui-panel-title" style="display: none;">
-                <span class="notes-path" style="font-weight: bold; font-size: 12px;"></span>
+                <span class="file-path" style="font-weight: bold; font-size: 12px;"></span>
                 <div style="float: right;">
-                  <button class="btn-notes-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
-                  <button class="btn-notes-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
-                  <button class="btn-notes-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
+                  <button class="btn-file-edit" style="padding: 4px 8px; margin-right: 5px; background: #2196F3; color: white; border: none;">Edit</button>
+                  <button class="btn-file-save" style="padding: 4px 8px; margin-right: 5px; display: none; background: #4CAF50; color: white; border: none;">Save</button>
+                  <button class="btn-file-back" style="padding: 4px 8px; margin-right: 5px;">Back</button>
                   <button class="btn-panel-remove">✕</button>
                 </div>
               </div>
-              <div class="notes-editor-container" style="flex: 1; display: none;"></div>
-              <div class="notes-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
+              <div class="file-editor-container" style="flex: 1; display: none;"></div>
+              <div class="file-content-view" style="flex: 1; padding: 10px; border: none; overflow-y: auto; display: none; font-size: 14px; line-height: 1.6;"></div>
             </div>
           </div>
         </div>

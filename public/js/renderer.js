@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AtlasExplorer Renderer Logic
  * Handles all UI interactions and IPC calls
  */
@@ -14,10 +14,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, notesFilePath: null },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, notesFilePath: null },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, notesFilePath: null },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, notesFilePath: null }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -27,7 +27,7 @@ let panel1SelectedDirectoryName = null;
 let activePanelId = 1;
 let allCategories = {};
 let currentLayout = 1;
-let notesEditMode = false;
+let fileEditMode = false;
 let visiblePanels = 1;
 let panelContextMenuState = {}; // Stores context menu state for onMenuClick handler
 let hotkeyRegistry = {}; // Maps action IDs to their current key combinations
@@ -1100,9 +1100,9 @@ async function initializeGridForPanel(panelId) {
           $(`#panel-${newPanelId}`).show();
           attachPanelEventListeners(newPanelId);
           updatePanelLayout();
-          setTimeout(() => showNotesView(newPanelId, record.path), 150);
+          setTimeout(() => showFileView(newPanelId, record.path), 150);
         } else {
-          showNotesView(panelId, record.path);
+          showFileView(panelId, record.path);
         }
         return;
       }
@@ -1595,8 +1595,8 @@ async function loadHotkeysFromStorage() {
       'close_panel': 'Ctrl+W',
       'enter_path': 'Enter',
       'cancel_path': 'Escape',
-      'edit_notes': 'F2',
-      'save_notes': 'Ctrl+S'
+      'edit_file': 'F2',
+      'save_file': 'Ctrl+S'
     };
   }
 }
@@ -2346,7 +2346,7 @@ function getLanguageForFormat(format) {
 /**
  * Format notes content based on format type
  */
-function formatNotesContent(content, format) {
+function formatFileContent(content, format) {
   switch (format) {
     case 'PlainText':
       // Escape HTML and wrap in pre tag for plain text
@@ -2504,99 +2504,99 @@ function createMonacoEditorInstance(containerElement) {
 /**
  * Show notes view for a panel
  * @param {number} panelId - The panel to show notes in
- * @param {string} [notesPathOverride] - Explicit path to notes.txt; defaults to panel 1's current directory
+ * @param {string} [filePathOverride] - Explicit path to notes.txt; defaults to panel 1's current directory
  */
-async function showNotesView(panelId, notesPathOverride) {
-  const notesPath = notesPathOverride || (panelState[1].currentPath + '\\notes.txt');
-  panelState[panelId].notesFilePath = notesPath;
-  const $notesView = $(`#panel-${panelId} .panel-notes-view`);
-  const $notesEditorContainer = $notesView.find('.notes-editor-container');
-  const $notesContentView = $notesView.find('.notes-content-view');
-  const $notesToolbar = $notesView.find('.w2ui-panel-title');
+async function showFileView(panelId, filePathOverride) {
+  const filePath = filePathOverride || (panelState[1].currentPath + '\\notes.txt');
+  panelState[panelId].fileViewPath = filePath;
+  const $fileView = $(`#panel-${panelId} .panel-file-view`);
+  const $fileEditorContainer = $fileView.find('.file-editor-container');
+  const $fileContentView = $fileView.find('.file-content-view');
+  const $fileToolbar = $fileView.find('.w2ui-panel-title');
   
   try {
     // Get current notes format setting
     const settings = await window.electronAPI.getSettings();
-    const notesFormat = settings.notes_format || 'Markdown';
+    const fileFormat = settings.file_format || 'Markdown';
     
     // Create Monaco editor instance if not exists
     if (!monacoEditor) {
-      createMonacoEditorInstance($notesEditorContainer[0]);
+      createMonacoEditorInstance($fileEditorContainer[0]);
     }
     
     // Try to read notes.txt
-    const content = await window.electronAPI.readNotesFile(notesPath);
+    const content = await window.electronAPI.readFileContent(filePath);
     
     // Set Monaco editor content and language
     if (monacoEditor) {
       monacoEditor.setValue(content);
-      const language = getLanguageForFormat(notesFormat);
+      const language = getLanguageForFormat(fileFormat);
       monaco.editor.setModelLanguage(monacoEditor.getModel(), language);
     }
     
     // Format and display notes based on format setting
-    if (notesFormat === 'Markdown') {
+    if (fileFormat === 'Markdown') {
       // Render markdown to HTML
       const htmlContent = await window.electronAPI.renderMarkdown(content);
-      $notesContentView.html(htmlContent);
+      $fileContentView.html(htmlContent);
     } else {
       // Use plain text or extended formatting
-      const htmlContent = formatNotesContent(content, notesFormat);
-      $notesContentView.html(htmlContent);
+      const htmlContent = formatFileContent(content, fileFormat);
+      $fileContentView.html(htmlContent);
     }
     
     // Hide landing page and grid, show notes view
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
-    $notesView.show();
+    $fileView.show();
     
     // Show view mode by default, hide edit mode
-    $notesContentView.show();
-    $notesEditorContainer.hide();
+    $fileContentView.show();
+    $fileEditorContainer.hide();
     
     // Update toolbar with notes path (overlays grid header)
-    $notesToolbar.find('.notes-path').text(notesPath);
-    $notesToolbar.show();
+    $fileToolbar.find('.file-path').text(filePath);
+    $fileToolbar.show();
     
     // Reset buttons
-    $notesToolbar.find('.btn-notes-edit').show().text('Edit').css('background', '#2196F3');
-    $notesToolbar.find('.btn-notes-save').hide();
+    $fileToolbar.find('.btn-file-edit').show().text('Edit').css('background', '#2196F3');
+    $fileToolbar.find('.btn-file-save').hide();
     
-    notesEditMode = false;
+    fileEditMode = false;
   } catch (err) {
     // File doesn't exist, create empty notes
     // Create Monaco editor instance if not exists
     if (!monacoEditor) {
-      createMonacoEditorInstance($notesEditorContainer[0]);
+      createMonacoEditorInstance($fileEditorContainer[0]);
     }
     
     if (monacoEditor) {
       monacoEditor.setValue('');
       // Set default language based on format setting
       const settings = await window.electronAPI.getSettings();
-      const notesFormat = settings.notes_format || 'Markdown';
-      const language = getLanguageForFormat(notesFormat);
+      const fileFormat = settings.file_format || 'Markdown';
+      const language = getLanguageForFormat(fileFormat);
       monaco.editor.setModelLanguage(monacoEditor.getModel(), language);
     }
-    $notesContentView.html('');
+    $fileContentView.html('');
     
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
-    $notesView.show();
+    $fileView.show();
     
     // Start in edit mode for new file
-    $notesEditorContainer.show();
-    $notesContentView.hide();
+    $fileEditorContainer.show();
+    $fileContentView.hide();
     
     // Update toolbar with notes path (overlays grid header)
-    $notesToolbar.find('.notes-path').text(notesPath);
-    $notesToolbar.show();
+    $fileToolbar.find('.file-path').text(filePath);
+    $fileToolbar.show();
     
     // Show Save button for new file
-    $notesToolbar.find('.btn-notes-edit').hide();
-    $notesToolbar.find('.btn-notes-save').show();
+    $fileToolbar.find('.btn-file-edit').hide();
+    $fileToolbar.find('.btn-file-save').show();
     
-    notesEditMode = true;
+    fileEditMode = true;
   }
   
   setActivePanelId(panelId);
@@ -2605,71 +2605,71 @@ async function showNotesView(panelId, notesPathOverride) {
 /**
  * Hide notes view and return to landing page
  */
-function hideNotesView(panelId) {
-  const $notesView = $(`#panel-${panelId} .panel-notes-view`);
-  const $notesEditorContainer = $notesView.find('.notes-editor-container');
-  const $notesContentView = $notesView.find('.notes-content-view');
-  const $notesToolbar = $notesView.find('.w2ui-panel-title');
+function hideFileView(panelId) {
+  const $fileView = $(`#panel-${panelId} .panel-file-view`);
+  const $fileEditorContainer = $fileView.find('.file-editor-container');
+  const $fileContentView = $fileView.find('.file-content-view');
+  const $fileToolbar = $fileView.find('.w2ui-panel-title');
   
-  $notesView.hide();
-  $notesToolbar.hide();
-  $notesEditorContainer.hide();
-  $notesContentView.hide();
+  $fileView.hide();
+  $fileToolbar.hide();
+  $fileEditorContainer.hide();
+  $fileContentView.hide();
   // Panel toolbar (grid header) remains visible
   $(`#panel-${panelId} .panel-landing-page`).show();
   
-  notesEditMode = false;
+  fileEditMode = false;
 }
 
 /**
  * Toggle edit mode for notes
  */
-async function toggleNotesEditMode(panelId) {
-  const $notesView = $(`#panel-${panelId} .panel-notes-view`);
-  const $notesEditorContainer = $notesView.find('.notes-editor-container');
-  const $notesContentView = $notesView.find('.notes-content-view');
-  const $editBtn = $notesView.find('.btn-notes-edit');
-  const $saveBtn = $notesView.find('.btn-notes-save');
+async function toggleFileEditMode(panelId) {
+  const $fileView = $(`#panel-${panelId} .panel-file-view`);
+  const $fileEditorContainer = $fileView.find('.file-editor-container');
+  const $fileContentView = $fileView.find('.file-content-view');
+  const $editBtn = $fileView.find('.btn-file-edit');
+  const $saveBtn = $fileView.find('.btn-file-save');
   
-  if (notesEditMode === false) {
+  if (fileEditMode === false) {
     // Enter edit mode
-    $notesContentView.hide();
-    $notesEditorContainer.show();
+    $fileContentView.hide();
+    $fileEditorContainer.show();
     if (monacoEditor) {
       monacoEditor.focus();
     }
     $editBtn.hide();
     $saveBtn.show();
-    notesEditMode = true;
+    fileEditMode = true;
   } else {
     // Save and exit edit mode
     const content = monacoEditor ? monacoEditor.getValue() : '';
-    const notesPath = panelState[panelId].notesFilePath || (panelState[1].currentPath + '\\notes.txt');
+    const filePath = panelState[panelId].fileViewPath || (panelState[1].currentPath + '\\notes.txt');
     
     try {
-      await window.electronAPI.writeNotesFile(notesPath, content);
+      await window.electronAPI.writeFileContent(filePath, content);
       
       // Get current notes format setting
       const settings = await window.electronAPI.getSettings();
-      const notesFormat = settings.notes_format || 'Markdown';
+      const fileFormat = settings.file_format || 'Markdown';
       
       // Format and display notes based on format setting
-      if (notesFormat === 'Markdown') {
+      if (fileFormat === 'Markdown') {
         // Render markdown to HTML
         const htmlContent = await window.electronAPI.renderMarkdown(content);
-        $notesContentView.html(htmlContent);
+        $fileContentView.html(htmlContent);
       } else {
         // Use plain text formatting
-        const htmlContent = formatNotesContent(content, notesFormat);
-        $notesContentView.html(htmlContent);
+        const htmlContent = formatFileContent(content, fileFormat);
+        $fileContentView.html(htmlContent);
       }
       
-      $notesEditorContainer.hide();
-      $notesContentView.show();
+      $fileEditorContainer.hide();
+      $fileContentView.show();
       
       $editBtn.show().text('Edit').css('background', '#2196F3');
       $saveBtn.hide();
-      notesEditMode = false;
+      fileEditMode = false;
     } catch (err) {
       alert('Error saving notes: ' + err.message);
     }
@@ -2764,7 +2764,7 @@ function clearPanelState(panelId) {
   setPanelPathValidity(panelId, true);
   $panel.find('.panel-landing-page').show();
   $panel.find('.panel-grid').hide();
-  $panel.find('.panel-notes-view').hide();
+  $panel.find('.panel-file-view').hide();
 }
 
 /**
@@ -2772,7 +2772,7 @@ function clearPanelState(panelId) {
  */
 async function closeActivePanel() {
   // Check if monaco editor is in edit mode
-  if (notesEditMode) {
+  if (fileEditMode) {
     if (monacoEditor) {
       const content = monacoEditor.getValue();
       w2confirm({
@@ -2792,36 +2792,36 @@ async function closeActivePanel() {
         }
       }).yes(async () => {
           // Save notes before closing
-          const notesPath = panelState[1].currentPath + '\\notes.txt';
+          const filePath = panelState[1].currentPath + '\\notes.txt';
           try {
-            await window.electronAPI.writeNotesFile(notesPath, content);
+            await window.electronAPI.writeFileContent(filePath, content);
             
             // Get current notes format setting
             const settings = await window.electronAPI.getSettings();
-            const notesFormat = settings.notes_format || 'Markdown';
+            const fileFormat = settings.file_format || 'Markdown';
             
             // Format and display notes based on format setting
-            const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
-            const $notesContentView = $notesView.find('.notes-content-view');
-            const $notesEditorContainer = $notesView.find('.notes-editor-container');
-            const $editBtn = $notesView.find('.btn-notes-edit');
-            const $saveBtn = $notesView.find('.btn-notes-save');
+            const $fileView = $(`#panel-${activePanelId} .panel-file-view`);
+            const $fileContentView = $fileView.find('.file-content-view');
+            const $fileEditorContainer = $fileView.find('.file-editor-container');
+            const $editBtn = $fileView.find('.btn-file-edit');
+            const $saveBtn = $fileView.find('.btn-file-save');
             
-            if (notesFormat === 'Markdown') {
+            if (fileFormat === 'Markdown') {
               // Render markdown to HTML
               const htmlContent = await window.electronAPI.renderMarkdown(content);
-              $notesContentView.html(htmlContent);
+              $fileContentView.html(htmlContent);
             } else {
               // Use plain text formatting
-              const htmlContent = formatNotesContent(content, notesFormat);
-              $notesContentView.html(htmlContent);
+              const htmlContent = formatFileContent(content, fileFormat);
+              $fileContentView.html(htmlContent);
             }
             
-            $notesEditorContainer.hide();
-            $notesContentView.show();
+            $fileEditorContainer.hide();
+            $fileContentView.show();
             $editBtn.show().text('Edit').css('background', '#2196F3');
             $saveBtn.hide();
-            notesEditMode = false;
+            fileEditMode = false;
             
             // Proceed to close the panel
             proceedWithPanelClose();
@@ -2866,7 +2866,7 @@ async function closeActivePanel() {
  */
 async function handleCloseRequest() {
   // Check if monaco editor is in edit mode
-  if (notesEditMode) {
+  if (fileEditMode) {
     if (monacoEditor) {
       const content = monacoEditor.getValue();
       w2confirm({
@@ -2888,10 +2888,10 @@ async function handleCloseRequest() {
         }
       }).yes(async () => {
           // Save notes before closing
-          const notesPath = panelState[1].currentPath + '\\notes.txt';
+          const filePath = panelState[1].currentPath + '\\notes.txt';
           try {
             // saved in case we want to add a save option to this popup in the future:
-            // await window.electronAPI.writeNotesFile(notesPath, content);
+            // await window.electronAPI.writeFileContent(filePath, content);
             window.electronAPI.allowClose();
           } catch (err) {
             console.error('Error saving notes before close:', err.message);
@@ -2953,23 +2953,23 @@ function attachPanelEventListeners(panelId) {
     });
     
     // Notes button
-    $panel.find('.btn-panel-notes').off('click').on('click', async function() {
-      await showNotesView(panelId);
+    $panel.find('.btn-panel-file').off('click').on('click', async function() {
+      await showFileView(panelId);
     });
     
     // Notes edit button
-    $panel.find('.btn-notes-edit').off('click').on('click', async function() {
-      await toggleNotesEditMode(panelId);
+    $panel.find('.btn-file-edit').off('click').on('click', async function() {
+      await toggleFileEditMode(panelId);
     });
     
     // Notes save button
-    $panel.find('.btn-notes-save').off('click').on('click', async function() {
-      await toggleNotesEditMode(panelId);
+    $panel.find('.btn-file-save').off('click').on('click', async function() {
+      await toggleFileEditMode(panelId);
     });
     
     // Notes back button
-    $panel.find('.btn-notes-back').off('click').on('click', function() {
-      hideNotesView(panelId);
+    $panel.find('.btn-file-back').off('click').on('click', function() {
+      hideFileView(panelId);
     });
     
     // Panel remove button (panels 2-4 only)
@@ -3054,18 +3054,18 @@ function attachEventListeners() {
         console.info(`[navigate_up] Navigating from ${state.currentPath} to ${parentPath}`);
         navigateToDirectory(parentPath, activePanelId);
         break;
-      case 'edit_notes':
-        const $notesView = $(`#panel-${activePanelId} .panel-notes-view`);
-        if ($notesView.is(':visible') && !notesEditMode) {
+      case 'edit_file':
+        const $fileView = $(`#panel-${activePanelId} .panel-file-view`);
+        if ($fileView.is(':visible') && !fileEditMode) {
           event.preventDefault();
-          await toggleNotesEditMode(activePanelId);
+          await toggleFileEditMode(activePanelId);
         }
         break;
-      case 'save_notes':
-        const $notesViewSave = $(`#panel-${activePanelId} .panel-notes-view`);
-        if ($notesViewSave.is(':visible') && notesEditMode) {
+      case 'save_file':
+        const $fileViewSave = $(`#panel-${activePanelId} .panel-file-view`);
+        if ($fileViewSave.is(':visible') && fileEditMode) {
           event.preventDefault();
-          await toggleNotesEditMode(activePanelId);
+          await toggleFileEditMode(activePanelId);
         }
         break;
       case 'add_panel':
@@ -3720,14 +3720,14 @@ function switchSettingsTab(tabName) {
 async function initializeBrowserSettingsForm() {
   const settings = await window.electronAPI.getSettings();
   const homeDirectory = settings.home_directory || '';
-  const notesFormat = settings.notes_format || 'Markdown';
+  const fileFormat = settings.file_format || 'Markdown';
   const hideDotDirectory = settings.hide_dot_directory || false;
   const recordHeight = settings.record_height || 30;
   const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
   const backgroundRefreshInterval = settings.background_refresh_interval || 30;
   
   $('#browser-home-directory').val(homeDirectory);
-  $('#browser-notes-format').val(notesFormat);
+  $('#browser-notes-format').val(fileFormat);
   $('#browser-hide-dot-directory').prop('checked', hideDotDirectory);
   $('#browser-record-height').val(recordHeight);
   $('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
@@ -3759,7 +3759,7 @@ function setupBrowserSettingsEventListeners() {
 async function saveBrowserSettings() {
   try {
     const homeDirectory = ($('#browser-home-directory').val() || '').trim();
-    const notesFormat = ($('#browser-notes-format').val() || 'Markdown').trim();
+    const fileFormat = ($('#browser-notes-format').val() || 'Markdown').trim();
     const hideDotDirectory = $('#browser-hide-dot-directory').is(':checked');
     let recordHeight = parseInt($('#browser-record-height').val() || '30');
     const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
@@ -3787,7 +3787,7 @@ async function saveBrowserSettings() {
 
     const settings = await window.electronAPI.getSettings();
     settings.home_directory = homeDirectory;
-    settings.notes_format = notesFormat;
+    settings.file_format = fileFormat;
     settings.hide_dot_directory = hideDotDirectory;
     settings.record_height = recordHeight;
     settings.background_refresh_enabled = backgroundRefreshEnabled;

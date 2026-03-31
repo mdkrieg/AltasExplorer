@@ -1,4 +1,4 @@
-/* AtlasExplorer Custom Styles */
+﻿/* AtlasExplorer Custom Styles */
 
 * {
   box-sizing: border-box;
@@ -453,7 +453,7 @@ textarea {
 
 .btn-panel-select,
 .btn-panel-open-main,
-.btn-panel-notes {
+.btn-panel-file {
   width: 100%;
   padding: 12px;
   background: #f0f0f0;
@@ -466,31 +466,31 @@ textarea {
 
 .btn-panel-select:hover,
 .btn-panel-open-main:hover,
-.btn-panel-notes:hover {
+.btn-panel-file:hover {
   background: #e8e8e8;
   border-color: #999;
 }
 
 .btn-panel-select:active,
 .btn-panel-open-main:active,
-.btn-panel-notes:active {
+.btn-panel-file:active {
   background: #d8d8d8;
 }
 
-.btn-notes-edit,
-.btn-notes-back {
+.btn-file-edit,
+.btn-file-back {
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
-.btn-notes-back {
+.btn-file-back {
   background: #f0f0f0;
   border: 1px solid #ccc;
   color: #333;
 }
 
-.btn-notes-back:hover {
+.btn-file-back:hover {
   background: #e8e8e8;
 }
 
@@ -562,18 +562,18 @@ textarea {
   background: #2E7D32;
 }
 
-.panel-notes-view {
+.panel-file-view {
   display: flex;
   flex-direction: column;
   background: white;
 }
 
-.notes-content {
+.file-content {
   font-size: 12px !important;
   line-height: 1.5;
 }
 
-.notes-content:disabled {
+.file-content:disabled {
   background: white;
   color: #333;
 }
@@ -781,66 +781,66 @@ hr {
 }
 
 /* Markdown Rendering Styles */
-.notes-content-view {
+.file-content-view {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   color: #333;
 }
 
-.notes-content-view h1,
-.notes-content-view h2,
-.notes-content-view h3,
-.notes-content-view h4,
-.notes-content-view h5,
-.notes-content-view h6 {
+.file-content-view h1,
+.file-content-view h2,
+.file-content-view h3,
+.file-content-view h4,
+.file-content-view h5,
+.file-content-view h6 {
   margin: 20px 0 10px 0;
   font-weight: 600;
   line-height: 1.3;
 }
 
-.notes-content-view h1 {
+.file-content-view h1 {
   font-size: 28px;
   border-bottom: 2px solid #eee;
   padding-bottom: 10px;
 }
 
-.notes-content-view h2 {
+.file-content-view h2 {
   font-size: 24px;
   border-bottom: 1px solid #eee;
   padding-bottom: 5px;
 }
 
-.notes-content-view h3 {
+.file-content-view h3 {
   font-size: 20px;
 }
 
-.notes-content-view h4 {
+.file-content-view h4 {
   font-size: 16px;
 }
 
-.notes-content-view h5 {
+.file-content-view h5 {
   font-size: 14px;
 }
 
-.notes-content-view h6 {
+.file-content-view h6 {
   font-size: 12px;
   color: #666;
 }
 
-.notes-content-view p {
+.file-content-view p {
   margin: 10px 0;
   line-height: 1.6;
 }
 
-.notes-content-view a {
+.file-content-view a {
   color: #2196F3;
   text-decoration: none;
 }
 
-.notes-content-view a:hover {
+.file-content-view a:hover {
   text-decoration: underline;
 }
 
-.notes-content-view code {
+.file-content-view code {
   background: #f4f4f4;
   padding: 2px 6px;
   border-radius: 3px;
@@ -849,7 +849,7 @@ hr {
   color: #c7254e;
 }
 
-.notes-content-view pre {
+.file-content-view pre {
   background: #f5f5f5;
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -861,7 +861,7 @@ hr {
   line-height: 1.4;
 }
 
-.notes-content-view pre code {
+.file-content-view pre code {
   background: none;
   padding: 0;
   color: #333;
@@ -901,7 +901,7 @@ hr {
   font-weight: 500;
 }
 
-.notes-content-view blockquote {
+.file-content-view blockquote {
   border-left: 4px solid #ddd;
   padding: 0 12px;
   margin: 12px 0;
@@ -909,65 +909,65 @@ hr {
   font-style: italic;
 }
 
-.notes-content-view table {
+.file-content-view table {
   border-collapse: collapse;
   width: 100%;
   margin: 12px 0;
   font-size: 13px;
 }
 
-.notes-content-view table th,
-.notes-content-view table td {
+.file-content-view table th,
+.file-content-view table td {
   border: 1px solid #ddd;
   padding: 8px 12px;
   text-align: left;
 }
 
-.notes-content-view table th {
+.file-content-view table th {
   background: #f5f5f5;
   font-weight: 600;
 }
 
-.notes-content-view table tr:nth-child(even) {
+.file-content-view table tr:nth-child(even) {
   background: #fafafa;
 }
 
-.notes-content-view ul,
-.notes-content-view ol {
+.file-content-view ul,
+.file-content-view ol {
   margin: 10px 0;
   padding-left: 24px;
   line-height: 1.6;
 }
 
-.notes-content-view li {
+.file-content-view li {
   margin: 4px 0;
 }
 
-.notes-content-view ul li {
+.file-content-view ul li {
   list-style: disc;
 }
 
-.notes-content-view ol li {
+.file-content-view ol li {
   list-style: decimal;
 }
 
-.notes-content-view strong {
+.file-content-view strong {
   font-weight: 600;
   color: #222;
 }
 
-.notes-content-view em {
+.file-content-view em {
   font-style: italic;
   color: #555;
 }
 
-.notes-content-view hr {
+.file-content-view hr {
   border: none;
   border-top: 2px solid #ddd;
   margin: 20px 0;
 }
 
-.notes-content-view img {
+.file-content-view img {
   max-width: 100%;
   height: auto;
   margin: 10px 0;

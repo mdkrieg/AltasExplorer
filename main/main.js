@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeImage, Menu, globalShortcut } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, nativeImage, Menu, globalShortcut } = require('electron');
 const path = require('path');
 const os = require('os');
 const fsSync = require('fs');
@@ -737,11 +737,11 @@ ipcMain.handle('save-directory-initials', (event, { dirPath, initials }) => {
 /**
  * Notes: Read notes.txt file
  */
-ipcMain.handle('read-notes-file', async (event, notesPath) => {
+ipcMain.handle('read-file-content', async (event, filePath) => {
   try {
     const fsSync = require('fs');
-    if (fsSync.existsSync(notesPath)) {
-      return fsSync.readFileSync(notesPath, 'utf-8');
+    if (fsSync.existsSync(filePath)) {
+      return fsSync.readFileSync(filePath, 'utf-8');
     } else {
       throw new Error('File does not exist');
     }
@@ -754,10 +754,10 @@ ipcMain.handle('read-notes-file', async (event, notesPath) => {
 /**
  * Notes: Write notes.txt file
  */
-ipcMain.handle('write-notes-file', async (event, { notesPath, content }) => {
+ipcMain.handle('write-file-content', async (event, { filePath, content }) => {
   try {
     const fsSync = require('fs');
-    fsSync.writeFileSync(notesPath, content, 'utf-8');
+    fsSync.writeFileSync(filePath, content, 'utf-8');
     return { success: true };
   } catch (err) {
     logger.error('Error writing notes file:', err.message);
