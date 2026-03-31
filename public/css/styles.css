@@ -370,13 +370,15 @@ button:active {
 /* Modal */
 #category-modal,
 #layout-modal,
-#settings-modal {
+#settings-modal,
+#notes-modal {
   z-index: 1000;
   animation: fadeIn 0.2s ease;
 }
 
 #layout-modal > div,
-#settings-modal > div {
+#settings-modal > div,
+#notes-modal > div {
   animation: slideUp 0.2s ease;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }

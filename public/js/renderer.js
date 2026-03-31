@@ -2876,6 +2876,105 @@ function hideHistoryModal() {
   }
 }
 
+// ============================================================
+// NOTES MODAL — Parsing Utilities
+// ============================================================
+
+/**
+ * Parse a notes.txt file into keyed sections.
+ * Lines before the first @<filename> header go into '__dir__'.
+ * @param {string} content - Full contents of notes.txt
+ * @returns {Object} Map of sectionKey -> content string
+ */
+function parseNotesFileSections(content) {
+  const sections = {};
+  let currentKey = '__dir__';
+  sections[currentKey] = '';
+
+  const lines = content.split('\n');
+  for (const line of lines) {
+    const match = line.match(/^@<(.+)>$/);
+    if (match) {
+      currentKey = match[1];
+      if (!(currentKey in sections)) {
+        sections[currentKey] = '';
+      }
+    } else {
+      sections[currentKey] = (sections[currentKey] || '') + line + '\n';
+    }
+  }
+
+  // Trim single trailing newline added by the accumulation above
+  for (const key of Object.keys(sections)) {
+    if (sections[key].endsWith('\n')) {
+      sections[key] = sections[key].slice(0, -1);
+    }
+  }
+
+  return sections;
+}
+
+/**
+ * Serialize a notes sections object back to a full notes.txt string,
+ * replacing the entry for sectionKey with newContent.
+ * @param {string} existingContent - Current notes.txt content (may be empty)
+ * @param {string} sectionKey     - '__dir__' for directory, or a filename string
+ * @param {string} newContent     - The new content to write for this section
+ * @returns {string} Updated full notes.txt content
+ */
+function writeNotesSection(existingContent, sectionKey, newContent) {
+  const sections = parseNotesFileSections(existingContent);
+
+  // Collect file section keys in original order
+  const fileKeys = Object.keys(sections).filter(k => k !== '__dir__');
+
+  // Update the target section
+  sections[sectionKey] = newContent;
+  // If it's a new file key not yet in the list, append it
+  if (sectionKey !== '__dir__' && !fileKeys.includes(sectionKey)) {
+    fileKeys.push(sectionKey);
+  }
+
+  // Re-serialize: directory block first, then file sections
+  let result = sections['__dir__'] || '';
+
+  for (const key of fileKeys) {
+    const val = sections[key] || '';
+    // Write the section if it has content (or it's the key we just wrote)
+    if (val.trim() !== '' || key === sectionKey) {
+      if (result.length > 0 && !result.endsWith('\n\n')) {
+        if (!result.endsWith('\n')) result += '\n';
+        result += '\n';
+      }
+      result += `@<${key}>\n${val}`;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Determine the notes.txt path and section key for a given grid record.
+ * @param {Object} record - A w2ui grid record
+ * @returns {{ notesFilePath: string, sectionKey: string }}
+ */
+function getNotesFileInfo(record) {
+  const sep = record.path.includes('\\') ? '\\' : '/';
+  if (record.isFolder) {
+    return {
+      notesFilePath: record.path + sep + 'notes.txt',
+      sectionKey: '__dir__'
+    };
+  } else {
+    const lastSep = record.path.lastIndexOf(sep);
+    const dir = record.path.substring(0, lastSep);
+    return {
+      notesFilePath: dir + sep + 'notes.txt',
+      sectionKey: record.filenameRaw
+    };
+  }
+}
+
 /**
  * Escape HTML special characters
  */
@@ -3507,6 +3606,12 @@ function attachPanelEventListeners(panelId) {
 function attachEventListeners() {
   // Keyboard shortcuts - detect hotkey and dispatch to appropriate handler
   $(document).keydown(async function(event) {
+    // Escape key: close notes modal if open
+    if (event.key === 'Escape' && $('#notes-modal').is(':visible')) {
+      hideNotesModal();
+      return;
+    }
+
     const hotkeyCombo = getHotKeyCombo(event);
     const actionId = getActionForHotkey(hotkeyCombo);
     
@@ -3810,6 +3915,26 @@ function attachEventListeners() {
   $('#history-modal').click(function(e) {
     if (e.target === this) {
       hideHistoryModal();
+    }
+  });
+
+  // Notes modal close button
+  $('#btn-notes-close').click(function() {
+    hideNotesModal();
+  });
+
+  // Notes modal Edit/Save buttons
+  $('#btn-notes-edit').click(async function() {
+    await toggleNotesEditMode();
+  });
+  $('#btn-notes-save').click(async function() {
+    await toggleNotesEditMode();
+  });
+
+  // Notes modal overlay click to close
+  $('#notes-modal').click(function(e) {
+    if (e.target === this) {
+      hideNotesModal();
     }
   });
 
@@ -4584,6 +4709,162 @@ function hideHistoryModal() {
   }
 }
 
+// ============================================================
+// NOTES MODAL — State & Functions
+// ============================================================
+
+let notesModalEditor = null;
+let notesModalEditMode = false;
+let notesModalContext = null; // { notesFilePath, sectionKey, title }
+
+/**
+ * Open the Notes modal for a grid record (file or directory).
+ * @param {Object} record - A w2ui grid record
+ */
+async function openNotesModal(record) {
+  const { notesFilePath, sectionKey } = getNotesFileInfo(record);
+  const title = record.filenameRaw || record.filename || '';
+
+  // Read the full notes.txt (empty string if file doesn't exist)
+  let existingContent = '';
+  try {
+    existingContent = await window.electronAPI.readFileContent(notesFilePath);
+  } catch (_e) {
+    existingContent = '';
+  }
+
+  // Extract the relevant section
+  const sections = parseNotesFileSections(existingContent);
+  const sectionContent = sections[sectionKey] || '';
+
+  const settings = await window.electronAPI.getSettings();
+  notesModalContext = { notesFilePath, sectionKey, title };
+  notesModalEditMode = false;
+
+  // Set title
+  const displayTitle = sectionKey === '__dir__'
+    ? `Notes — ${title} (directory)`
+    : `Notes — ${title}`;
+  $('#notes-modal-title').text(displayTitle);
+
+  // Create a fresh Monaco editor instance for this modal
+  const $editorContainer = $('#notes-editor-container');
+  $editorContainer.empty();
+  if (notesModalEditor) {
+    notesModalEditor.dispose();
+    notesModalEditor = null;
+  }
+  notesModalEditor = monaco.editor.create($editorContainer[0], {
+    value: sectionContent,
+    language: getLanguageForFormat(settings.file_format || 'Markdown'),
+    theme: 'vs',
+    wordWrap: 'on',
+    lineNumbers: 'off',
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    fontSize: 13,
+    fontFamily: 'Consolas, "Courier New", monospace'
+  });
+
+  // Render view-mode content
+  const fileFormat = settings.file_format || 'Markdown';
+  const $contentView = $('#notes-content-view');
+  if (fileFormat === 'Markdown') {
+    const htmlContent = await window.electronAPI.renderMarkdown(sectionContent);
+    $contentView.html(htmlContent);
+  } else {
+    $contentView.html(formatFileContent(sectionContent, fileFormat));
+  }
+
+  // If content is empty, open directly in edit mode
+  if (sectionContent.trim() === '') {
+    $editorContainer.show();
+    $contentView.hide();
+    $('#btn-notes-edit').hide();
+    $('#btn-notes-save').show();
+    notesModalEditMode = true;
+    // Defer focus so Monaco has time to render
+    setTimeout(() => notesModalEditor && notesModalEditor.focus(), 100);
+  } else {
+    $editorContainer.hide();
+    $contentView.show();
+    $('#btn-notes-edit').show();
+    $('#btn-notes-save').hide();
+  }
+
+  $('#notes-modal').css('display', 'flex');
+}
+
+/**
+ * Toggle between view and edit mode in the Notes modal.
+ * Entering edit: show Monaco, hide rendered view.
+ * Exiting edit (save): write updated section back to notes.txt, re-render view.
+ */
+async function toggleNotesEditMode() {
+  if (!notesModalContext) return;
+  const { notesFilePath, sectionKey } = notesModalContext;
+  const $editorContainer = $('#notes-editor-container');
+  const $contentView = $('#notes-content-view');
+
+  if (!notesModalEditMode) {
+    // Enter edit mode
+    $contentView.hide();
+    $editorContainer.show();
+    $('#btn-notes-edit').hide();
+    $('#btn-notes-save').show();
+    notesModalEditMode = true;
+    setTimeout(() => notesModalEditor && notesModalEditor.focus(), 50);
+  } else {
+    // Save and exit edit mode
+    const newContent = notesModalEditor ? notesModalEditor.getValue() : '';
+
+    // Re-read the full file to avoid overwriting other sections
+    let existingContent = '';
+    try {
+      existingContent = await window.electronAPI.readFileContent(notesFilePath);
+    } catch (_e) {
+      existingContent = '';
+    }
+
+    const updatedContent = writeNotesSection(existingContent, sectionKey, newContent);
+    await window.electronAPI.writeFileContent(notesFilePath, updatedContent);
+
+    // Re-render view mode
+    const settings = await window.electronAPI.getSettings();
+    const fileFormat = settings.file_format || 'Markdown';
+    if (fileFormat === 'Markdown') {
+      const htmlContent = await window.electronAPI.renderMarkdown(newContent);
+      $contentView.html(htmlContent);
+    } else {
+      $contentView.html(formatFileContent(newContent, fileFormat));
+    }
+
+    $editorContainer.hide();
+    $contentView.show();
+    $('#btn-notes-save').hide();
+    $('#btn-notes-edit').show();
+    notesModalEditMode = false;
+  }
+}
+
+/**
+ * Hide (close) the Notes modal and clean up state.
+ */
+function hideNotesModal() {
+  $('#notes-modal').hide();
+  if (notesModalEditor) {
+    notesModalEditor.dispose();
+    notesModalEditor = null;
+  }
+  notesModalEditMode = false;
+  notesModalContext = null;
+  $('#notes-content-view').html('').hide();
+  $('#notes-editor-container').hide();
+  $('#btn-notes-edit').show();
+  $('#btn-notes-save').hide();
+}
+
 // ============================================
 // Sidebar Collapse
 // ============================================
@@ -5153,6 +5434,7 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
   if (!isMultiSelect) {
     addSeparator(contextMenu);
     contextMenu.push({id:"view-history", text: 'History', icon: 'fa fa-history'});
+    contextMenu.push({id: 'view-notes', text: 'Notes', icon: 'fa fa-sticky-note'});
   }
 
   // Add "Calculate Checksum" for any selection with 1+ files
@@ -5246,6 +5528,17 @@ async function handleContextMenuClick(event, panelId) {
       await openHistoryModal(selectedRecord);
     } catch (err) {
       alert('Error opening history: ' + err.message);
+    }
+  }
+
+  // Handle "Notes" click
+  if (menuItemId === 'view-notes') {
+    const selectedRecord = selectedRecords[0]; // Single selection only
+    if (!selectedRecord) return;
+    try {
+      await openNotesModal(selectedRecord);
+    } catch (err) {
+      alert('Error opening notes: ' + err.message);
     }
   }
 
