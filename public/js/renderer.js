@@ -2548,7 +2548,7 @@ async function showFileView(panelId, filePathOverride) {
     // Hide landing page and grid, show notes view
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
-    $fileView.show();
+    $fileView.css('display', 'flex');
     
     // Show view mode by default, hide edit mode
     $fileContentView.show();
@@ -2582,7 +2582,7 @@ async function showFileView(panelId, filePathOverride) {
     
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
-    $fileView.show();
+    $fileView.css('display', 'flex');
     
     // Start in edit mode for new file
     $fileEditorContainer.show();
