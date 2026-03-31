@@ -399,7 +399,15 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     // Force grid resize after layout is painted
     const gridToResize = panelState[panelId].w2uiGrid;
     if (gridToResize) {
-      requestAnimationFrame(() => gridToResize.resize());
+      requestAnimationFrame(() => {
+        // Clear any height:0 inline style set when the toolbar was rendered in a hidden
+        // container (panels 2-4 start with display:none), so resize() can measure properly.
+        const toolbarEl = document.getElementById(`grid_${gridToResize.name}_toolbar`);
+        if (toolbarEl && toolbarEl.style.height === '0px') {
+          toolbarEl.style.height = '';
+        }
+        gridToResize.resize();
+      });
     }
 
     // Mark this panel as having been viewed
@@ -2268,6 +2276,14 @@ function toggleSelectMode(panelId) {
     $selectBtn.addClass('panel-select-active');
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).show();
+    const grid = panelState[panelId].w2uiGrid;
+    if (grid) {
+      const toolbarEl = document.getElementById(`grid_grid-panel-${panelId}_toolbar`);
+      if (toolbarEl && toolbarEl.style.height === '0px') {
+        toolbarEl.style.height = '';
+      }
+      grid.resize();
+    }
   } else {
     // Hide grid, show landing page
     $selectBtn.removeClass('panel-select-active');
@@ -2924,6 +2940,15 @@ function attachPanelEventListeners(panelId) {
         // Hide landing page and show grid
         $panel.find('.panel-landing-page').hide();
         $panel.find('.panel-grid').show();
+        // navigateToDirectory's RAF will clear the toolbar height; belt-and-suspenders resize here
+        const grid = panelState[panelId].w2uiGrid;
+        if (grid) {
+          const toolbarEl = document.getElementById(`grid_grid-panel-${panelId}_toolbar`);
+          if (toolbarEl && toolbarEl.style.height === '0px') {
+            toolbarEl.style.height = '';
+          }
+          grid.resize();
+        }
       }
     });
     
