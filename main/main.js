@@ -9,6 +9,7 @@ const db = require('../src/db');
 const fs = require('../src/filesystem');
 const categories = require('../src/categories');
 const tags = require('../src/tags');
+const filetypes = require('../src/filetypes');
 const icons = require('../src/icons');
 const checksum = require('../src/checksum');
 
@@ -637,6 +638,71 @@ ipcMain.handle('add-tag-to-item', (event, { path, tagName, isDirectory, inode, d
   } catch (err) {
     logger.error('Error adding tag to item:', err.message);
     return { success: false, error: err.message };
+  }
+});
+
+/**
+ * File Types: List available user-*.png icon files
+ */
+ipcMain.handle('get-file-type-icons', () => {
+  try {
+    const iconsDir = path.join(__dirname, '..', 'public', 'assets', 'icons');
+    if (!fsSync.existsSync(iconsDir)) return [];
+    return fsSync.readdirSync(iconsDir)
+      .filter(f => /^user-.*\.png$/i.test(f))
+      .sort();
+  } catch (err) {
+    logger.error('Error listing file type icons:', err.message);
+    return [];
+  }
+});
+
+/**
+ * File Types: Get all file types
+ */
+ipcMain.handle('get-file-types', () => {
+  try {
+    return filetypes.getFileTypes();
+  } catch (err) {
+    logger.error('Error getting file types:', err.message);
+    return { error: err.message };
+  }
+});
+
+/**
+ * File Types: Add a new file type
+ */
+ipcMain.handle('add-file-type', (event, { pattern, type, icon }) => {
+  try {
+    return filetypes.addFileType(pattern, type, icon || null);
+  } catch (err) {
+    logger.error('Error adding file type:', err.message);
+    return { error: err.message };
+  }
+});
+
+/**
+ * File Types: Update an existing file type
+ */
+ipcMain.handle('update-file-type', (event, { pattern, newPattern, newType, icon }) => {
+  try {
+    return filetypes.updateFileType(pattern, newPattern, newType, icon || null);
+  } catch (err) {
+    logger.error('Error updating file type:', err.message);
+    return { error: err.message };
+  }
+});
+
+/**
+ * File Types: Delete a file type
+ */
+ipcMain.handle('delete-file-type', (event, pattern) => {
+  try {
+    filetypes.deleteFileType(pattern);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error deleting file type:', err.message);
+    return { error: err.message };
   }
 });
 

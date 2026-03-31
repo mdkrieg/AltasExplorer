@@ -67,6 +67,16 @@ class IconService {
           fs.copyFileSync(sourcePath, targetPath);
         }
       }
+
+      // Ensure user-file.png exists as the default file type icon
+      const userFilePngPath = path.join(USER_ICONS_DIR, 'user-file.png');
+      if (!fs.existsSync(userFilePngPath)) {
+        const fileQuestionPath = path.join(USER_ICONS_DIR, 'file-question.png');
+        if (fs.existsSync(fileQuestionPath)) {
+          fs.copyFileSync(fileQuestionPath, userFilePngPath);
+          logger.info('Created user-file.png from file-question.png');
+        }
+      }
     } catch (err) {
       logger.error('Error ensuring icon assets:', err.message);
     }

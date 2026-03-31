@@ -28,6 +28,9 @@
         &#128276;
         <span id="notifications-badge"></span>
       </button>
+      <button id="btn-sidebar-tagging" title="Tagging">
+        <img src="assets/icons/tag.svg" style="width: 16px; height: 16px; pointer-events: none;">
+      </button>
     </div>
     <!-- Favorites Section -->
     <div id="favorites-section">
@@ -183,111 +186,14 @@
       
       <!-- Tab Navigation -->
       <div id="settings-tabs" style="display: flex; border-bottom: 1px solid #ddd; background: #fafafa;">
-        <button class="settings-tab-btn" data-tab="category" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid #2196F3; color: #2196F3; font-weight: bold; cursor: pointer; border-radius: 0;">Category Settings</button>
-        <button class="settings-tab-btn" data-tab="tag" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #666; font-weight: bold; cursor: pointer; border-radius: 0;">Tag Settings</button>
-        <button class="settings-tab-btn" data-tab="browser" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #666; font-weight: bold; cursor: pointer; border-radius: 0;">Browser Settings</button>
+        <button class="settings-tab-btn" data-tab="browser" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid #2196F3; color: #2196F3; font-weight: bold; cursor: pointer; border-radius: 0;">Browser Settings</button>
+        <button class="settings-tab-btn" data-tab="filetypes" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #666; font-weight: bold; cursor: pointer; border-radius: 0;">File Types</button>
         <button class="settings-tab-btn" data-tab="hotkeys" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #666; font-weight: bold; cursor: pointer; border-radius: 0;">Hotkeys</button>
         <button class="settings-tab-btn" data-tab="advanced" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #666; font-weight: bold; cursor: pointer; border-radius: 0;">Advanced</button>
       </div>
       
       <!-- Tab Content -->
       <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-        <!-- Category Settings Tab -->
-        <div id="tab-category" class="settings-tab-content" style="display: flex; flex-direction: row; overflow: hidden; flex: 1;">
-          <!-- Grid section (left) -->
-          <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #ddd;">
-            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
-              Categories List
-            </div>
-            <div id="categories-grid" style="flex: 1; overflow: hidden;"></div>
-          </div>
-          
-          <!-- Resizable Divider -->
-          <div id="category-divider" style="width: 4px; background: #ddd; cursor: col-resize; user-select: none; hover: #999;"></div>
-          
-          <!-- Form section (right) -->
-          <div id="category-form-panel" style="flex: 0 0 300px; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid #ddd;">
-            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
-              Edit Category
-            </div>
-            <div style="flex: 1; overflow-y: auto; padding: 15px; background: white;">
-              <form id="categories-form" style="display: grid; grid-template-columns: 1fr; gap: 10px; grid-auto-rows: max-content;">
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Name</label>
-                  <input type="text" id="form-cat-name" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Background Color</label>
-                  <input type="color" id="form-cat-bgColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;">
-                </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Outline Color</label>
-                  <input type="color" id="form-cat-textColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;">
-                </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Description</label>
-                  <input type="text" id="form-cat-description" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                </div>
-                <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
-                  <input type="checkbox" id="form-cat-enableChecksum" style="cursor: pointer;">
-                  <label for="form-cat-enableChecksum" style="font-size: 11px; font-weight: bold; cursor: pointer; margin: 0;">Enable Checksum Tracking</label>
-                </div>
-              </form>
-            </div>
-            <div style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
-              <button id="btn-cat-save" style="width: 100%; padding: 8px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save</button>
-              <button id="btn-cat-clear" style="width: 100%; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">New</button>
-              <button id="btn-cat-delete" style="width: 100%; padding: 8px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Delete</button>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Tag Settings Tab -->
-        <div id="tab-tag" class="settings-tab-content" style="display: none; flex-direction: row; overflow: hidden; flex: 1;">
-          <!-- Grid section (left) -->
-          <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #ddd;">
-            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
-              Tags List
-            </div>
-            <div id="tags-grid" style="flex: 1; overflow: hidden;"></div>
-          </div>
-          
-          <!-- Resizable Divider -->
-          <div id="tag-divider" style="width: 4px; background: #ddd; cursor: col-resize; user-select: none; hover: #999;"></div>
-          
-          <!-- Form section (right) -->
-          <div id="tag-form-panel" style="flex: 0 0 300px; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid #ddd;">
-            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
-              Edit Tag
-            </div>
-            <div style="flex: 1; overflow-y: auto; padding: 15px; background: white;">
-              <form id="tags-form" style="display: grid; grid-template-columns: 1fr; gap: 10px; grid-auto-rows: max-content;">
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Name</label>
-                  <input type="text" id="form-tag-name" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Background Color</label>
-                  <input type="color" id="form-tag-bgColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;">
-                </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Outline Color</label>
-                  <input type="color" id="form-tag-textColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;">
-                </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Description</label>
-                  <input type="text" id="form-tag-description" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                </div>
-              </form>
-            </div>
-            <div style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
-              <button id="btn-tag-save" style="width: 100%; padding: 8px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save</button>
-              <button id="btn-tag-clear" style="width: 100%; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">New</button>
-              <button id="btn-tag-delete" style="width: 100%; padding: 8px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Delete</button>
-            </div>
-          </div>
-        </div>
-        
         <!-- Browser Settings Tab -->
         <div id="tab-browser" class="settings-tab-content" style="display: none; flex-direction: column; overflow-y: scroll; flex: 1;">
           <div style="flex: 1; overflow-y: auto; padding: 20px; min-height: 0;">
@@ -347,6 +253,55 @@
           </div>
         </div>
 
+        <!-- File Types Tab -->
+        <div id="tab-filetypes" class="settings-tab-content" style="display: none; flex-direction: row; overflow: hidden; flex: 1;">
+          <!-- Grid section (left) -->
+          <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #ddd;">
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
+              File Types
+            </div>
+            <div id="filetypes-grid" style="flex: 1; overflow: hidden;"></div>
+          </div>
+
+          <!-- Resizable Divider -->
+          <div id="filetypes-divider" style="width: 4px; background: #ddd; cursor: col-resize; user-select: none;"></div>
+
+          <!-- Form section (right) -->
+          <div id="filetypes-form-panel" style="flex: 0 0 300px; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid #ddd;">
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
+              Edit File Type
+            </div>
+            <div style="flex: 1; overflow-y: auto; padding: 15px; background: white;">
+              <form id="filetypes-form" style="display: grid; grid-template-columns: 1fr; gap: 10px; grid-auto-rows: max-content;">
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Pattern</label>
+                  <input type="text" id="form-ft-pattern" placeholder="e.g. *.txt or notes.txt" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Type</label>
+                  <input type="text" id="form-ft-type" placeholder="e.g. JSON, Image, Text" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Icon</label>
+                  <div id="form-ft-icon-picker" class="ft-icon-picker">
+                    <button type="button" id="btn-ft-icon-trigger" class="ft-icon-trigger">
+                      <img id="ft-icon-preview-img" src="" alt="" style="width: 16px; height: 16px; object-fit: contain; flex-shrink: 0; display: none;">
+                      <span id="ft-icon-label" style="flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px;">None</span>
+                      <span style="flex-shrink: 0; color: #888; font-size: 10px;">▼</span>
+                    </button>
+                    <div id="ft-icon-dropdown" class="ft-icon-dropdown" style="display: none;"></div>
+                  </div>
+                </div>
+              </form>
+            </div>
+            <div style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
+              <button id="btn-ft-save" style="width: 100%; padding: 8px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save</button>
+              <button id="btn-ft-clear" style="width: 100%; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">New</button>
+              <button id="btn-ft-delete" style="width: 100%; padding: 8px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Delete</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Hotkeys Tab -->
         <div id="tab-hotkeys" class="settings-tab-content" style="display: none; flex-direction: row; overflow: hidden; flex: 1;">
           <!-- Grid section (left) -->
@@ -403,6 +358,121 @@
               <div style="font-size: 12px; color: #666;">Warning: These operations cannot be undone.</div>
               <button id="btn-dev-reinitialize-db" style="padding: 12px; background: #d32f2f; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Reinitialize Database</button>
               <div style="font-size: 11px; color: #999;">Clears all database tables and resets to initial state. This will delete all file history and category assignments, but keep category definitions.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tagging Modal -->
+  <div id="tagging-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 8px; width: 900px; max-width: calc(100vw - 40px); min-width: 400px; height: 600px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+      <div style="display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #ddd;">
+        <h2 style="margin: 0; flex: 1;">Tagging</h2>
+        <button id="btn-tagging-close" style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+      </div>
+
+      <!-- Tab Navigation -->
+      <div id="tagging-tabs" style="display: flex; border-bottom: 1px solid #ddd; background: #fafafa;">
+        <button class="tagging-tab-btn" data-tab="category" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid #2196F3; color: #2196F3; font-weight: bold; cursor: pointer; border-radius: 0;">Category Settings</button>
+        <button class="tagging-tab-btn" data-tab="tag" style="flex: 0; padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #666; font-weight: bold; cursor: pointer; border-radius: 0;">Tag Settings</button>
+      </div>
+
+      <!-- Tab Content -->
+      <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+        <!-- Category Settings Tab -->
+        <div id="tab-category" class="tagging-tab-content" style="display: flex; flex-direction: row; overflow: hidden; flex: 1;">
+          <!-- Grid section (left) -->
+          <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #ddd;">
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
+              Categories List
+            </div>
+            <div id="categories-grid" style="flex: 1; overflow: hidden;"></div>
+          </div>
+
+          <!-- Resizable Divider -->
+          <div id="category-divider" style="width: 4px; background: #ddd; cursor: col-resize; user-select: none;"></div>
+
+          <!-- Form section (right) -->
+          <div id="category-form-panel" style="flex: 0 0 300px; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid #ddd;">
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
+              Edit Category
+            </div>
+            <div style="flex: 1; overflow-y: auto; padding: 15px; background: white;">
+              <form id="categories-form" style="display: grid; grid-template-columns: 1fr; gap: 10px; grid-auto-rows: max-content;">
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Name</label>
+                  <input type="text" id="form-cat-name" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Background Color</label>
+                  <input type="color" id="form-cat-bgColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;">
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Outline Color</label>
+                  <input type="color" id="form-cat-textColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;">
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Description</label>
+                  <input type="text" id="form-cat-description" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                </div>
+                <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="form-cat-enableChecksum" style="cursor: pointer;">
+                  <label for="form-cat-enableChecksum" style="font-size: 11px; font-weight: bold; cursor: pointer; margin: 0;">Enable Checksum Tracking</label>
+                </div>
+              </form>
+            </div>
+            <div style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
+              <button id="btn-cat-save" style="width: 100%; padding: 8px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save</button>
+              <button id="btn-cat-clear" style="width: 100%; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">New</button>
+              <button id="btn-cat-delete" style="width: 100%; padding: 8px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Delete</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tag Settings Tab -->
+        <div id="tab-tag" class="tagging-tab-content" style="display: none; flex-direction: row; overflow: hidden; flex: 1;">
+          <!-- Grid section (left) -->
+          <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #ddd;">
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
+              Tags List
+            </div>
+            <div id="tags-grid" style="flex: 1; overflow: hidden;"></div>
+          </div>
+
+          <!-- Resizable Divider -->
+          <div id="tag-divider" style="width: 4px; background: #ddd; cursor: col-resize; user-select: none;"></div>
+
+          <!-- Form section (right) -->
+          <div id="tag-form-panel" style="flex: 0 0 300px; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid #ddd;">
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
+              Edit Tag
+            </div>
+            <div style="flex: 1; overflow-y: auto; padding: 15px; background: white;">
+              <form id="tags-form" style="display: grid; grid-template-columns: 1fr; gap: 10px; grid-auto-rows: max-content;">
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Name</label>
+                  <input type="text" id="form-tag-name" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Background Color</label>
+                  <input type="color" id="form-tag-bgColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;">
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Outline Color</label>
+                  <input type="color" id="form-tag-textColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;">
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Description</label>
+                  <input type="text" id="form-tag-description" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                </div>
+              </form>
+            </div>
+            <div style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
+              <button id="btn-tag-save" style="width: 100%; padding: 8px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save</button>
+              <button id="btn-tag-clear" style="width: 100%; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">New</button>
+              <button id="btn-tag-delete" style="width: 100%; padding: 8px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Delete</button>
             </div>
           </div>
         </div>

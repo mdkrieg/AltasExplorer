@@ -635,6 +635,104 @@ hr {
   padding: 0;
 }
 
+/* =====================
+   Tagging Modal
+   ===================== */
+
+.tagging-tab-btn {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tagging-tab-content {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+}
+
+/* =====================
+   File Types Grid
+   ===================== */
+
+#filetypes-grid {
+  width: 100%;
+  height: 100%;
+}
+
+/* Muted style for locked file type rows */
+.ft-locked-row td {
+  color: #999 !important;
+  background: #fafafa !important;
+}
+
+/* =====================
+   File Types Icon Picker
+   ===================== */
+
+.ft-icon-picker {
+  position: relative;
+}
+
+.ft-icon-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: white;
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.ft-icon-trigger:hover:not(:disabled) {
+  border-color: #999;
+}
+
+.ft-icon-trigger:disabled {
+  background: #f5f5f5;
+  cursor: default;
+  color: #aaa;
+}
+
+.ft-icon-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.ft-icon-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #333;
+  transition: background 0.1s ease;
+}
+
+.ft-icon-option:hover {
+  background: #f0f0f0;
+}
+
+.ft-icon-option.selected {
+  background: #e3f2fd;
+  font-weight: bold;
+}
+
 #categories-grid {
   width: 100%;
   height: 100%;
@@ -1157,7 +1255,8 @@ hr {
 }
 
 #sidebar-content.sidebar-collapsed #btn-sidebar-settings-toolbar,
-#sidebar-content.sidebar-collapsed #btn-sidebar-notifications {
+#sidebar-content.sidebar-collapsed #btn-sidebar-notifications,
+#sidebar-content.sidebar-collapsed #btn-sidebar-tagging {
   display: none;
 }
 

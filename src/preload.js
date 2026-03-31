@@ -91,6 +91,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteTag: (name) => ipcRenderer.invoke('delete-tag', name),
   addTagToItem: (data) => ipcRenderer.invoke('add-tag-to-item', data),
 
+  // File Type operations
+  getFileTypeIcons: () => ipcRenderer.invoke('get-file-type-icons'),
+  getFileTypes: () => ipcRenderer.invoke('get-file-types'),
+  addFileType: (pattern, type, icon) => ipcRenderer.invoke('add-file-type', { pattern, type, icon }),
+  updateFileType: (pattern, newPattern, newType, icon) => ipcRenderer.invoke('update-file-type', { pattern, newPattern, newType, icon }),
+  deleteFileType: (pattern) => ipcRenderer.invoke('delete-file-type', pattern),
+
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),

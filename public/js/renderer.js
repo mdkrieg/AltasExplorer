@@ -27,6 +27,7 @@ let panel1SelectedDirectoryName = null;
 let activePanelId = 1;
 let allCategories = {};
 let allTags = [];
+let allFileTypes = [];
 let currentLayout = 1;
 let fileEditMode = false;
 let visiblePanels = 1;
@@ -152,6 +153,9 @@ async function initialize() {
 
     // Load tags list for context menu
     await loadTagsList();
+
+    // Load file types for grid matching
+    await loadFileTypes();
 
     // Load hotkeys
     await loadHotkeysFromStorage();
@@ -1355,6 +1359,7 @@ async function initializeGridForPanel(panelId) {
   const columns = [
     { field: 'icon', text: '', size: '40px', resizable: false, sortable: false, hideable: false },
     { field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true, hideable: false },
+    { field: 'type', text: 'Type', size: '80px', resizable: true, sortable: true },
     { field: 'size', text: 'Size', size: '60px', resizable: true, sortable: true, align: 'right' },
     { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true },
     { field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
@@ -1567,12 +1572,13 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
   for (const folder of folders) {
     // Determine which icon to use based on changeState
     let iconUrl;
-    
+    let category = null;
+
     if (folder.changeState === 'moved') {
       // Use the moved folder icon
       iconUrl = 'assets/folder-moved.svg';
     } else {
-      const category = await window.electronAPI.getCategoryForDirectory(folder.path);
+      category = await window.electronAPI.getCategoryForDirectory(folder.path);
       iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, folder.initials || null);
     }
     
@@ -1584,6 +1590,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`, className),
       filename: applyClass(folder.displayFilename || folder.filename, className),
       filenameRaw: folder.filename,
+      type: applyClass(folder.changeState === 'moved' ? '' : (category ? category.name || '' : ''), className),
       size: applyClass('-', className),
       dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
       perms: applyClass(getPermsCell(folder), className),
@@ -1611,6 +1618,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
         icon: applyClass(iconSvg, className),
         filename: applyClass(file.displayFilename || file.filename, className),
         filenameRaw: file.filename,
+        type: applyClass('', className),
         size: applyClass('—', className),
         dateModified: applyClass('—', className),
         dateModifiedRaw: null,
@@ -1634,12 +1642,16 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     const dateModifiedContent = getDateModifiedCell(file, file.changeState);
     const checksumCell = getChecksumCell(file, file.changeState);
     
-    // Determine which file icon to use based on changeState
+    // Determine which file icon to use based on changeState and file type match
+    const matchedFt = matchFileType(file.filename);
+    const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
+    const ftType = matchedFt ? matchedFt.type : '';
+
     let iconSvg;
     if (file.changeState === 'moved') {
       iconSvg = '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">';
     } else {
-      iconSvg = '<img src="assets/icons/file.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+      iconSvg = `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
     }
     
     records.push({
@@ -1647,6 +1659,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       icon: applyClass(iconSvg, className),
       filename: applyClass(file.displayFilename || file.filename, className),
       filenameRaw: file.filename,
+      type: applyClass(file.changeState === 'moved' ? '' : ftType, className),
       size: applyClass(formatBytes(file.size), className),
       dateModified: dateModifiedContent,
       dateModifiedRaw: file.dateModified, // Store raw timestamp for acknowledgment
@@ -2015,6 +2028,32 @@ async function loadTagsList() {
     console.error('Error loading tags list:', err);
     allTags = [];
   }
+}
+
+/**
+ * Load all configured file types for grid matching
+ */
+async function loadFileTypes() {
+  try {
+    allFileTypes = await window.electronAPI.getFileTypes();
+  } catch (err) {
+    console.error('Error loading file types:', err);
+    allFileTypes = [];
+  }
+}
+
+/**
+ * Find the matching FileType for a given filename.
+ * Returns the FileType object or null if no match.
+ */
+function matchFileType(filename) {
+  const lower = filename.toLowerCase();
+  for (const ft of allFileTypes) {
+    const pat = ft.pattern.toLowerCase();
+    if (pat === lower) return ft;                                    // exact: 'notes.txt'
+    if (pat.startsWith('*.') && lower.endsWith(pat.slice(1))) return ft; // wildcard: '*.json'
+  }
+  return null;
 }
 
 /**
@@ -3623,6 +3662,29 @@ function attachEventListeners() {
     showNotificationsModal();
   });
 
+  // Sidebar toolbar: Tagging
+  $('#btn-sidebar-tagging').click(function() {
+    showTaggingModal();
+  });
+
+  // Tagging modal close button
+  $('#btn-tagging-close').click(function() {
+    hideTaggingModal();
+  });
+
+  // Tagging modal overlay click to close
+  $('#tagging-modal').click(function(e) {
+    if (e.target === this) {
+      hideTaggingModal();
+    }
+  });
+
+  // Tagging tab buttons
+  $('.tagging-tab-btn').click(function() {
+    const tabName = $(this).data('tab');
+    switchTaggingTab(tabName);
+  });
+
   // Settings modal overlay click to close
   $('#settings-modal').click(function(e) {
     if (e.target === this) {
@@ -3707,6 +3769,21 @@ function attachEventListeners() {
   // Tag form delete button
   $('#btn-tag-delete').click(async function() {
     await deleteTagFromForm();
+  });
+
+  // File Types form save button
+  $('#btn-ft-save').click(async function() {
+    await saveFileTypeFromForm();
+  });
+
+  // File Types form clear/new button
+  $('#btn-ft-clear').click(function() {
+    clearFileTypeForm();
+  });
+
+  // File Types form delete button
+  $('#btn-ft-delete').click(async function() {
+    await deleteFileTypeFromForm();
   });
 
   // Hotkeys form demo button
@@ -3858,27 +3935,361 @@ function setupHotkeysResizableDivider() {
 }
 
 /**
+ * Setup resizable divider for file types form panel
+ */
+function setupFileTypesDivider() {
+  const divider = $('#filetypes-divider');
+  const formPanel = $('#filetypes-form-panel');
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  divider.mousedown(function(e) {
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = formPanel.width();
+    $(document).css('user-select', 'none');
+  });
+
+  $(document).mousemove(function(e) {
+    if (!isResizing) return;
+    const deltaX = e.clientX - startX;
+    const newWidth = Math.max(250, startWidth - deltaX);
+    formPanel.css('flex', `0 0 ${newWidth}px`);
+  });
+
+  $(document).mouseup(function() {
+    if (isResizing) {
+      isResizing = false;
+      $(document).css('user-select', '');
+    }
+  });
+}
+
+/**
+ * Show tagging modal
+ */
+async function showTaggingModal() {
+  // Reset lazy-init tracking for this modal session
+  initializedTaggingTabs = new Set(['category']);
+
+  // Show modal FIRST so containers have proper dimensions
+  $('#tagging-modal').show();
+
+  // Ensure Category Settings tab is active
+  switchTaggingTab('category');
+
+  // Initialize categories grid and form
+  await initializeCategoriesGrid();
+  await initializeCategoriesForm();
+
+  // Setup category resizable divider
+  setupResizableDivider();
+}
+
+/**
+ * Hide tagging modal
+ */
+function hideTaggingModal() {
+  $('#tagging-modal').hide();
+  initializedTaggingTabs = new Set();
+  if (w2ui['categories-grid']) {
+    w2ui['categories-grid'].destroy();
+  }
+  if (w2ui['tags-grid']) {
+    w2ui['tags-grid'].destroy();
+  }
+}
+
+/**
+ * Switch between tagging modal tabs
+ */
+function switchTaggingTab(tabName) {
+  // Hide all tagging tab content
+  $('.tagging-tab-content').hide();
+  // Show selected tab with flex display
+  const $tab = $(`#tab-${tabName}`);
+  $tab.css('display', 'flex');
+
+  // Lazy-init tags grid when first opened
+  if (tabName === 'tag' && !initializedTaggingTabs.has('tag')) {
+    initializedTaggingTabs.add('tag');
+    initializeTagsGrid().then(() => initializeTagsForm()).then(() => setupTagResizableDivider());
+  }
+
+  // Update tab button styles
+  $('.tagging-tab-btn').each(function() {
+    const btn = $(this);
+    if (btn.data('tab') === tabName) {
+      btn.css('border-bottom-color', '#2196F3').css('color', '#2196F3');
+    } else {
+      btn.css('border-bottom-color', 'transparent').css('color', '#666');
+    }
+  });
+}
+
+// State for file type form editing
+let fileTypeFormState = {
+  editingPattern: null,
+  selectedIcon: null
+};
+
+/**
+ * Build the icon picker dropdown — fetches user-*.png files dynamically
+ */
+async function buildIconDropdown() {
+  const $dropdown = $('#ft-icon-dropdown');
+  $dropdown.empty();
+
+  let icons = [];
+  try {
+    icons = await window.electronAPI.getFileTypeIcons();
+  } catch (err) {
+    console.error('Error fetching file type icons:', err);
+  }
+
+  icons.forEach(filename => {
+    const $opt = $('<div class="ft-icon-option" role="button" tabindex="0"></div>');
+    $opt.data('icon', filename);
+    $opt.append(`<img src="assets/icons/${filename}" style="width: 16px; height: 16px; object-fit: contain; flex-shrink: 0;">`);
+    $opt.append(`<span>${filename.replace('.png', '')}</span>`);
+
+    $opt.on('click', function() {
+      setFtIconSelection($(this).data('icon'));
+      $dropdown.hide();
+    });
+
+    $dropdown.append($opt);
+  });
+
+  // Toggle open/close
+  $('#btn-ft-icon-trigger').off('click.iconPicker').on('click.iconPicker', function(e) {
+    e.stopPropagation();
+    if ($dropdown.is(':visible')) {
+      $dropdown.hide();
+    } else {
+      $dropdown.show();
+    }
+  });
+
+  // Close on outside click
+  $(document).off('click.ftIconDropdown').on('click.ftIconDropdown', function(e) {
+    if (!$(e.target).closest('#form-ft-icon-picker').length) {
+      $dropdown.hide();
+    }
+  });
+}
+
+/**
+ * Set the selected icon in the picker trigger and update dropdown highlight
+ */
+function setFtIconSelection(iconFile) {
+  fileTypeFormState.selectedIcon = iconFile || null;
+
+  const $preview = $('#ft-icon-preview-img');
+  const $label = $('#ft-icon-label');
+
+  if (iconFile) {
+    $preview.attr('src', `assets/icons/${iconFile}`).show();
+    $label.text(iconFile.replace('.png', ''));
+  } else {
+    $preview.hide().attr('src', '');
+    $label.text('None');
+  }
+
+  // Highlight selected option
+  $('#ft-icon-dropdown .ft-icon-option').each(function() {
+    const $opt = $(this);
+    if ($opt.data('icon') === iconFile) {
+      $opt.addClass('selected');
+    } else {
+      $opt.removeClass('selected');
+    }
+  });
+}
+
+/**
+ * Initialize the file types w2ui grid
+ */
+async function initializeFileTypesGrid() {
+  const fileTypes = await window.electronAPI.getFileTypes();
+
+  const records = fileTypes.map((ft, idx) => ({
+    recid: idx + 1,
+    iconHtml: `<img src="assets/icons/${ft.icon || 'user-file.png'}" style="width: 16px; height: 16px; object-fit: contain;">`,
+    lock: ft.locked ? '🔒' : '',
+    pattern: ft.pattern,
+    type: ft.type,
+    locked: ft.locked || false,
+    icon: ft.icon || null
+  }));
+
+  if (w2ui['filetypes-grid']) {
+    w2ui['filetypes-grid'].destroy();
+  }
+
+  w2ui['filetypes-grid'] = new w2grid({
+    name: 'filetypes-grid',
+    show: { header: false, toolbar: false, footer: false },
+    columns: [
+      { field: 'iconHtml', text: '',        size: '30px', resizable: false, style: 'text-align: center; padding: 0 4px;' },
+      { field: 'lock',     text: '',        size: '26px', resizable: false, style: 'text-align: center; padding: 0;' },
+      { field: 'pattern',  text: 'Pattern', size: '50%',  resizable: true,  sortable: true },
+      { field: 'type',     text: 'Type',    size: '100%', resizable: true,  sortable: true }
+    ],
+    records,
+    onClick: function(event) {
+      event.onComplete = function() {
+        const grid = this;
+        const sel = grid.getSelection();
+        if (sel.length > 0) {
+          const recid = sel[0];
+          const record = grid.records.find(r => r.recid === recid);
+          if (record) {
+            populateFileTypeForm(record);
+          }
+        }
+      };
+    },
+    onLoad: function(event) { event.preventDefault(); }
+  });
+
+  w2ui['filetypes-grid'].render('#filetypes-grid');
+}
+
+/**
+ * Populate the file type form when a grid row is clicked
+ */
+function populateFileTypeForm(record) {
+  fileTypeFormState.editingPattern = record.pattern;
+  $('#form-ft-pattern').val(record.pattern).prop('disabled', record.locked);
+  $('#form-ft-type').val(record.type).prop('disabled', record.locked);
+  setFtIconSelection(record.icon || 'user-file.png');
+  $('#btn-ft-icon-trigger').prop('disabled', record.locked);
+  if (record.locked) {
+    $('#btn-ft-delete').hide();
+    $('#btn-ft-save').prop('disabled', true);
+  } else {
+    $('#btn-ft-delete').show();
+    $('#btn-ft-save').prop('disabled', false);
+  }
+}
+
+/**
+ * Clear the file type form and reset to new-entry mode
+ */
+function clearFileTypeForm() {
+  fileTypeFormState.editingPattern = null;
+  $('#form-ft-pattern').val('').prop('disabled', false);
+  $('#form-ft-type').val('').prop('disabled', false);
+  setFtIconSelection('user-file.png');
+  $('#btn-ft-icon-trigger').prop('disabled', false);
+  $('#btn-ft-delete').show();
+  $('#btn-ft-save').prop('disabled', false);
+
+  const grid = w2ui['filetypes-grid'];
+  if (grid) grid.selectNone();
+}
+
+/**
+ * Initialize file types form (wires Save/New/Delete buttons; called lazily)
+ */
+async function initializeFileTypesForm() {
+  await buildIconDropdown();
+  clearFileTypeForm();
+}
+
+/**
+ * Save the file type from the form (add new or update existing)
+ */
+async function saveFileTypeFromForm() {
+  const pattern = $('#form-ft-pattern').val().trim();
+  const type = $('#form-ft-type').val().trim();
+
+  if (!pattern || !type) {
+    w2alert('Pattern and Type are required.');
+    return;
+  }
+
+  try {
+    if (fileTypeFormState.editingPattern) {
+      // Updating existing
+      const result = await window.electronAPI.updateFileType(
+        fileTypeFormState.editingPattern,
+        pattern,
+        type,
+        fileTypeFormState.selectedIcon || null
+      );
+      if (result && result.error) {
+        w2alert('Error: ' + result.error);
+        return;
+      }
+    } else {
+      // Adding new
+      const result = await window.electronAPI.addFileType(
+        pattern,
+        type,
+        fileTypeFormState.selectedIcon || null
+      );
+      if (result && result.error) {
+        w2alert('Error: ' + result.error);
+        return;
+      }
+    }
+
+    await initializeFileTypesGrid();
+    clearFileTypeForm();
+  } catch (err) {
+    w2alert('Error saving file type: ' + err.message);
+  }
+}
+
+/**
+ * Delete the currently selected file type
+ */
+async function deleteFileTypeFromForm() {
+  const pattern = fileTypeFormState.editingPattern;
+  if (!pattern) {
+    w2alert('No file type selected.');
+    return;
+  }
+
+  w2confirm({
+    msg: `Delete file type "<b>${pattern}</b>"?`,
+    title: 'Delete File Type?',
+    width: 400,
+    height: 170
+  }).yes(async () => {
+    try {
+      const result = await window.electronAPI.deleteFileType(pattern);
+      if (result && result.error) {
+        w2alert('Error: ' + result.error);
+        return;
+      }
+      await initializeFileTypesGrid();
+      clearFileTypeForm();
+    } catch (err) {
+      w2alert('Error deleting file type: ' + err.message);
+    }
+  });
+}
+
+/**
  * Show settings modal
  */
 async function showSettingsModal() {
   
   // Reset lazy-init tracking for this modal session
-  initializedSettingsTabs = new Set(['category']);
+  initializedSettingsTabs = new Set();
 
   // Show modal FIRST so containers have proper dimensions
   $('#settings-modal').show();
   
-  // Ensure Category Settings tab is active
-  switchSettingsTab('category');
+  // Ensure Browser Settings tab is active by default
+  switchSettingsTab('browser');
   
-  // Initialize categories grid and forms (category tab is already visible)
-  await initializeCategoriesGrid();
-  await initializeCategoriesForm();
+  // Initialize browser settings form
   await initializeBrowserSettingsForm();
-  
-  // Setup category resizable divider
-  // Tags/hotkeys dividers are set up lazily when their tab is first opened
-  setupResizableDivider();
   
 }
 
@@ -3889,11 +4300,8 @@ function hideSettingsModal() {
   $('#settings-modal').hide();
   initializedSettingsTabs = new Set();
   // Destroy w2ui grids
-  if (w2ui['categories-grid']) {
-    w2ui['categories-grid'].destroy();
-  }
-  if (w2ui['tags-grid']) {
-    w2ui['tags-grid'].destroy();
+  if (w2ui['filetypes-grid']) {
+    w2ui['filetypes-grid'].destroy();
   }
   if (w2ui['hotkeys-grid']) {
     w2ui['hotkeys-grid'].destroy();
@@ -4278,15 +4686,15 @@ function switchSettingsTab(tabName) {
   $('.settings-tab-content').hide();
   // Show selected tab with proper display mode
   const $tab = $(`#tab-${tabName}`);
-  // For tabs that need flex layout (category, tag, hotkeys), use flex display
-  if (tabName === 'category' || tabName === 'tag' || tabName === 'hotkeys') {
+  // For tabs that need flex layout (filetypes, hotkeys), use flex display
+  if (tabName === 'filetypes' || tabName === 'hotkeys') {
     $tab.css('display', 'flex');
-    // Lazy-init: tags/hotkeys grids are initialized here (after the tab is
+    // Lazy-init: filetypes/hotkeys grids are initialized here (after the tab is
     // visible) rather than upfront, so w2ui always measures a real container
     // width and the 100% column renders correctly on first open.
-    if (tabName === 'tag' && !initializedSettingsTabs.has('tag')) {
-      initializedSettingsTabs.add('tag');
-      initializeTagsGrid().then(() => initializeTagsForm()).then(() => setupTagResizableDivider());
+    if (tabName === 'filetypes' && !initializedSettingsTabs.has('filetypes')) {
+      initializedSettingsTabs.add('filetypes');
+      initializeFileTypesGrid().then(() => initializeFileTypesForm()).then(() => setupFileTypesDivider());
     } else if (tabName === 'hotkeys' && !initializedSettingsTabs.has('hotkeys')) {
       initializedSettingsTabs.add('hotkeys');
       initializeHotkeysGrid().then(() => setupHotkeysResizableDivider());
@@ -4950,6 +5358,9 @@ let tagFormState = {
 
 // Tracks which settings tabs have had their grids initialized in the current modal session
 let initializedSettingsTabs = new Set();
+
+// Tracks which tagging tabs have had their grids initialized in the current modal session
+let initializedTaggingTabs = new Set();
 
 /**
  * Convert HEX color to RGB string format
