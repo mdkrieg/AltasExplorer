@@ -18,7 +18,7 @@ class FilesystemService {
   /**
    * Read directory contents and return file/folder info with inode and stats
    */
-  readDirectory(dirPath) {
+  readDirectory(dirPath, ignoreFilenames = []) {
     // Validate path before proceeding
     if (!dirPath || typeof dirPath !== 'string') {
       logger.error(`readDirectory: Invalid path type - received ${typeof dirPath}`);
@@ -36,6 +36,7 @@ class FilesystemService {
     const folders = [];
 
     for (const entry of entries) {
+      if (ignoreFilenames.includes(entry)) continue;
       try {
         const fullPath = path.join(normalizedPath, entry);
         const stats = fs.statSync(fullPath);

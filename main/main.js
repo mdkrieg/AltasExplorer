@@ -900,8 +900,20 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     const existingDbFiles = db.getFilesByDirId(dirId);
     const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
 
+    // On background refresh, skip files already known to be permErrors so we
+    // don't re-stat them (and re-log warnings) every refresh cycle.
+    const ignoreFilenames = isBackgroundRefresh
+      ? existingDbFiles.filter(f => f.inode.startsWith('-1:')).map(f => f.filename)
+      : [];
+
+    // Pre-remove ignored permError entries from dbFileMap so they are not
+    // treated as orphaned/deleted during the missing-files pass.
+    for (const filename of ignoreFilenames) {
+      dbFileMap.delete(`-1:${filename}`);
+    }
+
     // Read all filesystem entries (folders + files)
-    const entries = fs.readDirectory(normalizedPath);
+    const entries = fs.readDirectory(normalizedPath, ignoreFilenames);
     const entriesWithChanges = [];
 
     for (const entry of entries) {
