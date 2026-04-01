@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File system operations
   readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
   getRootDrives: () => ipcRenderer.invoke('get-root-drives'),
+  getParentDirectoryMetadata: (dirPath) => ipcRenderer.invoke('get-parent-directory-metadata', dirPath),
   
   // Database operations
   // scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),

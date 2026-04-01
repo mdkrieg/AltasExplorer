@@ -526,7 +526,7 @@ function addRecordsToGrid(records, panelId) {
  * its entries to the grid as results arrive.  Exits immediately if the scan is
  * cancelled or the scanToken has changed (i.e. a new navigation started).
  */
-async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs = {}) {
+async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs = {}, hideDotDotDirectory = false) {
   const state = panelState[panelId];
 
   while (state.pendingDirs.length > 0 && !state.scanCancelled && state.scanToken === token) {
@@ -539,9 +539,28 @@ async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, t
     if (!scanResult.success) continue;
 
     const rawEntries = scanResult.entries || [];
-    const entries = rawEntries
+    let entries = rawEntries
       .filter(e => e.filename !== '.')  // always drop the subdir's own '.' entry
       .map(e => ({ ...e, displayFilename: getRelativePathFromRoot(rootPath, e.path) }));
+
+    // Add ".." entry (parent directory) if not hidden and not at root
+    if (!hideDotDotDirectory && state.scanToken === token) {
+      console.log('[DEBUG] processPendingDirs - Fetching parent metadata for:', dirPath);
+      const parentMetadata = await window.electronAPI.getParentDirectoryMetadata(dirPath);
+      console.log('[DEBUG] processPendingDirs - Parent metadata result:', parentMetadata);
+      if (parentMetadata) {
+        // Find position to insert ".." (after "." if present, otherwise at start)
+        const dotIndex = entries.findIndex(e => e.filename === '.');
+        const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
+        console.log('[DEBUG] processPendingDirs - Inserting ".." at index:', insertIndex);
+        entries.splice(insertIndex, 0, {
+          ...parentMetadata,
+          displayFilename: '..'
+        });
+      } else {
+        console.log('[DEBUG] processPendingDirs - Parent metadata is null');
+      }
+    }
 
     const records = await buildGridRecords(entries, panelId, iconCache, categoryCache, tagDefs);
 
@@ -580,10 +599,11 @@ async function resumeScan(panelId) {
     window.electronAPI.loadTags()
   ]);
   const hideDotDirectory = settings.hide_dot_directory || false;
+  const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
   const iconCache = new Map();
   const categoryCache = new Map();
 
-  await processPendingDirs(panelId, state.currentPath, iconCache, categoryCache, token, tagDefs);
+  await processPendingDirs(panelId, state.currentPath, iconCache, categoryCache, token, tagDefs, hideDotDotDirectory);
 
   if (state.scanToken === token) {
     state.scanInProgress = false;
@@ -617,6 +637,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
     window.electronAPI.loadTags()
   ]);
   const hideDotDirectory = settings.hide_dot_directory || false;
+  const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
 
   const iconCache    = new Map();
   const categoryCache = new Map();
@@ -633,11 +654,41 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
   }
 
   const rootRaw = rootScan.entries || [];
-  const rootEntries = rootRaw
+  let rootEntries = rootRaw
     .filter(e => !hideDotDirectory || e.filename !== '.')
     .map(e => ({ ...e, displayFilename: getRelativePathFromRoot(rootPath, e.path) }));
 
+  // Add ".." entry (parent directory) if not hidden and not at root
+  console.log('[DEBUG] scanDirectoryTreeStreaming - hideDotDotDirectory:', hideDotDotDirectory);
+  if (!hideDotDotDirectory && state.scanToken === token) {
+    console.log('[DEBUG] Fetching parent metadata for:', rootPath);
+    const parentMetadata = await window.electronAPI.getParentDirectoryMetadata(rootPath);
+    console.log('[DEBUG] Parent metadata result:', parentMetadata);
+    if (parentMetadata) {
+      // Insert ".." at the beginning (after "." if present)
+      const dotIndex = rootEntries.findIndex(e => e.filename === '.');
+      const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
+      console.log('[DEBUG] Inserting ".." at index:', insertIndex);
+      console.log('[DEBUG] Root entries before splice:', rootEntries.map(e => e.filename));
+      rootEntries.splice(insertIndex, 0, {
+        ...parentMetadata,
+        displayFilename: '..'
+      });
+      console.log('[DEBUG] Root entries after splice:', rootEntries.map(e => e.filename));
+      window.DEBUG_PARENT_ENTRY = { ...parentMetadata, displayFilename: '..' };
+      window.DEBUG_ALL_ENTRIES = rootEntries;
+      console.log('[DEBUG] Stored debug info on window.DEBUG_*');
+    } else {
+      console.log('[DEBUG] Parent metadata is null, not adding ".."');
+    }
+  } else {
+    console.log('[DEBUG] Skipping parent directory: hideDotDotDirectory =', hideDotDotDirectory, 'scanToken match:', state.scanToken === token);
+  }
+
   const rootRecords = await buildGridRecords(rootEntries, panelId, iconCache, categoryCache, tagDefs);
+  console.log('[DEBUG] Finished buildGridRecords, record count:', rootRecords.length);
+  console.log('[DEBUG] Root records filenames:', rootRecords.map(r => r.filenameRaw));
+  window.DEBUG_ROOT_RECORDS = rootRecords;
   if (state.scanToken === token) addRecordsToGrid(rootRecords, panelId);
 
   // --- Queue subdirectories for incremental streaming ---
@@ -646,7 +697,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
     for (const subdir of subdirs) {
       state.pendingDirs.push({ path: subdir.path, maxDepth, currentDepth: 1 });
     }
-    await processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs);
+    await processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs, hideDotDotDirectory);
   }
 
   if (state.scanToken === token) {
@@ -1588,11 +1639,32 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     window.electronAPI.loadTags()
   ]);
   const hideDotDirectory = settings.hide_dot_directory || false;
+  const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
   
   // Filter out "." entries if hiding is enabled
   let filteredEntries = entries;
   if (hideDotDirectory) {
     filteredEntries = entries.filter(e => e.filename !== '.');
+  }
+  
+  // Add ".." entry (parent directory) if not hidden and not at root
+  console.log('[DEBUG] populateFileGrid - hideDotDotDirectory:', hideDotDotDirectory);
+  if (!hideDotDotDirectory && state.currentPath) {
+    console.log('[DEBUG] Fetching parent metadata for:', state.currentPath);
+    const parentMetadata = await window.electronAPI.getParentDirectoryMetadata(state.currentPath);
+    console.log('[DEBUG] Parent metadata result:', parentMetadata);
+    if (parentMetadata) {
+      // Find position to insert ".." (after "." if present, otherwise at start)
+      const dotIndex = filteredEntries.findIndex(e => e.filename === '.');
+      const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
+      console.log('[DEBUG] Inserting ".." to filteredEntries at index:', insertIndex);
+      filteredEntries.splice(insertIndex, 0, {
+        ...parentMetadata,
+        displayFilename: '..'
+      });
+    } else {
+      console.log('[DEBUG] Parent metadata is null for populateFileGrid');
+    }
   }
   
   // Separate folders and files
@@ -5064,6 +5136,7 @@ async function initializeBrowserSettingsForm() {
   const homeDirectory = settings.home_directory || '';
   const fileFormat = settings.file_format || 'Markdown';
   const hideDotDirectory = settings.hide_dot_directory || false;
+  const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
   const recordHeight = settings.record_height || 30;
   const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
   const backgroundRefreshInterval = settings.background_refresh_interval || 30;
@@ -5071,6 +5144,7 @@ async function initializeBrowserSettingsForm() {
   $('#browser-home-directory').val(homeDirectory);
   $('#browser-notes-format').val(fileFormat);
   $('#browser-hide-dot-directory').prop('checked', hideDotDirectory);
+  $('#browser-hide-dot-dot-directory').prop('checked', hideDotDotDirectory);
   $('#browser-record-height').val(recordHeight);
   $('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
   $('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
@@ -5103,6 +5177,7 @@ async function saveBrowserSettings() {
     const homeDirectory = ($('#browser-home-directory').val() || '').trim();
     const fileFormat = ($('#browser-notes-format').val() || 'Markdown').trim();
     const hideDotDirectory = $('#browser-hide-dot-directory').is(':checked');
+    const hideDotDotDirectory = $('#browser-hide-dot-dot-directory').is(':checked');
     let recordHeight = parseInt($('#browser-record-height').val() || '30');
     const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
     let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
@@ -5131,6 +5206,7 @@ async function saveBrowserSettings() {
     settings.home_directory = homeDirectory;
     settings.file_format = fileFormat;
     settings.hide_dot_directory = hideDotDirectory;
+    settings.hide_dot_dot_directory = hideDotDotDirectory;
     settings.record_height = recordHeight;
     settings.background_refresh_enabled = backgroundRefreshEnabled;
     settings.background_refresh_interval = backgroundRefreshInterval;

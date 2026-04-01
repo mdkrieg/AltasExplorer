@@ -154,6 +154,22 @@ class DatabaseService {
   }
 
   /**
+   * Get parent directory metadata for rendering ".." entry
+   * Returns category and tags for the parent directory
+   */
+  getParentDirectoryInfo(currentDirPath) {
+    const pathModule = require('path');
+    const parentPath = pathModule.dirname(currentDirPath);
+    
+    // Check if at root (no parent)
+    if (parentPath === currentDirPath) {
+      return null;
+    }
+    
+    return this.getDirectory(parentPath);
+  }
+
+  /**
    * Get directory by id
    */
   getDirById(id) {

@@ -11,19 +11,23 @@
 * Generates audit trail as you browse
 
 ### UP NEXT:
+* Landing page is an item summary for the item selected in the grid
+  * Currently locked to panel 1 - make it so it obeys the panel with focus - does nothing if landing page is selected - maybe does if file editor selected?
 * TODOs in notes get aggregated
 * Copy as Path in context menu
 * Fix / figure out what to do with link in markdown (web links open in Electron)
 * Context menu cancel with click off (left click)
 * Collapsible Sidebar - all the stuff hides, should just show icons
 * Dragon Dropping
+* Make New Folder + Make New File
+* Make directory layout (columns shown, column sizes) are stored in the dirs table - empty is default view else store entire state
 
 ### TO PONDER:
 Should I abandon my "no file edit in panel 1" philosophy?
 
 ### TODO:
-[ ] Category inheritance
-[ ] Tags in notes (and monaco autocomplete)
+[ ] Category inheritance (Set rules like "all subdirs get X category" on category definition)
+[x] Tags in notes (and monaco autocomplete)
 [ ] Passively (no browse required) Watched directories - configurable by category??
 [ ] Filetype profiles (icon and editability)
 [ ] Autotagging

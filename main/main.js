@@ -163,6 +163,40 @@ ipcMain.handle('read-directory', (event, dirPath) => {
 });
 
 /**
+ * Get parent directory metadata (filesystem + database info)
+ */
+ipcMain.handle('get-parent-directory-metadata', (event, dirPath) => {
+  try {
+    // Get filesystem metadata (inode, permissions, dates)
+    const fsMetadata = fs.getParentDirectoryMetadata(dirPath);
+    logger.info(`[DEBUG] get-parent-directory-metadata for: ${dirPath}, fsMetadata:`, fsMetadata);
+    if (!fsMetadata) {
+      logger.info('[DEBUG] fsMetadata is null, returning null (at root)');
+      return null; // At root, no parent
+    }
+    
+    // Get database metadata (category, tags, initials)
+    const dbMetadata = db.getParentDirectoryInfo(dirPath);
+    logger.info('[DEBUG] dbMetadata:', dbMetadata);
+    
+    // Merge filesystem and database metadata
+    const result = {
+      ...fsMetadata,
+      category: dbMetadata?.category || 'Default',
+      tags: dbMetadata?.tags || null,
+      initials: dbMetadata?.initials || null,
+      description: dbMetadata?.description || null
+    };
+    logger.info('[DEBUG] Returning parent metadata:', result);
+    return result;
+  } catch (err) {
+    logger.error('Error getting parent directory metadata:', err.message);
+    logger.error('[DEBUG] Stack:', err.stack);
+    return null;
+  }
+});
+
+/**
  * Get root drives for sidebar
  */
 ipcMain.handle('get-root-drives', (event) => {

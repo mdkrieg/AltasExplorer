@@ -108,6 +108,43 @@ class FilesystemService {
   }
 
   /**
+   * Get metadata for the parent directory of a given path
+   * Returns null if at root (no parent exists)
+   */
+  getParentDirectoryMetadata(dirPath) {
+    try {
+      const parentPath = path.dirname(dirPath);
+      
+      // Check if we're at root (no parent)
+      if (parentPath === dirPath) {
+        logger.info(`[DEBUG] getParentDirectoryMetadata - At root: ${dirPath}`);
+        return null;
+      }
+
+      const stats = fs.statSync(parentPath);
+      const perms = checkAccess(parentPath);
+
+      const result = {
+        inode: stats.ino.toString(),
+        filename: '..',
+        isDirectory: true,
+        size: 0,
+        dateModified: stats.mtime.getTime(),
+        dateCreated: stats.birthtime.getTime(),
+        path: parentPath,
+        mode: stats.mode,
+        perms,
+        permError: false
+      };
+      logger.info(`[DEBUG] getParentDirectoryMetadata - Returning:`, result);
+      return result;
+    } catch (err) {
+      logger.warn(`Error getting parent directory metadata for ${dirPath}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
    * Check if path exists and is a directory
    */
   isDirectory(filePath) {
