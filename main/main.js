@@ -1678,6 +1678,53 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       });
     }
 
+    // Resolve which entries have notes attached (for notes indicator in grid)
+    let filesWithNotes = new Set();
+    let localNotesContent = '';
+    try {
+      const notesFilePath = path.join(normalizedPath, 'notes.txt');
+      if (fsSync.existsSync(notesFilePath)) {
+        const notesContent = fsSync.readFileSync(notesFilePath, 'utf-8');
+        const headersArray = notesParser.extractAllHeaders(notesContent);
+        localNotesContent = notesContent; // Store for later use with directory-level notes
+        filesWithNotes = new Set(headersArray);
+        // Directories get checked later since we have to dive into subdirs for it
+      }
+    } catch (err) {
+      logger.warn(`Error reading notes for directory ${normalizedPath}:`, err.message);
+    }
+
+    // Add hasNotes field to each entry
+    let dirNotesFilePath;
+    let dirNotesContent;
+    let directoryNotes;
+    for (const entry of entriesWithChanges) {
+      if (entry.isDirectory) {
+        // For directories, check if it has directory-level notes
+        if (entry.filename != '.') {
+          dirNotesFilePath = path.join(normalizedPath, entry.filename, 'notes.txt');
+          if (fsSync.existsSync(dirNotesFilePath)) {
+            try {
+              dirNotesContent = fsSync.readFileSync(dirNotesFilePath, 'utf-8');
+            } catch (err) {
+              logger.warn(`Error reading notes for subdirectory ${entry.path}:`, err.message);
+              dirNotesContent = '';
+            }
+            directoryNotes = notesParser.extractDirectoryNotes(dirNotesContent);
+          } else {
+            directoryNotes = '';
+          }
+        } else {
+          // For the current directory's "." entry, use the already-read localNotesContent
+          directoryNotes = notesParser.extractDirectoryNotes(localNotesContent);
+        }
+        entry.hasNotes = !!directoryNotes && directoryNotes.trim().length > 0;
+      } else {
+        // For files, check if they have file-specific notes
+        entry.hasNotes = filesWithNotes.has(entry.filename);
+      }
+    }
+
     // Count entries with actual changes (not 'unchanged')
     const changedEntries = entriesWithChanges.filter(e => e.changeState !== 'unchanged');
     const hasChanges = changedEntries.length > 0;

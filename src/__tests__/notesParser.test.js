@@ -376,11 +376,13 @@ Notes here`;
     expect(resultLF['file.txt']).toBeDefined();
     expect(resultLF['file.txt']).toBe('Notes');
     
-    // Test with CRLF - the parser currently splits on \n, so \r may remain
-    // This is a known limitation that could be addressed if needed
+    // Test with CRLF - parser now handles both \n and \r\n
     const contentWithCRLF = 'Dir\r\n@<file.txt>\r\nNotes';
     const resultCRLF = parseNotesFileSections(contentWithCRLF);
-    // With CRLF, the \r stays in the line, so the header won't match the regex
-    // This is acceptable behavior - files should use consistent line endings
+    expect(resultCRLF['file.txt']).toBeDefined();
+    expect(resultCRLF['file.txt']).toBe('Notes');
+    
+    // Both should produce identical results
+    expect(resultLF).toEqual(resultCRLF);
   });
 });

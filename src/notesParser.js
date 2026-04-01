@@ -42,7 +42,7 @@ function parseNotesFileSections(content) {
   let currentKey = '__dir__';
   sections[currentKey] = '';
 
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   for (const line of lines) {
     if (isValidFileHeader(line)) {
       const filename = extractHeaderFilename(line);

@@ -459,7 +459,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
       initials: folder.initials || null,
       dir_id: null,
       orphan_id: folder.orphan_id || null,
-      new_dir_id: folder.new_dir_id || null
+      new_dir_id: folder.new_dir_id || null,
+      hasNotes: folder.hasNotes || false
     });
   }
 
@@ -492,7 +493,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
         inode: file.inode,
         dir_id: file.dir_id || null,
         orphan_id: null,
-        new_dir_id: null
+        new_dir_id: null,
+        hasNotes: file.hasNotes || false
       });
       continue;
     }
@@ -529,7 +531,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
       inode: file.inode,
       dir_id: file.dir_id || null,
       orphan_id: file.orphan_id || null,
-      new_dir_id: file.new_dir_id || null
+      new_dir_id: file.new_dir_id || null,
+      hasNotes: file.hasNotes || false
     });
 
     // Add attribute columns from stored JSON
@@ -1495,7 +1498,12 @@ async function initializeGridForPanel(panelId) {
     { field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
     { field: 'perms', text: 'Perms', size: '48px', resizable: true, sortable: true },
     { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false },
-    { field: 'tags', text: 'Tags', size: '160px', resizable: true, sortable: false }
+    { field: 'tags', text: 'Tags', size: '160px', resizable: true, sortable: false },
+    { field: 'notes', text: 'Notes', size: '32px', resizable: false, sortable: false, render: (record) => {
+      return record.hasNotes 
+        ? `<img src="assets/icons/note-book-icon.svg" style="width: 16px; height: 16px; object-fit: contain; cursor: pointer; opacity: 0.7;" title="Notes" data-notes-icon="true">` 
+        : '';
+    }}
   ];
 
   // Add attribute columns — use currentAttrColumns (union from all visible subdirectory categories),
@@ -1609,6 +1617,22 @@ async function initializeGridForPanel(panelId) {
       }
     },
     onDblClick: function(event) {
+      // Handle double-click on notes icon to open notes modal
+      if (event.detail.originalEvent && event.detail.originalEvent.target && 
+          event.detail.originalEvent.target.dataset && 
+          event.detail.originalEvent.target.dataset.notesIcon) {
+        event.preventDefault();
+        event.stopPropagation();
+        
+        if (event.detail.recid) {
+          const record = this.records[event.detail.recid - 1];
+          if (record && record.hasNotes) {
+            openNotesModal(record);
+            return;
+          }
+        }
+      }
+
       const record = this.records[event.detail.recid - 1];
       
       // Check if this is a folder double-click (navigate)
@@ -1805,7 +1829,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       initials: folder.initials || null,
       dir_id: null, // Will be set from DB if needed
       orphan_id: folder.orphan_id || null,
-      new_dir_id: folder.new_dir_id || null
+      new_dir_id: folder.new_dir_id || null,
+      hasNotes: folder.hasNotes || false
     });
 
     // Add attribute values from the folder's dot-file
@@ -1849,7 +1874,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
         inode: file.inode,
         dir_id: file.dir_id || null,
         orphan_id: null,
-        new_dir_id: null
+        new_dir_id: null,
+        hasNotes: file.hasNotes || false
       });
       continue;
     }
@@ -1892,7 +1918,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       inode: file.inode,
       dir_id: file.dir_id || null,
       orphan_id: file.orphan_id || null,
-      new_dir_id: file.new_dir_id || null
+      new_dir_id: file.new_dir_id || null,
+      hasNotes: file.hasNotes || false
     });
 
     // Add attribute columns from stored JSON
@@ -3137,81 +3164,10 @@ function hideHistoryModal() {
 }
 
 // ============================================================
-// NOTES MODAL — Parsing Utilities
+// NOTES MODAL — Parsing Utilities (via IPC)
 // ============================================================
-
-/**
- * Parse a notes.txt file into keyed sections.
- * Lines before the first @<filename> header go into '__dir__'.
- * @param {string} content - Full contents of notes.txt
- * @returns {Object} Map of sectionKey -> content string
- */
-function parseNotesFileSections(content) {
-  const sections = {};
-  let currentKey = '__dir__';
-  sections[currentKey] = '';
-
-  const lines = content.split('\n');
-  for (const line of lines) {
-    const match = line.match(/^@<(.+)>$/);
-    if (match) {
-      currentKey = match[1];
-      if (!(currentKey in sections)) {
-        sections[currentKey] = '';
-      }
-    } else {
-      sections[currentKey] = (sections[currentKey] || '') + line + '\n';
-    }
-  }
-
-  // Trim single trailing newline added by the accumulation above
-  for (const key of Object.keys(sections)) {
-    if (sections[key].endsWith('\n')) {
-      sections[key] = sections[key].slice(0, -1);
-    }
-  }
-
-  return sections;
-}
-
-/**
- * Serialize a notes sections object back to a full notes.txt string,
- * replacing the entry for sectionKey with newContent.
- * @param {string} existingContent - Current notes.txt content (may be empty)
- * @param {string} sectionKey     - '__dir__' for directory, or a filename string
- * @param {string} newContent     - The new content to write for this section
- * @returns {string} Updated full notes.txt content
- */
-function writeNotesSection(existingContent, sectionKey, newContent) {
-  const sections = parseNotesFileSections(existingContent);
-
-  // Collect file section keys in original order
-  const fileKeys = Object.keys(sections).filter(k => k !== '__dir__');
-
-  // Update the target section
-  sections[sectionKey] = newContent;
-  // If it's a new file key not yet in the list, append it
-  if (sectionKey !== '__dir__' && !fileKeys.includes(sectionKey)) {
-    fileKeys.push(sectionKey);
-  }
-
-  // Re-serialize: directory block first, then file sections
-  let result = sections['__dir__'] || '';
-
-  for (const key of fileKeys) {
-    const val = sections[key] || '';
-    // Write the section if it has content (or it's the key we just wrote)
-    if (val.trim() !== '' || key === sectionKey) {
-      if (result.length > 0 && !result.endsWith('\n\n')) {
-        if (!result.endsWith('\n')) result += '\n';
-        result += '\n';
-      }
-      result += `@<${key}>\n${val}`;
-    }
-  }
-
-  return result;
-}
+// Notes parsing functions have been consolidated in src/notesParser.js
+// and are accessed via IPC to ensure consistent behavior across the app
 
 /**
  * Determine the notes.txt path and section key for a given grid record.
@@ -3933,7 +3889,7 @@ function attachPanelEventListeners(panelId) {
 
       let rawFile = '';
       try { rawFile = await window.electronAPI.readFileContent(notesFilePath) || ''; } catch (_) {}
-      const sections = parseNotesFileSections(rawFile);
+      const sections = await window.electronAPI.invoke('parse-notes-file', rawFile);
       const sectionContent = sections[notesSectionKey] || '';
 
       panelState[panelId].notesEditMode = true;
@@ -5196,7 +5152,7 @@ async function openNotesModal(record) {
   }
 
   // Extract the relevant section
-  const sections = parseNotesFileSections(existingContent);
+  const sections = await window.electronAPI.invoke('parse-notes-file', existingContent);
   const sectionContent = sections[sectionKey] || '';
 
   const settings = await window.electronAPI.getSettings();
@@ -6694,7 +6650,7 @@ async function updateItemPropertiesPage(panelId) {
       const $notes = $panel.find('.item-props-notes').empty();
       try {
         const rawFile = await window.electronAPI.readFileContent(notesFilePath);
-        const sections = parseNotesFileSections(rawFile || '');
+        const sections = await window.electronAPI.invoke('parse-notes-file', rawFile || '');
         const sectionContent = sections[notesSectionKey] || '';
         if (sectionContent.trim()) {
           const settings = await window.electronAPI.getSettings();

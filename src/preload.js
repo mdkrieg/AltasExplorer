@@ -165,5 +165,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopBackgroundRefresh: () => ipcRenderer.invoke('stop-background-refresh'),
   registerWatchedPath: (panelId, dirPath) => ipcRenderer.invoke('register-watched-path', { panelId, dirPath }),
   unregisterWatchedPath: (panelId) => ipcRenderer.invoke('unregister-watched-path', { panelId }),
+  
+  // Generic IPC invoke for custom handlers
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+  
   onDirectoryChanged: (callback) => ipcRenderer.on('directory-changed', (event, data) => callback(data))
 });
