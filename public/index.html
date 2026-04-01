@@ -23,9 +23,11 @@
     <!-- Sidebar Toolbar -->
     <div id="sidebar-toolbar">
       <button id="btn-sidebar-collapse" title="Collapse sidebar">&#10094;</button>
-      <button id="btn-sidebar-settings-toolbar" title="Settings">&#9881;</button>
+      <button id="btn-sidebar-settings-toolbar" title="Settings">
+        <img src="assets/icons/settings.svg" style="width: 16px; height: 16px; pointer-events: none;">
+      </button>
       <button id="btn-sidebar-notifications" title="Notifications">
-        &#128276;
+        <img src="assets/icons/bell-16.svg" style="width: 16px; height: 16px; pointer-events: none;">
         <span id="notifications-badge"></span>
       </button>
       <button id="btn-sidebar-tagging" title="Tagging">
@@ -369,7 +371,7 @@
   <div id="tagging-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 8px; width: 900px; max-width: calc(100vw - 40px); min-width: 400px; height: 600px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
       <div style="display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #ddd;">
-        <h2 style="margin: 0; flex: 1;">Tagging</h2>
+        <h2 style="margin: 0; flex: 1;">Label Definitions</h2>
         <button id="btn-tagging-close" style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
       </div>
 

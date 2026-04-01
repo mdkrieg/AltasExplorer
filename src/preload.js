@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('save-tag', tagData),
   deleteTag: (name) => ipcRenderer.invoke('delete-tag', name),
   addTagToItem: (data) => ipcRenderer.invoke('add-tag-to-item', data),
+  removeTagFromItem: (data) => ipcRenderer.invoke('remove-tag-from-item', data),
 
   // File Type operations
   getFileTypeIcons: () => ipcRenderer.invoke('get-file-type-icons'),

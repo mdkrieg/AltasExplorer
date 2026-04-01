@@ -144,6 +144,9 @@ async function initialize() {
     // Initialize panel dividers
     initializeDividers();
 
+    // Load file types for grid matching (must be before first navigateToDirectory)
+    await loadFileTypes();
+
     if (homePath) {
       await navigateToDirectory(homePath, 1);
     }
@@ -153,9 +156,6 @@ async function initialize() {
 
     // Load tags list for context menu
     await loadTagsList();
-
-    // Load file types for grid matching
-    await loadFileTypes();
 
     // Load hotkeys
     await loadHotkeysFromStorage();
@@ -425,6 +425,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
       perms: applyClass(getPermsCell(folder), className),
       checksum: applyClass('—', className),
       tags: renderTagBadges(folder.tags || null, tagDefs),
+      tagsRaw: folder.tags || null,
+      type: applyClass(folder.changeState === 'moved' ? '' : (cat ? cat.name || '' : ''), className),
       isFolder: true,
       path: folder.path,
       changeState: folder.changeState,
@@ -457,6 +459,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
         checksumStatus: null,
         checksumValue: null,
         tags: '',
+        tagsRaw: null,
+        type: applyClass('', className),
         isFolder: false,
         path: file.path,
         changeState: 'permError',
@@ -470,9 +474,12 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 
     const dateModifiedContent = getDateModifiedCell(file, file.changeState);
     const checksumCell = getChecksumCell(file, file.changeState);
+    const matchedFt = matchFileType(file.filename);
+    const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
+    const ftType = matchedFt ? matchedFt.type : '';
     const iconSvg = file.changeState === 'moved'
       ? '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">'
-      : '<img src="assets/icons/file.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+      : `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
 
     records.push({
       recid: state.recidCounter++,
@@ -489,6 +496,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
       checksumStatus: file.checksumStatus || null,
       checksumValue: file.checksumValue || null,
       tags: renderTagBadges(file.tags || null, tagDefs),
+      tagsRaw: file.tags || null,
+      type: applyClass(file.changeState === 'moved' ? '' : ftType, className),
       isFolder: false,
       path: file.path,
       changeState: file.changeState,
@@ -1627,6 +1636,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       perms: applyClass(getPermsCell(folder), className),
       checksum: applyClass('—', className),
       tags: renderTagBadges(folder.tags || null, tagDefs),
+      tagsRaw: folder.tags || null,
       isFolder: true,
       path: folder.path,
       changeState: folder.changeState,
@@ -1661,6 +1671,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
         checksumStatus: null,
         checksumValue: null,
         tags: '',
+        tagsRaw: null,
         isFolder: false,
         path: file.path,
         changeState: 'permError',
@@ -1703,6 +1714,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       checksumStatus: file.checksumStatus || null,
       checksumValue: file.checksumValue || null,
       tags: renderTagBadges(file.tags || null, tagDefs),
+      tagsRaw: file.tags || null,
       isFolder: false,
       path: file.path,
       changeState: file.changeState,
@@ -3045,10 +3057,10 @@ async function initializeMonacoLoader() {
           console.log('Monaco editor loader initialized');
           monacoLoaded = true;
 
-          // Register tag autocomplete (#tagname) for notes editor
+          // Register tag autocomplete (@#tagname) for notes editor
           ['markdown', 'plaintext'].forEach(lang => {
             monaco.languages.registerCompletionItemProvider(lang, {
-              triggerCharacters: ['#'],
+              triggerCharacters: ['@', '#'],
               provideCompletionItems: async (model, position) => {
                 const textUntilPosition = model.getValueInRange({
                   startLineNumber: position.lineNumber,
@@ -3056,7 +3068,7 @@ async function initializeMonacoLoader() {
                   endLineNumber: position.lineNumber,
                   endColumn: position.column
                 });
-                const match = textUntilPosition.match(/#(\w*)$/);
+                const match = textUntilPosition.match(/@#(\w*)$/);
                 if (!match) return { suggestions: [] };
 
                 const startCol = position.column - match[0].length;
@@ -3069,10 +3081,10 @@ async function initializeMonacoLoader() {
 
                 const tags = await window.electronAPI.getTagsList();
                 const suggestions = tags.map(tag => ({
-                  label: `#${tag.name}`,
+                  label: `@#${tag.name}`,
                   kind: monaco.languages.CompletionItemKind.Value,
-                  insertText: `#${tag.name}`,
-                  filterText: `#${tag.name}`,
+                  insertText: `@#${tag.name}`,
+                  filterText: `@#${tag.name}`,
                   range: range,
                   documentation: tag.description || ''
                 }));
@@ -4772,7 +4784,7 @@ async function openNotesModal(record) {
   const sectionContent = sections[sectionKey] || '';
 
   const settings = await window.electronAPI.getSettings();
-  notesModalContext = { notesFilePath, sectionKey, title };
+  notesModalContext = { notesFilePath, sectionKey, title, record };
   notesModalEditMode = false;
 
   // Set title
@@ -4863,6 +4875,21 @@ async function toggleNotesEditMode() {
 
     const updatedContent = writeNotesSection(existingContent, sectionKey, newContent);
     await window.electronAPI.writeFileContent(notesFilePath, updatedContent);
+
+    // Auto-tag: extract @#tagname patterns and push to the item
+    const tagMatches = [...newContent.matchAll(/@#(\w+)/g)];
+    if (tagMatches.length > 0 && notesModalContext.record) {
+      const rec = notesModalContext.record;
+      for (const m of tagMatches) {
+        window.electronAPI.addTagToItem({
+          path: rec.path,
+          tagName: m[1],
+          isDirectory: rec.isFolder,
+          inode: rec.inode,
+          dir_id: rec.dir_id
+        }).catch(err => console.error('Error auto-tagging from notes:', err));
+      }
+    }
 
     // Re-render view mode
     const settings = await window.electronAPI.getSettings();
@@ -5437,6 +5464,30 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
     });
   }
 
+  // Add "Remove Tag" for single selection
+  if (!isMultiSelect) {
+    const singleRecord = selectedRecords[0];
+    let existingTags = [];
+    try {
+      if (singleRecord && singleRecord.tagsRaw) existingTags = JSON.parse(singleRecord.tagsRaw);
+      if (!Array.isArray(existingTags)) existingTags = [];
+    } catch {}
+
+    if (existingTags.length > 0) {
+      contextMenu.push({
+        id: 'remove-tag-label',
+        text: 'Remove Tag',
+        items: existingTags.map(t => ({ id: `remove-tag-${t}`, text: t }))
+      });
+    } else {
+      contextMenu.push({
+        id: 'remove-tag-disabled',
+        text: 'Remove Tag',
+        disabled: true
+      });
+    }
+  }
+
   // Add "Add to Favorites" for any selection with 1+ directories
   if (directoryCount > 0) {
     addSeparator(contextMenu);
@@ -5667,6 +5718,43 @@ async function handleContextMenuClick(event, panelId) {
       }
     } catch (err) {
       alert('Error adding tag: ' + err.message);
+    }
+  }
+
+  // Handle "Remove Tag" clicks
+  if (menuItemId.startsWith('remove-tag-') && menuItemId !== 'remove-tag-label' && menuItemId !== 'remove-tag-disabled') {
+    const tagName = menuItemId.replace('remove-tag-', '');
+    const record = selectedRecords[0];
+    if (record) {
+      try {
+        await window.electronAPI.removeTagFromItem({
+          path: record.path,
+          tagName,
+          isDirectory: record.isFolder,
+          inode: record.inode,
+          dir_id: record.dir_id
+        });
+
+        // Update the grid record in-place so the badge disappears immediately
+        const grid = panelState[panelId].w2uiGrid;
+        if (grid) {
+          const gridRecord = grid.records.find(r => r.recid === record.recid);
+          if (gridRecord) {
+            let currentTags = [];
+            try {
+              if (gridRecord.tagsRaw) currentTags = JSON.parse(gridRecord.tagsRaw);
+              if (!Array.isArray(currentTags)) currentTags = [];
+            } catch {}
+            currentTags = currentTags.filter(t => t !== tagName);
+            gridRecord.tagsRaw = currentTags.length > 0 ? JSON.stringify(currentTags) : null;
+            const tagDefs = Object.fromEntries(allTags.map(t => [t.name, t]));
+            gridRecord.tags = renderTagBadges(gridRecord.tagsRaw, tagDefs);
+            grid.refreshRow(gridRecord.recid);
+          }
+        }
+      } catch (err) {
+        alert('Error removing tag: ' + err.message);
+      }
     }
   }
 }

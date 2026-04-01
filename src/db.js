@@ -182,7 +182,7 @@ class DatabaseService {
         dateCreated = excluded.dateCreated,
         size = excluded.size,
         mode = excluded.mode,
-        tags = excluded.tags
+        tags = CASE WHEN excluded.tags IS NOT NULL THEN excluded.tags ELSE tags END
     `);
 
     return stmt.run(
@@ -368,17 +368,63 @@ class DatabaseService {
   }
 
   /**
-   * Add a tag to a directory (appends to existing tags JSON array)
+   * Add a tag to a directory (appends to existing tags JSON array, stored in files table dot entry)
    */
   addTagToDirectory(dirname, tagName) {
-    const row = this.db.prepare('SELECT tags FROM dirs WHERE dirname = ?').get(dirname);
+    const dirRow = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(dirname);
+    if (!dirRow) return;
+    const dir_id = dirRow.id;
+    const row = this.db.prepare('SELECT tags FROM files WHERE dir_id = ? AND filename = ?').get(dir_id, '.');
     let current = [];
     if (row && row.tags) {
       try { current = JSON.parse(row.tags); } catch {}
       if (!Array.isArray(current)) current = [];
     }
     if (!current.includes(tagName)) current.push(tagName);
-    this.db.prepare('UPDATE dirs SET tags = ? WHERE dirname = ?').run(JSON.stringify(current), dirname);
+    this.db.prepare('UPDATE files SET tags = ? WHERE dir_id = ? AND filename = ?').run(JSON.stringify(current), dir_id, '.');
+  }
+
+  /**
+   * Get tags for a directory (from files table dot entry)
+   */
+  getTagsForDirectory(dirname) {
+    const dirRow = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(dirname);
+    if (!dirRow) return null;
+    const row = this.db.prepare('SELECT tags FROM files WHERE dir_id = ? AND filename = ?').get(dirRow.id, '.');
+    return (row && row.tags) ? row.tags : null;
+  }
+
+  /**
+   * Remove a tag from a file
+   */
+  removeTagFromFile(inode, dir_id, tagName) {
+    const row = this.db.prepare('SELECT tags FROM files WHERE inode = ? AND dir_id = ?').get(inode, dir_id);
+    let current = [];
+    if (row && row.tags) {
+      try { current = JSON.parse(row.tags); } catch {}
+      if (!Array.isArray(current)) current = [];
+    }
+    current = current.filter(t => t !== tagName);
+    const newTags = current.length > 0 ? JSON.stringify(current) : null;
+    this.db.prepare('UPDATE files SET tags = ? WHERE inode = ? AND dir_id = ?').run(newTags, inode, dir_id);
+  }
+
+  /**
+   * Remove a tag from a directory (from files table dot entry)
+   */
+  removeTagFromDirectory(dirname, tagName) {
+    const dirRow = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(dirname);
+    if (!dirRow) return;
+    const dir_id = dirRow.id;
+    const row = this.db.prepare('SELECT tags FROM files WHERE dir_id = ? AND filename = ?').get(dir_id, '.');
+    let current = [];
+    if (row && row.tags) {
+      try { current = JSON.parse(row.tags); } catch {}
+      if (!Array.isArray(current)) current = [];
+    }
+    current = current.filter(t => t !== tagName);
+    const newTags = current.length > 0 ? JSON.stringify(current) : null;
+    this.db.prepare('UPDATE files SET tags = ? WHERE dir_id = ? AND filename = ?').run(newTags, dir_id, '.');
   }
 
   /**

@@ -642,6 +642,23 @@ ipcMain.handle('add-tag-to-item', (event, { path, tagName, isDirectory, inode, d
 });
 
 /**
+ * Tags: Remove a tag from a directory or file
+ */
+ipcMain.handle('remove-tag-from-item', (event, { path, tagName, isDirectory, inode, dir_id }) => {
+  try {
+    if (isDirectory) {
+      db.removeTagFromDirectory(path, tagName);
+    } else {
+      db.removeTagFromFile(inode, dir_id, tagName);
+    }
+    return { success: true };
+  } catch (err) {
+    logger.error('Error removing tag from item:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * File Types: List available user-*.png icon files
  */
 ipcMain.handle('get-file-type-icons', () => {
@@ -879,7 +896,7 @@ ipcMain.handle('render-markdown', async (event, content) => {
   try {
     const MarkdownIt = require('markdown-it');
     const md = new MarkdownIt({
-      html: true,
+      html: false, // Disable raw HTML for security
       linkify: true,
       typographer: true
     });
@@ -1118,7 +1135,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           initials: existingDir ? (existingDir.initials || null) : null,
           perms: entry.perms || { read: true, write: false },
           mode: entry.mode ?? null,
-          tags: existingDir ? (existingDir.tags || null) : null
+          tags: existingDir ? db.getTagsForDirectory(entry.path) : null
         });
       }
     }
@@ -1351,6 +1368,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         path: dirPath,
         changeState: 'unchanged',
         initials: dirRecord ? (dirRecord.initials || null) : null,
+        tags: dotFileRecord.tags || null,
         orphan_id: null,
         new_dir_id: null
       });
