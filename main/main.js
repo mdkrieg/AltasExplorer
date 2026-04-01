@@ -1093,7 +1093,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           checksumValue: (dbFile && dbFile.checksumValue) ? dbFile.checksumValue : null,
           checksumStatus: (dbFile && dbFile.checksumStatus) ? dbFile.checksumStatus : null,
           perms: entry.perms || { read: false, write: false },
-          mode: entry.mode ?? null
+          mode: entry.mode ?? null,
+          tags: (dbFile && dbFile.tags) ? dbFile.tags : null
         });
         
         // Mark as processed
@@ -1116,7 +1117,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           changeState,
           initials: existingDir ? (existingDir.initials || null) : null,
           perms: entry.perms || { read: true, write: false },
-          mode: entry.mode ?? null
+          mode: entry.mode ?? null,
+          tags: existingDir ? (existingDir.tags || null) : null
         });
       }
     }

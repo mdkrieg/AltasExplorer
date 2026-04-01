@@ -1019,6 +1019,25 @@ hr {
   color: #666666;
 }
 
+/* Tag badges in the file grid */
+.tag-badge-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  padding: 1px 0;
+}
+
+.tag-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
 .file-content-view blockquote {
   border-left: 4px solid #ddd;
   padding: 0 12px;

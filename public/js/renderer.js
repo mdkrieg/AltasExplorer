@@ -362,11 +362,29 @@ function setScanIndicator(panelId, scanning) {
 }
 
 /**
+ * Render a JSON tags array (e.g. '["foo","bar"]') as colored pill badges.
+ * tagDefs is the object returned by window.electronAPI.loadTags().
+ */
+function renderTagBadges(tagsJson, tagDefs) {
+  if (!tagsJson) return '';
+  let names;
+  try { names = JSON.parse(tagsJson); } catch { return ''; }
+  if (!Array.isArray(names) || names.length === 0) return '';
+  const badges = names.map(name => {
+    const def = tagDefs[name];
+    const bg   = def ? def.bgColor   : '#888';
+    const fg   = def ? def.textColor : '#fff';
+    return `<span class="tag-badge" style="background:${bg};color:${fg}">${name}</span>`;
+  });
+  return `<div class="tag-badge-container">${badges.join('')}</div>`;
+}
+
+/**
  * Build w2ui record objects from an array of entries without touching the grid.
  * Uses iconCache and categoryCache (Maps) to avoid duplicate IPC calls within a
  * single scan session — caches are keyed by path (category) or color+initials (icons).
  */
-async function buildGridRecords(entries, panelId, iconCache, categoryCache) {
+async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagDefs = {}) {
   const state = panelState[panelId];
   const records = [];
 
@@ -406,6 +424,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache) {
       dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
       perms: applyClass(getPermsCell(folder), className),
       checksum: applyClass('—', className),
+      tags: renderTagBadges(folder.tags || null, tagDefs),
       isFolder: true,
       path: folder.path,
       changeState: folder.changeState,
@@ -437,6 +456,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache) {
         checksum: applyClass('—', className),
         checksumStatus: null,
         checksumValue: null,
+        tags: '',
         isFolder: false,
         path: file.path,
         changeState: 'permError',
@@ -468,6 +488,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache) {
       checksum: checksumCell,
       checksumStatus: file.checksumStatus || null,
       checksumValue: file.checksumValue || null,
+      tags: renderTagBadges(file.tags || null, tagDefs),
       isFolder: false,
       path: file.path,
       changeState: file.changeState,
@@ -496,7 +517,7 @@ function addRecordsToGrid(records, panelId) {
  * its entries to the grid as results arrive.  Exits immediately if the scan is
  * cancelled or the scanToken has changed (i.e. a new navigation started).
  */
-async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, token) {
+async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs = {}) {
   const state = panelState[panelId];
 
   while (state.pendingDirs.length > 0 && !state.scanCancelled && state.scanToken === token) {
@@ -513,7 +534,7 @@ async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, t
       .filter(e => e.filename !== '.')  // always drop the subdir's own '.' entry
       .map(e => ({ ...e, displayFilename: getRelativePathFromRoot(rootPath, e.path) }));
 
-    const records = await buildGridRecords(entries, panelId, iconCache, categoryCache);
+    const records = await buildGridRecords(entries, panelId, iconCache, categoryCache, tagDefs);
 
     // Guard again after the async icon / category fetches
     if (state.scanCancelled || state.scanToken !== token) break;
@@ -545,12 +566,15 @@ async function resumeScan(panelId) {
 
   setScanIndicator(panelId, true);
 
-  const settings = await window.electronAPI.getSettings();
+  const [settings, tagDefs] = await Promise.all([
+    window.electronAPI.getSettings(),
+    window.electronAPI.loadTags()
+  ]);
   const hideDotDirectory = settings.hide_dot_directory || false;
   const iconCache = new Map();
   const categoryCache = new Map();
 
-  await processPendingDirs(panelId, state.currentPath, iconCache, categoryCache, token);
+  await processPendingDirs(panelId, state.currentPath, iconCache, categoryCache, token, tagDefs);
 
   if (state.scanToken === token) {
     state.scanInProgress = false;
@@ -579,7 +603,10 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
 
   setScanIndicator(panelId, true);
 
-  const settings = await window.electronAPI.getSettings();
+  const [settings, tagDefs] = await Promise.all([
+    window.electronAPI.getSettings(),
+    window.electronAPI.loadTags()
+  ]);
   const hideDotDirectory = settings.hide_dot_directory || false;
 
   const iconCache    = new Map();
@@ -601,7 +628,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
     .filter(e => !hideDotDirectory || e.filename !== '.')
     .map(e => ({ ...e, displayFilename: getRelativePathFromRoot(rootPath, e.path) }));
 
-  const rootRecords = await buildGridRecords(rootEntries, panelId, iconCache, categoryCache);
+  const rootRecords = await buildGridRecords(rootEntries, panelId, iconCache, categoryCache, tagDefs);
   if (state.scanToken === token) addRecordsToGrid(rootRecords, panelId);
 
   // --- Queue subdirectories for incremental streaming ---
@@ -610,7 +637,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
     for (const subdir of subdirs) {
       state.pendingDirs.push({ path: subdir.path, maxDepth, currentDepth: 1 });
     }
-    await processPendingDirs(panelId, rootPath, iconCache, categoryCache, token);
+    await processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs);
   }
 
   if (state.scanToken === token) {
@@ -1364,7 +1391,8 @@ async function initializeGridForPanel(panelId) {
     { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true },
     { field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
     { field: 'perms', text: 'Perms', size: '48px', resizable: true, sortable: true },
-    { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false }
+    { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false },
+    { field: 'tags', text: 'Tags', size: '160px', resizable: true, sortable: false }
   ];
 
   // Use w2grid constructor directly
@@ -1545,8 +1573,11 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 
   const state = panelState[panelId];
   
-  // Get the hide dot directory setting
-  const settings = await window.electronAPI.getSettings();
+  // Get the hide dot directory setting and tag definitions
+  const [settings, tagDefs] = await Promise.all([
+    window.electronAPI.getSettings(),
+    window.electronAPI.loadTags()
+  ]);
   const hideDotDirectory = settings.hide_dot_directory || false;
   
   // Filter out "." entries if hiding is enabled
@@ -1595,6 +1626,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
       perms: applyClass(getPermsCell(folder), className),
       checksum: applyClass('—', className),
+      tags: renderTagBadges(folder.tags || null, tagDefs),
       isFolder: true,
       path: folder.path,
       changeState: folder.changeState,
@@ -1628,6 +1660,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
         checksum: applyClass('—', className),
         checksumStatus: null,
         checksumValue: null,
+        tags: '',
         isFolder: false,
         path: file.path,
         changeState: 'permError',
@@ -1669,6 +1702,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       checksum: checksumCell,
       checksumStatus: file.checksumStatus || null,
       checksumValue: file.checksumValue || null,
+      tags: renderTagBadges(file.tags || null, tagDefs),
       isFolder: false,
       path: file.path,
       changeState: file.changeState,
