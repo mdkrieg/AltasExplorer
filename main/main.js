@@ -171,15 +171,15 @@ ipcMain.handle('get-parent-directory-metadata', (event, dirPath) => {
   try {
     // Get filesystem metadata (inode, permissions, dates)
     const fsMetadata = fs.getParentDirectoryMetadata(dirPath);
-    logger.info(`[DEBUG] get-parent-directory-metadata for: ${dirPath}, fsMetadata:`, fsMetadata);
+    // logger.info(`[DEBUG] get-parent-directory-metadata for: ${dirPath}, fsMetadata:`, fsMetadata);
     if (!fsMetadata) {
-      logger.info('[DEBUG] fsMetadata is null, returning null (at root)');
+      // logger.info('[DEBUG] fsMetadata is null, returning null (at root)');
       return null; // At root, no parent
     }
     
     // Get database metadata (category, tags, initials, attributes)
     const dbMetadata = db.getParentDirectoryInfo(dirPath);
-    logger.info('[DEBUG] dbMetadata:', dbMetadata);
+    // logger.info('[DEBUG] dbMetadata:', dbMetadata);
 
     // Look up the parent's dot-file for attributes
     let parentAttributes = null;
@@ -203,7 +203,7 @@ ipcMain.handle('get-parent-directory-metadata', (event, dirPath) => {
       description: dbMetadata?.description || null,
       attributes: parentAttributes
     };
-    logger.info('[DEBUG] Returning parent metadata:', result);
+    // logger.info('[DEBUG] Returning parent metadata:', result);
     return result;
   } catch (err) {
     logger.error('Error getting parent directory metadata:', err.message);

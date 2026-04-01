@@ -1522,11 +1522,14 @@ async function initializeGridForPanel(panelId) {
   // Use w2grid constructor directly
   w2ui[gridName] = new w2grid({
     name: gridName,
+    reorderColumns: true,
     recordHeight: recordHeight,
     show: {
       header: true,
       toolbar: true,
-      footer: true
+      footer: true,
+      skipRecords: false,
+      saveRestoreState: false
     },
     toolbar: {
       items: [

@@ -11,19 +11,23 @@
 * Generates audit trail as you browse
 
 ### UP NEXT:
-* Landing page is an item summary for the item selected in the grid
-  * Currently locked to panel 1 - make it so it obeys the panel with focus - does nothing if landing page is selected - maybe does if file editor selected?
-* TODOs in notes get aggregated
-* Copy as Path in context menu
-* Fix / figure out what to do with link in markdown (web links open in Electron)
-* Context menu cancel with click off (left click)
-* Collapsible Sidebar - all the stuff hides, should just show icons
-* Dragon Dropping
-* Make New Folder + Make New File
-* Make directory layout (columns shown, column sizes) are stored in the dirs table - empty is default view else store entire state
+* Browser settings - the "Show . and .. folder names" setting not retaining accross restart, also I get three consecutive "Saved successfully" popups when I click Save there
+* My custom icon for images not showing in the file grid
+[x] Landing page is an item summary for the item selected in the grid
+  [x] Currently locked to panel 1 - make it so it obeys the panel with focus - does nothing if landing page is selected - maybe does if file editor selected?
+[ ] Heighten the grid text wrappers, "g" for example is getting cut off at the bottom
+[ ] TODOs in notes get aggregated
+[ ] Copy as Path in context menu
+[ ] Fix / figure out what to do with link in markdown (web links open in Electron)
+[ ] Context menu cancel with click off (left click)
+[ ] Collapsible Sidebar - all the stuff hides, should just show icons
+[ ] Dragon Dropping
+[ ] Make New Folder + Make New File
+[ ] Make directory layout (columns shown, column sizes) are stored in the dirs table - empty is default view else store entire state
 
 ### TO PONDER:
-Should I abandon my "no file edit in panel 1" philosophy?
+* Should I abandon my "no file edit in panel 1" philosophy?
+
 
 ### TODO:
 [ ] Category inheritance (Set rules like "all subdirs get X category" on category definition)
