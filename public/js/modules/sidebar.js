@@ -116,7 +116,7 @@ export async function expandSidebarItem($item, path) {
   }
 
   $expandIcon.text('▼');
-  $children.slideDown(150);
+  $children.show();
   sidebarState.expandedPaths.add(path);
 }
 
@@ -129,7 +129,7 @@ export function collapseSidebarItem($item) {
   const path = $item.data('path');
 
   $expandIcon.text('▶');
-  $children.slideUp(150);
+  $children.hide();
   sidebarState.expandedPaths.delete(path);
 }
 

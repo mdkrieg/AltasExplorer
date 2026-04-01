@@ -75,7 +75,6 @@ button {
   border: 1px solid #ccc;
   padding: 6px 12px;
   border-radius: 4px;
-  transition: all 0.2s ease;
 }
 
 button:hover {
@@ -147,7 +146,6 @@ button:active {
   font-weight: bold;
   z-index: 10;
   user-select: none;
-  transition: background-color 0.2s ease;
 }
 
 .panel-number-selected {
@@ -176,7 +174,6 @@ button:active {
   position: absolute;
   background-color: #d0d0d0;
   pointer-events: none;
-  transition: width 0.1s ease, height 0.1s ease, background-color 0.1s ease;
 }
 
 .panel-divider.vertical {
@@ -202,7 +199,6 @@ button:active {
 
 .panel-divider.vertical.dragging::before {
   background-color: #808080;
-  transition: none;
 }
 
 .panel-divider.horizontal {
@@ -228,7 +224,6 @@ button:active {
 
 .panel-divider.horizontal.dragging::before {
   background-color: #808080;
-  transition: none;
 }
 
 /* Make badge a drag handle */
@@ -354,13 +349,11 @@ button:active {
 
 /* Layout option buttons hover effect */
 .layout-option {
-  transition: all 0.2s ease !important;
 }
 
 .layout-option:hover {
   border-color: #2196F3 !important;
   box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3) !important;
-  transform: translateY(-2px) !important;
 }
 
 .layout-option:active {
@@ -373,35 +366,16 @@ button:active {
 #settings-modal,
 #notes-modal {
   z-index: 1000;
-  animation: fadeIn 0.2s ease;
 }
 
 #layout-modal > div,
 #settings-modal > div,
 #notes-modal > div {
-  animation: slideUp 0.2s ease;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
 }
 
 #category-modal > div {
-  animation: slideUp 0.2s ease;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-}
-
-@keyframes slideUp {
-  from {
-    transform: translate(-50%, calc(-50% + 20px));
-    opacity: 0;
-  }
-  to {
-    transform: translate(-50%, -50%);
-    opacity: 1;
-  }
 }
 
 /* Input fields */
@@ -619,7 +593,6 @@ textarea {
   border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
-  transition: all 0.2s ease;
 }
 
 .btn-panel-select:hover,
@@ -639,7 +612,6 @@ textarea {
 .btn-file-back {
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
 .btn-file-back {
@@ -661,7 +633,6 @@ textarea {
   font-weight: bold;
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
 .btn-panel-remove:hover {
@@ -685,7 +656,6 @@ textarea {
   border-radius: 4px;
   cursor: pointer;
   z-index: 5;
-  transition: all 0.2s ease;
 }
 
 .btn-panel-remove-overlay:hover {
@@ -799,7 +769,6 @@ hr {
 
 .tagging-tab-btn {
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
 .tagging-tab-content {
@@ -844,7 +813,6 @@ hr {
   font-size: 11px;
   text-align: left;
   box-sizing: border-box;
-  transition: border-color 0.15s ease;
 }
 
 .ft-icon-trigger:hover:not(:disabled) {
@@ -879,7 +847,6 @@ hr {
   cursor: pointer;
   font-size: 11px;
   color: #333;
-  transition: background 0.1s ease;
 }
 
 .ft-icon-option:hover {
@@ -1003,7 +970,6 @@ hr {
   padding: 8px 12px;
   border: none;
   border-radius: 4px;
-  transition: all 0.2s ease;
 }
 
 #btn-cat-save:hover {
@@ -1270,7 +1236,6 @@ hr {
 /* Editable Panel Path Styling */
 .panel-path {
   cursor: pointer;
-  transition: background 0.2s ease;
   padding: 2px 4px;
   border-radius: 2px;
 }
@@ -1391,7 +1356,6 @@ hr {
   cursor: pointer;
   color: #444;
   flex-shrink: 0;
-  transition: background-color 0.15s ease;
 }
 
 #sidebar-toolbar button:hover {
@@ -1445,7 +1409,6 @@ hr {
   padding: 2px 4px;
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.15s ease;
   margin: 0 4px;
   border-radius: 3px;
 }
@@ -1467,7 +1430,6 @@ hr {
   cursor: pointer;
   flex-shrink: 0;
   color: #666;
-  transition: transform 0.2s ease;
 }
 
 .sidebar-toggle-arrow.collapsed {
@@ -1534,7 +1496,6 @@ hr {
   padding: 2px 4px;
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.15s ease;
   margin: 0 4px;
   border-radius: 3px;
 }
@@ -1557,7 +1518,6 @@ hr {
   cursor: grab;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.15s ease;
 }
 
 .favorite-item:hover .favorite-item-drag-handle {
