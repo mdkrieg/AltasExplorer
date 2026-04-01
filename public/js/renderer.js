@@ -14,15 +14,25 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1 },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1 },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1 },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1 }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
 let panel1SelectedDirectoryPath = null;
 let panel1SelectedDirectoryName = null;
+
+// Track the currently selected item for Item Properties pages
+let selectedItemState = {
+  path: null,
+  filename: null,
+  isDirectory: false,
+  inode: null,
+  dir_id: null,
+  record: null
+};
 
 let activePanelId = 1;
 let allCategories = {};
@@ -506,6 +516,16 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
       orphan_id: file.orphan_id || null,
       new_dir_id: file.new_dir_id || null
     });
+
+    // Add attribute columns from stored JSON
+    if (file.attributes) {
+      let attrObj = {};
+      try { attrObj = typeof file.attributes === 'string' ? JSON.parse(file.attributes) : file.attributes; } catch(_) {}
+      const lastRecord = records[records.length - 1];
+      for (const [k, v] of Object.entries(attrObj)) {
+        lastRecord[`attr_${k}`] = v !== null && v !== undefined ? String(v) : '';
+      }
+    }
   }
 
   return records;
@@ -795,7 +815,15 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
 
     // Get category for this directory
     const category = await window.electronAPI.getCategoryForDirectory(normalizedPath);
+    const prevCategory = state.currentCategory;
     state.currentCategory = category;
+
+    // If the category's attributes changed, reinitialize the grid so attribute columns update
+    const prevAttrs = JSON.stringify((prevCategory && prevCategory.attributes) || []);
+    const newAttrs = JSON.stringify((category && category.attributes) || []);
+    if (prevAttrs !== newAttrs) {
+      await initializeGridForPanel(panelId);
+    }
 
     // Update window icon if this is the active panel
     // Use initials from the "." dot entry of the current directory if present
@@ -1455,6 +1483,19 @@ async function initializeGridForPanel(panelId) {
     { field: 'tags', text: 'Tags', size: '160px', resizable: true, sortable: false }
   ];
 
+  // Add attribute columns — use currentAttrColumns (union from all visible subdirectory categories),
+  // falling back to the current directory's own category attributes if not yet scanned
+  const attrCols = state.currentAttrColumns || (state.currentCategory && state.currentCategory.attributes) || [];
+  for (const attrName of attrCols) {
+    columns.push({
+      field: `attr_${attrName}`,
+      text: attrName,
+      size: '100px',
+      resizable: true,
+      sortable: true
+    });
+  }
+
   // Use w2grid constructor directly
   w2ui[gridName] = new w2grid({
     name: gridName,
@@ -1506,6 +1547,30 @@ async function initializeGridForPanel(panelId) {
             updatePanelSelectButtons();
           }
           // Let w2ui handle the row highlighting naturally
+        }
+      }
+
+      // Update selectedItemState for Item Properties pages
+      if (event.detail.recid) {
+        const record = this.records[event.detail.recid - 1];
+        if (record && getPanelViewType(panelId) !== 'properties') {
+          selectedItemState = {
+            path: record.path,
+            filename: record.filenameRaw || record.filename,
+            isDirectory: record.isFolder || false,
+            inode: record.inode || null,
+            dir_id: record.dir_id || null,
+            record: record
+          };
+          setActivePanelId(panelId);
+          // Reset edit modes for all properties panels when selection changes
+          for (let pid = 2; pid <= 4; pid++) {
+            if (panelState[pid]) {
+              panelState[pid].attrEditMode = false;
+              panelState[pid].notesEditMode = false;
+            }
+          }
+          refreshItemPropertiesInAllPanels();
         }
       }
 
@@ -1680,6 +1745,12 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     return `<div class="${className}">${content}</div>`;
   }
 
+  // Track attribute columns: start with current-dir category's attributes, then expand with subdirs
+  const attrColSet = new Set();
+  if (state.currentCategory && state.currentCategory.attributes) {
+    for (const a of state.currentCategory.attributes) attrColSet.add(a);
+  }
+
   // Add folders first
   for (const folder of folders) {
     // Determine which icon to use based on changeState
@@ -1692,6 +1763,9 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     } else {
       category = await window.electronAPI.getCategoryForDirectory(folder.path);
       iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, folder.initials || null);
+      if (category && category.attributes) {
+        for (const a of category.attributes) attrColSet.add(a);
+      }
     }
     
     // Use the same getRowClassName function for consistency with files
@@ -1718,6 +1792,16 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       orphan_id: folder.orphan_id || null,
       new_dir_id: folder.new_dir_id || null
     });
+
+    // Add attribute values from the folder's dot-file
+    if (folder.attributes) {
+      let attrObj = {};
+      try { attrObj = typeof folder.attributes === 'string' ? JSON.parse(folder.attributes) : folder.attributes; } catch (_) {}
+      const lastRecord = records[records.length - 1];
+      for (const [k, v] of Object.entries(attrObj)) {
+        lastRecord[`attr_${k}`] = v !== null && v !== undefined ? String(v) : '';
+      }
+    }
   }
 
   // Then add files
@@ -1795,6 +1879,23 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       orphan_id: file.orphan_id || null,
       new_dir_id: file.new_dir_id || null
     });
+
+    // Add attribute columns from stored JSON
+    if (file.attributes) {
+      let attrObj = {};
+      try { attrObj = typeof file.attributes === 'string' ? JSON.parse(file.attributes) : file.attributes; } catch(_) {}
+      const lastRecord = records[records.length - 1];
+      for (const [k, v] of Object.entries(attrObj)) {
+        lastRecord[`attr_${k}`] = v !== null && v !== undefined ? String(v) : '';
+      }
+    }
+  }
+
+  // Rebuild grid columns if the set of attribute columns has changed
+  const newAttrCols = [...attrColSet].sort();
+  if (JSON.stringify(newAttrCols) !== JSON.stringify(state.currentAttrColumns || [])) {
+    state.currentAttrColumns = newAttrCols;
+    await initializeGridForPanel(panelId);
   }
 
   // Update grid records for this panel
@@ -2256,6 +2357,32 @@ function setActivePanelId(panelId) {
     }
     $(`#panel-${panelId} .panel-number`).addClass('panel-number-selected');
     console.log('Active panel set to:', panelId);
+    // Refresh item properties to reflect active panel's selection
+    refreshItemPropertiesInAllPanels();
+  }
+}
+
+/**
+ * Returns which view is currently active for the given panel:
+ * 'grid' | 'file' | 'properties'
+ */
+function getPanelViewType(panelId) {
+  const $panel = $(`#panel-${panelId}`);
+  if ($panel.find('.panel-file-view').is(':visible')) return 'file';
+  if ($panel.find('.panel-grid').is(':visible')) return 'grid';
+  return 'properties';
+}
+
+/**
+ * Refresh Item Properties content in all visible panels that show the landing page
+ */
+function refreshItemPropertiesInAllPanels() {
+  for (let i = 2; i <= 4; i++) {
+    // Don't disrupt a panel that's currently in attribute or notes edit mode
+    if (panelState[i].attrEditMode || panelState[i].notesEditMode) continue;
+    if ($(`#panel-${i}`).is(':visible') && getPanelViewType(i) === 'properties') {
+      updateItemPropertiesPage(i);
+    }
   }
 }
 
@@ -3214,6 +3341,21 @@ function createMonacoEditorInstance(containerElement) {
 async function showFileView(panelId, filePathOverride) {
   const filePath = filePathOverride || (panelState[1].currentPath + '\\notes.txt');
   panelState[panelId].fileViewPath = filePath;
+
+  // Update selectedItemState so Item Properties pages reflect the open file
+  if (filePath) {
+    const fname = filePath.split('\\').pop() || filePath.split('/').pop() || '';
+    selectedItemState = {
+      path: filePath,
+      filename: fname,
+      isDirectory: false,
+      inode: null,
+      dir_id: null,
+      record: null
+    };
+    refreshItemPropertiesInAllPanels();
+  }
+
   const $fileView = $(`#panel-${panelId} .panel-file-view`);
   const $fileEditorContainer = $fileView.find('.file-editor-container');
   const $fileContentView = $fileView.find('.file-content-view');
@@ -3642,8 +3784,9 @@ function attachPanelEventListeners(panelId) {
   
   // Set active panel when clicking anywhere in the panel (except on interactive elements)
   $panel.off('click.panelActive').on('click.panelActive', function(e) {
-    // Don't retrigger for buttons that have their own handlers
-    if (!$(e.target).is('button') && !$(e.target).closest('button').length) {
+    // Don't retrigger for buttons/inputs that have their own handlers or need focus preserved
+    const interactiveSel = 'button, input, select, textarea, label, a';
+    if (!$(e.target).is(interactiveSel) && !$(e.target).closest(interactiveSel).length) {
       setActivePanelId(panelId);
     }
   });
@@ -3702,7 +3845,139 @@ function attachPanelEventListeners(panelId) {
     $panel.find('.btn-panel-remove-overlay').off('click').on('click', function() {
       removePanel(panelId);
     });
-    
+
+    // Item Properties: Open button
+    $panel.find('.btn-item-open').off('click').on('click', async function() {
+      if (!selectedItemState.path) return;
+      if (selectedItemState.isDirectory) {
+        navigateToDirectory(selectedItemState.path, panelId);
+        $panel.find('.panel-landing-page').hide();
+        $panel.find('.panel-grid').show();
+        const grid = panelState[panelId].w2uiGrid;
+        if (grid) {
+          const toolbarEl = document.getElementById(`grid_grid-panel-${panelId}_toolbar`);
+          if (toolbarEl && toolbarEl.style.height === '0px') toolbarEl.style.height = '';
+          grid.resize();
+        }
+      } else {
+        // Check openWith setting
+        try {
+          const stats = await window.electronAPI.getItemStats(selectedItemState.path);
+          if (stats && stats.openWith === 'builtin-editor') {
+            showFileView(panelId, selectedItemState.path);
+          }
+        } catch (err) {
+          console.error('Error getting item stats for open:', err);
+        }
+      }
+    });
+
+    // Item Properties: Attributes Edit / Save / Cancel buttons
+    $panel.find('.btn-attrs-edit').off('click').on('click', function() {
+      panelState[panelId].attrEditMode = true;
+      updateItemPropertiesPage(panelId);
+    });
+
+    $panel.find('.btn-attrs-cancel').off('click').on('click', function() {
+      panelState[panelId].attrEditMode = false;
+      updateItemPropertiesPage(panelId);
+    });
+
+    $panel.find('.btn-attrs-save').off('click').on('click', async function() {
+      const inode = panelState[panelId].itemInode || selectedItemState.inode;
+      const dir_id = panelState[panelId].itemDirId || selectedItemState.dir_id;
+      if (!inode || !dir_id) {
+        w2alert('Cannot save: item is not yet indexed. Please scan the directory first.');
+        return;
+      }
+      const attrs = {};
+      $panel.find('.item-props-attributes .attr-row').each(function() {
+        const name = $(this).data('attr-name');
+        const type = $(this).data('attr-type');
+        if (!name) return;
+        if ((type || '').toLowerCase() === 'yes-no') {
+          attrs[name] = $(this).find('input[type="checkbox"]').prop('checked');
+        } else {
+          attrs[name] = $(this).find('input, select').val();
+        }
+      });
+      try {
+        await window.electronAPI.setFileAttributes(inode, dir_id, attrs);
+        panelState[panelId].attrEditMode = false;
+        updateItemPropertiesPage(panelId);
+      } catch (err) {
+        w2alert('Error saving attributes: ' + err.message);
+      }
+    });
+
+    // Item Properties: inline Monaco notes editor
+    $panel.find('.btn-notes-edit-item').off('click').on('click', async function() {
+      const notesFilePath = panelState[panelId].notesFilePath;
+      const notesSectionKey = panelState[panelId].notesSectionKey;
+      if (!notesFilePath) return;
+
+      let rawFile = '';
+      try { rawFile = await window.electronAPI.readFileContent(notesFilePath) || ''; } catch (_) {}
+      const sections = parseNotesFileSections(rawFile);
+      const sectionContent = sections[notesSectionKey] || '';
+
+      panelState[panelId].notesEditMode = true;
+      const $notesSection = $panel.find('.item-props-notes-section');
+      $notesSection.find('.btn-notes-edit-item').hide();
+      $notesSection.find('.btn-notes-save-item').show();
+      $notesSection.find('.btn-notes-cancel-item').show();
+      $panel.find('.item-props-notes').hide();
+      const $editorContainer = $panel.find('.item-props-notes-editor').show();
+
+      if (!panelState[panelId].notesMonacoEditor) {
+        panelState[panelId].notesMonacoEditor = monaco.editor.create($editorContainer[0], {
+          value: sectionContent,
+          language: 'markdown',
+          theme: 'vs',
+          wordWrap: 'on',
+          lineNumbers: 'off',
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          automaticLayout: true,
+          fontSize: 12,
+          fontFamily: 'Consolas, "Courier New", monospace'
+        });
+      } else {
+        panelState[panelId].notesMonacoEditor.setValue(sectionContent);
+        panelState[panelId].notesMonacoEditor.layout();
+      }
+      panelState[panelId].notesMonacoEditor.focus();
+    });
+
+    $panel.find('.btn-notes-save-item').off('click').on('click', async function() {
+      const notesFilePath = panelState[panelId].notesFilePath;
+      const notesSectionKey = panelState[panelId].notesSectionKey;
+      if (!notesFilePath) return;
+      const editor = panelState[panelId].notesMonacoEditor;
+      const sectionContent = editor ? editor.getValue() : '';
+      try {
+        let existingContent = '';
+        try { existingContent = await window.electronAPI.readFileContent(notesFilePath) || ''; } catch (_) {}
+        const newFullContent = writeNotesSection(existingContent, notesSectionKey, sectionContent);
+        await window.electronAPI.writeFileContent(notesFilePath, newFullContent);
+      } catch (err) {
+        w2alert('Error saving notes: ' + err.message);
+        return;
+      }
+      panelState[panelId].notesEditMode = false;
+      updateItemPropertiesPage(panelId);
+    });
+
+    $panel.find('.btn-notes-cancel-item').off('click').on('click', function() {
+      panelState[panelId].notesEditMode = false;
+      const $notesSection = $panel.find('.item-props-notes-section');
+      $notesSection.find('.btn-notes-edit-item').show();
+      $notesSection.find('.btn-notes-save-item').hide();
+      $notesSection.find('.btn-notes-cancel-item').hide();
+      $panel.find('.item-props-notes-editor').hide();
+      $panel.find('.item-props-notes').show();
+    });
+
     // Add panel button on panel 2 landing page
     if (panelId === 2) {
       $panel.find('.btn-add-panel-landing').off('click').on('click', function() {
@@ -3994,6 +4269,41 @@ function attachEventListeners() {
     await deleteTagFromForm();
   });
 
+  // Attribute form save button
+  $('#btn-attr-save').click(async function() {
+    await saveAttributeFromForm();
+  });
+
+  // Attribute form clear/new button
+  $('#btn-attr-clear').click(function() {
+    clearAttributeForm();
+  });
+
+  // Attribute form delete button
+  $('#btn-attr-delete').click(async function() {
+    await deleteAttributeFromForm();
+  });
+
+  // Attribute type change - toggle options section
+  $('#form-attr-type').on('change', function() {
+    toggleAttrOptionsSection();
+  });
+
+  // Attribute options: Add button and Enter key
+  $('#btn-attr-option-add').on('click', function() {
+    const val = $('#form-attr-option-input').val();
+    addAttrOption(val);
+    $('#form-attr-option-input').val('').focus();
+  });
+  $('#form-attr-option-input').on('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = $(this).val();
+      addAttrOption(val);
+      $(this).val('');
+    }
+  });
+
   // File Types form save button
   $('#btn-ft-save').click(async function() {
     await saveFileTypeFromForm();
@@ -4242,6 +4552,9 @@ function hideTaggingModal() {
   if (w2ui['tags-grid']) {
     w2ui['tags-grid'].destroy();
   }
+  if (w2ui['attributes-grid']) {
+    w2ui['attributes-grid'].destroy();
+  }
 }
 
 /**
@@ -4254,10 +4567,42 @@ function switchTaggingTab(tabName) {
   const $tab = $(`#tab-${tabName}`);
   $tab.css('display', 'flex');
 
+  // When switching to category tab, refresh the attribute checkboxes (in case attributes
+  // were added/removed while visiting the Attributes tab in the same modal session)
+  if (tabName === 'category' && initializedTaggingTabs.has('category')) {
+    window.electronAPI.getAttributesList().then(attrList => {
+      const $container = $('#form-cat-attributes');
+      // Preserve currently checked values before rebuilding
+      const checkedValues = [];
+      $container.find('input[type="checkbox"]:checked').each(function() {
+        checkedValues.push($(this).val());
+      });
+      $container.empty();
+      if (attrList && attrList.length > 0) {
+        attrList.forEach(attr => {
+          const id = `cat-attr-cb-${attr.name.replace(/\s+/g, '-')}`;
+          $container.append(
+            `<label style="display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; cursor: pointer;">
+              <input type="checkbox" id="${id}" value="${attr.name}" ${checkedValues.includes(attr.name) ? 'checked' : ''}> ${attr.name}
+            </label>`
+          );
+        });
+      } else {
+        $container.append('<span style="font-size: 12px; color: #999;">No attributes defined yet.</span>');
+      }
+    });
+  }
+
   // Lazy-init tags grid when first opened
   if (tabName === 'tag' && !initializedTaggingTabs.has('tag')) {
     initializedTaggingTabs.add('tag');
     initializeTagsGrid().then(() => initializeTagsForm()).then(() => setupTagResizableDivider());
+  }
+
+  // Lazy-init attributes grid when first opened
+  if (tabName === 'attribute' && !initializedTaggingTabs.has('attribute')) {
+    initializedTaggingTabs.add('attribute');
+    initializeAttributesGrid().then(() => initializeAttributesForm()).then(() => setupAttributeResizableDivider());
   }
 
   // Update tab button styles
@@ -4408,6 +4753,7 @@ function populateFileTypeForm(record) {
   $('#form-ft-pattern').val(record.pattern).prop('disabled', record.locked);
   $('#form-ft-type').val(record.type).prop('disabled', record.locked);
   setFtIconSelection(record.icon || 'user-file.png');
+  $('#form-ft-open-with').val(record.openWith || 'none').prop('disabled', record.locked);
   $('#btn-ft-icon-trigger').prop('disabled', record.locked);
   if (record.locked) {
     $('#btn-ft-delete').hide();
@@ -4426,6 +4772,7 @@ function clearFileTypeForm() {
   $('#form-ft-pattern').val('').prop('disabled', false);
   $('#form-ft-type').val('').prop('disabled', false);
   setFtIconSelection('user-file.png');
+  $('#form-ft-open-with').val('none').prop('disabled', false);
   $('#btn-ft-icon-trigger').prop('disabled', false);
   $('#btn-ft-delete').show();
   $('#btn-ft-save').prop('disabled', false);
@@ -4461,7 +4808,8 @@ async function saveFileTypeFromForm() {
         fileTypeFormState.editingPattern,
         pattern,
         type,
-        fileTypeFormState.selectedIcon || null
+        fileTypeFormState.selectedIcon || null,
+        $('#form-ft-open-with').val() || 'none'
       );
       if (result && result.error) {
         w2alert('Error: ' + result.error);
@@ -4472,7 +4820,8 @@ async function saveFileTypeFromForm() {
       const result = await window.electronAPI.addFileType(
         pattern,
         type,
-        fileTypeFormState.selectedIcon || null
+        fileTypeFormState.selectedIcon || null,
+        $('#form-ft-open-with').val() || 'none'
       );
       if (result && result.error) {
         w2alert('Error: ' + result.error);
@@ -5783,6 +6132,8 @@ async function handleContextMenuClick(event, panelId) {
   if (menuItemId.startsWith('add-tag-') && menuItemId !== 'add-tag-label') {
     const tagName = menuItemId.replace('add-tag-', '');
     try {
+      const grid = panelState[panelId].w2uiGrid;
+      const tagDefs = Object.fromEntries(allTags.map(t => [t.name, t]));
       for (const record of selectedRecords) {
         await window.electronAPI.addTagToItem({
           path: record.path,
@@ -5791,6 +6142,22 @@ async function handleContextMenuClick(event, panelId) {
           inode: record.inode,
           dir_id: record.dir_id
         });
+
+        // Update the grid record in-place so the badge appears immediately
+        if (grid) {
+          const gridRecord = grid.records.find(r => r.recid === record.recid);
+          if (gridRecord) {
+            let currentTags = [];
+            try {
+              if (gridRecord.tagsRaw) currentTags = JSON.parse(gridRecord.tagsRaw);
+              if (!Array.isArray(currentTags)) currentTags = [];
+            } catch {}
+            if (!currentTags.includes(tagName)) currentTags.push(tagName);
+            gridRecord.tagsRaw = JSON.stringify(currentTags);
+            gridRecord.tags = renderTagBadges(gridRecord.tagsRaw, tagDefs);
+            grid.refreshRow(gridRecord.recid);
+          }
+        }
       }
     } catch (err) {
       alert('Error adding tag: ' + err.message);
@@ -5974,7 +6341,26 @@ async function initializeCategoriesGrid() {
  * Initialize form elements for category editing
  */
 async function initializeCategoriesForm() {
-  // Form is already rendered in HTML, just clear it for new entry
+  // Populate attributes checkboxes from defined attributes
+  try {
+    const attrList = await window.electronAPI.getAttributesList();
+    const $container = $('#form-cat-attributes');
+    $container.empty();
+    if (attrList && attrList.length > 0) {
+      attrList.forEach(attr => {
+        const id = `cat-attr-cb-${attr.name.replace(/\s+/g, '-')}`;
+        $container.append(
+          `<label style="display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="${id}" value="${attr.name}"> ${attr.name}
+          </label>`
+        );
+      });
+    } else {
+      $container.append('<span style="font-size: 12px; color: #999;">No attributes defined yet.</span>');
+    }
+  } catch (err) {
+    console.error('Error loading attributes for category form:', err);
+  }
   clearCategoryForm();
 }
 
@@ -5988,6 +6374,11 @@ function populateCategoryForm(record) {
   $('#form-cat-textColor').val(rgbToHex(record.textColor));
   $('#form-cat-description').val(record.description || '');
   $('#form-cat-enableChecksum').prop('checked', record.enableChecksum || false);
+  // Populate attributes checkboxes
+  const selectedAttrs = record.attributes || [];
+  $('#form-cat-attributes').find('input[type="checkbox"]').each(function() {
+    $(this).prop('checked', selectedAttrs.includes($(this).val()));
+  });
 }
 
 /**
@@ -6000,6 +6391,7 @@ function clearCategoryForm() {
   $('#form-cat-textColor').val('#000000');
   $('#form-cat-description').val('');
   $('#form-cat-enableChecksum').prop('checked', false);
+  $('#form-cat-attributes').find('input[type="checkbox"]').prop('checked', false);
   
   // Clear grid selection
   const grid = w2ui['categories-grid'];
@@ -6086,13 +6478,20 @@ async function saveCategoryFromForm() {
   }
 
   try {
+    // Collect selected attributes
+    const selectedAttributes = [];
+    $('#form-cat-attributes').find('input[type="checkbox"]:checked').each(function() {
+      selectedAttributes.push($(this).val());
+    });
+
     // Convert HEX to RGB for storage
     const categoryData = {
       name: name,
       bgColor: hexToRgb(bgColorHex),
       textColor: hexToRgb(textColorHex),
       description: description,
-      enableChecksum: $('#form-cat-enableChecksum').prop('checked')
+      enableChecksum: $('#form-cat-enableChecksum').prop('checked'),
+      attributes: selectedAttributes
     };
 
     const isNew = !categoryFormState.editingName;
@@ -6168,6 +6567,445 @@ async function deleteCategoryFromForm() {
         alert('Error deleting category: ' + err.message);
       }
     })
+}
+
+// ==================== Item Properties ====================
+
+/**
+ * Update the Item Properties page for a given panel with the current selectedItemState
+ */
+async function updateItemPropertiesPage(panelId) {
+  const $panel = $(`#panel-${panelId}`);
+  const $placeholder = $panel.find('.item-properties-placeholder');
+  const $content = $panel.find('.item-properties-content');
+
+  if (!selectedItemState.path) {
+    $content.hide();
+    $placeholder.show();
+    return;
+  }
+
+  try {
+    const stats = await window.electronAPI.getItemStats(selectedItemState.path);
+    if (!stats) {
+      $content.hide();
+      $placeholder.show();
+      return;
+    }
+
+    // Stash DB-resolved inode/dir_id so the attrs save handler can use them
+    panelState[panelId].itemInode = stats.inode;
+    panelState[panelId].itemDirId = stats.dir_id;
+
+    // Header: icon + filename
+    const iconHtml = stats.isDirectory
+      ? `<img src="assets/icons/folder.png" style="width:24px;height:24px;object-fit:contain;" onerror="this.src='assets/icons/user-file.png'">`
+      : `<img src="assets/icons/${stats.ftIcon || 'user-file.png'}" style="width:24px;height:24px;object-fit:contain;">`;
+    $panel.find('.item-props-icon').html(iconHtml);
+    $panel.find('.item-props-filename').text(stats.filename || selectedItemState.filename || '');
+
+    // Stats section
+    const $stats = $panel.find('.item-props-stats').empty();
+    function statRow(label, value, extra) {
+      return `<div class="stat-row"><span class="stat-label">${label}</span><span class="stat-value">${value}${extra || ''}</span></div>`;
+    }
+    $stats.append(statRow('Name', stats.filename || ''));
+    $stats.append(statRow('Type', stats.isDirectory ? 'Folder' : (stats.fileType || 'File')));
+    if (!stats.isDirectory) {
+      $stats.append(statRow('Size', formatBytes(stats.size || 0)));
+    }
+    $stats.append(statRow('Date Modified', stats.dateModified ? new Date(stats.dateModified).toLocaleString() : '-'));
+    $stats.append(statRow('Date Created', stats.dateCreated ? new Date(stats.dateCreated).toLocaleString() : '-'));
+    if (!stats.isDirectory) {
+      const checksumDisplay = stats.checksumValue
+        ? `<span class="stat-value" title="${stats.checksumValue}">${stats.checksumValue.substring(0, 16)}…</span>`
+        : `<span style="color:#999;">Not calculated</span>`;
+      const calcBtn = `<button class="btn-checksum-calc" data-panel="${panelId}">Calculate Now</button>`;
+      $stats.append(`<div class="stat-row"><span class="stat-label">Checksum</span>${checksumDisplay}${calcBtn}</div>`);
+    }
+    // Tags
+    if (stats.tags && stats.tags.length > 0) {
+      const tagHtml = stats.tags.map(t => `<span class="tag-pill">${t}</span>`).join('');
+      $stats.append(statRow('Tags', tagHtml));
+    }
+    if (stats.categoryName) {
+      $stats.append(statRow('Category', stats.categoryName));
+    }
+
+    // Attributes section
+    const $attrSection = $panel.find('.item-props-attributes-section');
+    if (stats.categoryAttributes && stats.categoryAttributes.length > 0) {
+      $attrSection.css('display', 'flex');
+      const $attrContainer = $panel.find('.item-props-attributes').empty();
+      const currentAttrs = stats.attributes || {};
+      const editMode = panelState[panelId].attrEditMode || false;
+
+      // Show/hide Edit / Save / Cancel buttons per mode
+      $attrSection.find('.btn-attrs-edit').toggle(!editMode);
+      $attrSection.find('.btn-attrs-save').toggle(editMode);
+      $attrSection.find('.btn-attrs-cancel').toggle(editMode);
+
+      stats.categoryAttributes.forEach(attr => {
+        const val = currentAttrs[attr.name] !== undefined ? currentAttrs[attr.name] : (attr.default || '');
+        const type = (attr.type || '').toLowerCase();
+        let controlHtml;
+        if (editMode) {
+          if (type === 'yes-no') {
+            controlHtml = `<input type="checkbox" ${val ? 'checked' : ''}>`;
+          } else if (type === 'selectable' && attr.options && attr.options.length > 0) {
+            const opts = attr.options.map(o => `<option value="${o}" ${String(val) === String(o) ? 'selected' : ''}>${o}</option>`).join('');
+            controlHtml = `<select>${opts}</select>`;
+          } else if (type === 'numeric') {
+            controlHtml = `<input type="number" value="${val}">`;
+          } else {
+            controlHtml = `<input type="text" value="${String(val)}">`;
+          }
+        } else {
+          if (type === 'yes-no') {
+            controlHtml = `<span>${val ? 'Yes' : 'No'}</span>`;
+          } else {
+            controlHtml = `<span>${String(val || '')}</span>`;
+          }
+        }
+        const $row = $(`<div class="attr-row" data-attr-name="${attr.name}" data-attr-type="${attr.type}"><label>${attr.name}</label>${controlHtml}</div>`);
+        $attrContainer.append($row);
+      });
+    } else {
+      $attrSection.hide();
+    }
+
+    // Notes section — derive path and section key for both files and directories
+    const notesSep = stats.path.includes('\\') ? '\\' : '/';
+    let notesFilePath, notesSectionKey;
+    if (stats.isDirectory) {
+      notesFilePath = stats.path + notesSep + 'notes.txt';
+      notesSectionKey = '__dir__';
+    } else {
+      const lastSep = stats.path.lastIndexOf(notesSep);
+      notesFilePath = stats.path.substring(0, lastSep) + notesSep + 'notes.txt';
+      notesSectionKey = stats.filename;
+    }
+    panelState[panelId].notesFilePath = notesFilePath;
+    panelState[panelId].notesSectionKey = notesSectionKey;
+    const notesEditMode = panelState[panelId].notesEditMode || false;
+    const $notesSection = $panel.find('.item-props-notes-section');
+    $notesSection.find('.btn-notes-edit-item').toggle(!notesEditMode);
+    $notesSection.find('.btn-notes-save-item').toggle(notesEditMode);
+    $notesSection.find('.btn-notes-cancel-item').toggle(notesEditMode);
+    $panel.find('.item-props-notes').toggle(!notesEditMode);
+    $panel.find('.item-props-notes-editor').toggle(notesEditMode);
+
+    if (!notesEditMode) {
+      const $notes = $panel.find('.item-props-notes').empty();
+      try {
+        const rawFile = await window.electronAPI.readFileContent(notesFilePath);
+        const sections = parseNotesFileSections(rawFile || '');
+        const sectionContent = sections[notesSectionKey] || '';
+        if (sectionContent.trim()) {
+          const settings = await window.electronAPI.getSettings();
+          const fmt = settings.file_format || 'Markdown';
+          if (fmt === 'Markdown') {
+            const htmlContent = await window.electronAPI.renderMarkdown(sectionContent);
+            $notes.html(htmlContent);
+          } else if (fmt === 'HTML') {
+            $notes.html(sectionContent);
+          } else {
+            $notes.text(sectionContent);
+          }
+        } else {
+          $notes.html('<span style="color:#bbb;font-size:12px;">No notes</span>');
+        }
+      } catch (_) {
+        $notes.html('<span style="color:#bbb;font-size:12px;">No notes</span>');
+      }
+    } else if (panelState[panelId].notesMonacoEditor) {
+      panelState[panelId].notesMonacoEditor.layout();
+    }
+
+    // Wire checksum button
+    $panel.find('.btn-checksum-calc').off('click').on('click', async function() {
+      if (!selectedItemState.path || !selectedItemState.inode || !selectedItemState.dir_id) return;
+      $(this).prop('disabled', true).text('Calculating…');
+      try {
+        await window.electronAPI.calculateFileChecksum(
+          selectedItemState.path,
+          selectedItemState.inode,
+          selectedItemState.dir_id
+        );
+        updateItemPropertiesPage(panelId);
+      } catch (err) {
+        console.error('Checksum error:', err);
+        $(this).prop('disabled', false).text('Calculate Now');
+      }
+    });
+
+    $placeholder.hide();
+    $content.css('display', 'flex').show();
+  } catch (err) {
+    console.error('Error updating item properties:', err);
+    $content.hide();
+    $placeholder.show();
+  }
+}
+
+// ==================== Attributes Management ====================
+
+// State for attribute form editing
+let attributeFormState = {
+  editingName: null
+};
+
+/**
+ * Initialize attributes grid
+ */
+async function initializeAttributesGrid() {
+  const gridName = 'attributes-grid';
+
+  if (w2ui && w2ui[gridName]) {
+    w2ui[gridName].destroy();
+  }
+
+  const attrsData = await window.electronAPI.getAttributesList();
+
+  const records = attrsData.map((attr, index) => ({
+    recid: index,
+    name: attr.name,
+    type: attr.type || 'string',
+    description: attr.description || '',
+    attrName: attr.name,
+    default: attr.default || '',
+    options: Array.isArray(attr.options) ? attr.options.join(', ') : ''
+  }));
+
+  w2ui[gridName] = new w2grid({
+    name: gridName,
+    show: { header: false, toolbar: false, footer: false },
+    columns: [
+      { field: 'name', text: 'Name', size: '120px', resizable: true, sortable: true },
+      { field: 'type', text: 'Type', size: '80px', resizable: true, sortable: true },
+      { field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
+    ],
+    records: records,
+    onClick: function(event) {
+      event.onComplete = function() {
+        const sel = this.getSelection();
+        if (sel.length > 0) {
+          const record = this.records.find(r => r.recid === sel[0]);
+          if (record) populateAttributeForm(record);
+        }
+      };
+    }
+  });
+
+  w2ui[gridName].render('#attributes-grid');
+}
+
+/**
+ * Initialize attributes form
+ */
+async function initializeAttributesForm() {
+  clearAttributeForm();
+}
+
+/**
+ * Populate attribute form from grid record
+ */
+function populateAttributeForm(record) {
+  attributeFormState.editingName = record.attrName;
+  $('#form-attr-name').val(record.name);
+  $('#form-attr-description').val(record.description || '');
+  $('#form-attr-type').val(record.type || 'String');
+  // Populate options list first (before toggleAttrOptionsSection updates dropdown)
+  $('#form-attr-options-list').empty();
+  const options = record.options
+    ? record.options.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  options.forEach(opt => addAttrOption(opt));
+  toggleAttrOptionsSection();
+  // Set default value after options are loaded
+  if ((record.type || '').toLowerCase() === 'selectable') {
+    $('#form-attr-default-select').val(record.default || '');
+  } else {
+    $('#form-attr-default').val(record.default || '');
+  }
+}
+
+/**
+ * Clear attribute form
+ */
+function clearAttributeForm() {
+  attributeFormState.editingName = null;
+  $('#form-attr-name').val('');
+  $('#form-attr-description').val('');
+  $('#form-attr-type').val('String');
+  $('#form-attr-default').val('');
+  $('#form-attr-options-list').empty();
+  updateAttrDefaultDropdown();
+  toggleAttrOptionsSection();
+  const grid = w2ui['attributes-grid'];
+  if (grid) grid.selectNone();
+}
+
+/**
+ * Show/hide the options section based on type, and toggle default field type
+ */
+function toggleAttrOptionsSection() {
+  const type = $('#form-attr-type').val();
+  if (type === 'Selectable') {
+    $('#form-attr-options-section').css('display', 'flex');
+    $('#form-attr-default').hide();
+    $('#form-attr-default-select').show();
+    updateAttrDefaultDropdown();
+  } else {
+    $('#form-attr-options-section').hide();
+    $('#form-attr-default').show();
+    $('#form-attr-default-select').hide();
+  }
+}
+
+/**
+ * Add an option to the Selectable options list
+ */
+function addAttrOption(value) {
+  value = String(value).trim();
+  if (!value) return;
+  if (getAttrOptionValues().includes(value)) return; // no duplicates
+  const $list = $('#form-attr-options-list');
+  const safeVal = value.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const $item = $(`<div class="attr-option-item" style="display: flex; align-items: center; gap: 4px; padding: 3px 6px; border-bottom: 1px solid #f0f0f0; font-size: 11px;">
+    <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${safeVal}</span>
+    <button type="button" data-value="${safeVal}" style="background: none; border: none; cursor: pointer; color: #f44336; font-size: 13px; padding: 0 2px; line-height: 1; flex-shrink: 0;">&times;</button>
+  </div>`);
+  $item.find('button').on('click', function() {
+    $item.remove();
+    updateAttrDefaultDropdown();
+  });
+  $list.append($item);
+  updateAttrDefaultDropdown();
+}
+
+/**
+ * Get current option values from the options list
+ */
+function getAttrOptionValues() {
+  const values = [];
+  $('#form-attr-options-list .attr-option-item').each(function() {
+    values.push($(this).find('span').text());
+  });
+  return values;
+}
+
+/**
+ * Rebuild the Default dropdown to reflect current options list
+ */
+function updateAttrDefaultDropdown() {
+  const options = getAttrOptionValues();
+  const $select = $('#form-attr-default-select');
+  const currentVal = $select.val();
+  $select.empty().append('<option value="">(none)</option>');
+  options.forEach(opt => {
+    const safeOpt = opt.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    $select.append(`<option value="${safeOpt}">${safeOpt}</option>`);
+  });
+  // Restore previously selected value if still present
+  if (currentVal && options.includes(currentVal)) {
+    $select.val(currentVal);
+  }
+}
+
+/**
+ * Save attribute from form
+ */
+async function saveAttributeFromForm() {
+  const name = $('#form-attr-name').val().trim();
+  const description = $('#form-attr-description').val().trim();
+  const type = $('#form-attr-type').val();
+  let defaultVal;
+  const options = type === 'Selectable' ? getAttrOptionValues() : [];
+
+  if (type === 'Selectable') {
+    defaultVal = $('#form-attr-default-select').val() || '';
+  } else {
+    defaultVal = $('#form-attr-default').val().trim();
+  }
+
+  if (!name) {
+    alert('Please enter an attribute name.');
+    return;
+  }
+
+  const attrData = { name, description, type, default: defaultVal, options };
+
+  try {
+    if (attributeFormState.editingName) {
+      await window.electronAPI.updateAttribute(attributeFormState.editingName, attrData);
+    } else {
+      await window.electronAPI.saveAttribute(attrData);
+    }
+    await initializeAttributesGrid();
+    clearAttributeForm();
+    alert(attributeFormState.editingName ? 'Attribute updated!' : 'Attribute created!');
+    attributeFormState.editingName = null;
+  } catch (err) {
+    alert('Error saving attribute: ' + err.message);
+  }
+}
+
+/**
+ * Delete attribute from form
+ */
+async function deleteAttributeFromForm() {
+  if (!attributeFormState.editingName) {
+    alert('Please select an attribute to delete.');
+    return;
+  }
+  w2confirm({
+    msg: `Delete attribute "<b>${attributeFormState.editingName}</b>"?`,
+    title: 'Delete Attribute?',
+    width: 400,
+    height: 170
+  }).yes(async () => {
+    try {
+      await window.electronAPI.deleteAttribute(attributeFormState.editingName);
+      await initializeAttributesGrid();
+      clearAttributeForm();
+      alert('Attribute deleted.');
+    } catch (err) {
+      alert('Error deleting attribute: ' + err.message);
+    }
+  });
+}
+
+/**
+ * Setup resizable divider for attributes form panel
+ */
+function setupAttributeResizableDivider() {
+  const divider = $('#attribute-divider');
+  const formPanel = $('#attribute-form-panel');
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  divider.mousedown(function(e) {
+    isResizing = true;
+    startX = e.clientX;
+    startWidth = formPanel.width();
+    $(document).css('user-select', 'none');
+  });
+
+  $(document).mousemove(function(e) {
+    if (!isResizing) return;
+    const deltaX = e.clientX - startX;
+    const newWidth = Math.max(250, startWidth - deltaX);
+    formPanel.css('flex', `0 0 ${newWidth}px`);
+  });
+
+  $(document).mouseup(function() {
+    if (isResizing) {
+      isResizing = false;
+      $(document).css('user-select', '');
+    }
+  });
 }
 
 // ==================== Tags Management ====================

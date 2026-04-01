@@ -114,6 +114,10 @@ class CategoryService {
           if (category.enableChecksum === undefined) {
             category.enableChecksum = false;
           }
+          // Ensure backward compatibility: add attributes if missing
+          if (!category.attributes) {
+            category.attributes = [];
+          }
           categories[category.name] = category;
         }
       }
@@ -135,7 +139,7 @@ class CategoryService {
   /**
    * Create a new category
    */
-  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false) {
+  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = []) {
     if (name === 'Default') {
       throw new Error('Cannot create a category named "Default" - it already exists');
     }
@@ -146,7 +150,8 @@ class CategoryService {
       textColor,
       patterns,
       description,
-      enableChecksum
+      enableChecksum,
+      attributes
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
@@ -158,10 +163,11 @@ class CategoryService {
   /**
    * Update an existing category
    */
-  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null) {
-    // Get existing category to preserve enableChecksum if not specified
+  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null) {
+    // Get existing category to preserve fields if not specified
     const existingCategory = this.getCategory(name);
     const checksumSetting = enableChecksum !== null ? enableChecksum : (existingCategory?.enableChecksum || false);
+    const attributesSetting = attributes !== null ? attributes : (existingCategory?.attributes || []);
 
     const category = {
       name,
@@ -169,7 +175,8 @@ class CategoryService {
       textColor,
       patterns,
       description,
-      enableChecksum: checksumSetting
+      enableChecksum: checksumSetting,
+      attributes: attributesSetting
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);

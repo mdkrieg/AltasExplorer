@@ -105,6 +105,11 @@ class DatabaseService {
     if (!hasModeCol) {
       this.db.exec('ALTER TABLE files ADD COLUMN mode INTEGER');
     }
+    // Runtime migration for attributes column
+    const hasAttributesCol = fileCols.some(col => col.name === 'attributes');
+    if (!hasAttributesCol) {
+      this.db.exec('ALTER TABLE files ADD COLUMN attributes TEXT');
+    }
   }
 
   /**
@@ -387,9 +392,9 @@ class DatabaseService {
    * Add a tag to a directory (appends to existing tags JSON array, stored in files table dot entry)
    */
   addTagToDirectory(dirname, tagName) {
-    const dirRow = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(dirname);
+    const dirRow = this.db.prepare('SELECT id, inode FROM dirs WHERE dirname = ?').get(dirname);
     if (!dirRow) return;
-    const dir_id = dirRow.id;
+    const { id: dir_id, inode } = dirRow;
     const row = this.db.prepare('SELECT tags FROM files WHERE dir_id = ? AND filename = ?').get(dir_id, '.');
     let current = [];
     if (row && row.tags) {
@@ -397,7 +402,13 @@ class DatabaseService {
       if (!Array.isArray(current)) current = [];
     }
     if (!current.includes(tagName)) current.push(tagName);
-    this.db.prepare('UPDATE files SET tags = ? WHERE dir_id = ? AND filename = ?').run(JSON.stringify(current), dir_id, '.');
+    const newTags = JSON.stringify(current);
+    if (row) {
+      this.db.prepare('UPDATE files SET tags = ? WHERE dir_id = ? AND filename = ?').run(newTags, dir_id, '.');
+    } else {
+      // Dot-entry doesn't exist yet (directory not yet scanned) — create it
+      this.db.prepare('INSERT INTO files (inode, dir_id, filename, dateModified, dateCreated, size, mode, tags) VALUES (?, ?, \'.\', NULL, NULL, 0, NULL, ?)').run(inode, dir_id, newTags);
+    }
   }
 
   /**
@@ -433,8 +444,9 @@ class DatabaseService {
     if (!dirRow) return;
     const dir_id = dirRow.id;
     const row = this.db.prepare('SELECT tags FROM files WHERE dir_id = ? AND filename = ?').get(dir_id, '.');
+    if (!row) return; // No dot-entry means no tags to remove
     let current = [];
-    if (row && row.tags) {
+    if (row.tags) {
       try { current = JSON.parse(row.tags); } catch {}
       if (!Array.isArray(current)) current = [];
     }
@@ -659,6 +671,23 @@ class DatabaseService {
   markAllNotificationsRead() {
     const stmt = this.db.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL`);
     return stmt.run(Date.now());
+  }
+
+  /**
+   * Get attribute values for a file
+   */
+  getFileAttributes(inode, dir_id) {
+    const row = this.db.prepare('SELECT attributes FROM files WHERE inode = ? AND dir_id = ?').get(inode, dir_id);
+    if (!row || !row.attributes) return {};
+    try { return JSON.parse(row.attributes); } catch { return {}; }
+  }
+
+  /**
+   * Set all attribute values for a file (replaces existing)
+   */
+  setFileAttributes(inode, dir_id, attributes) {
+    const json = attributes && Object.keys(attributes).length > 0 ? JSON.stringify(attributes) : null;
+    this.db.prepare('UPDATE files SET attributes = ? WHERE inode = ? AND dir_id = ?').run(json, inode, dir_id);
   }
 
   close() {

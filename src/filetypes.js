@@ -57,7 +57,7 @@ class FileTypeService {
   /**
    * Add a new file type entry
    */
-  addFileType(pattern, type, icon = null) {
+  addFileType(pattern, type, icon = null, openWith = null) {
     if (!pattern || !type) {
       throw new Error('Pattern and type are required');
     }
@@ -67,6 +67,7 @@ class FileTypeService {
     }
     const entry = { pattern, type };
     if (icon) entry.icon = icon;
+    if (openWith) entry.openWith = openWith;
     types.push(entry);
     this._save(types);
     return entry;
@@ -75,7 +76,7 @@ class FileTypeService {
   /**
    * Update an existing file type entry
    */
-  updateFileType(pattern, newPattern, newType, icon = null) {
+  updateFileType(pattern, newPattern, newType, icon = null, openWith = null) {
     if (pattern === 'notes.txt') {
       throw new Error('The Notes file type cannot be modified');
     }
@@ -93,6 +94,7 @@ class FileTypeService {
     }
     const entry = { pattern: newPattern, type: newType };
     if (icon) entry.icon = icon;
+    if (openWith) entry.openWith = openWith;
     types[index] = entry;
     this._save(types);
     return types[index];

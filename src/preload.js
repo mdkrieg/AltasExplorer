@@ -96,9 +96,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File Type operations
   getFileTypeIcons: () => ipcRenderer.invoke('get-file-type-icons'),
   getFileTypes: () => ipcRenderer.invoke('get-file-types'),
-  addFileType: (pattern, type, icon) => ipcRenderer.invoke('add-file-type', { pattern, type, icon }),
-  updateFileType: (pattern, newPattern, newType, icon) => ipcRenderer.invoke('update-file-type', { pattern, newPattern, newType, icon }),
+  addFileType: (pattern, type, icon, openWith) => ipcRenderer.invoke('add-file-type', { pattern, type, icon, openWith }),
+  updateFileType: (pattern, newPattern, newType, icon, openWith) => ipcRenderer.invoke('update-file-type', { pattern, newPattern, newType, icon, openWith }),
   deleteFileType: (pattern) => ipcRenderer.invoke('delete-file-type', pattern),
+
+  // Attribute operations
+  getAttributesList: () => ipcRenderer.invoke('get-attributes-list'),
+  saveAttribute: (attrData) => ipcRenderer.invoke('save-attribute', attrData),
+  updateAttribute: (name, attrData) => ipcRenderer.invoke('update-attribute', { name, ...attrData }),
+  deleteAttribute: (name) => ipcRenderer.invoke('delete-attribute', name),
+  getFileAttributes: (inode, dir_id) => ipcRenderer.invoke('get-file-attributes', { inode, dir_id }),
+  setFileAttributes: (inode, dir_id, attributes) => ipcRenderer.invoke('set-file-attributes', { inode, dir_id, attributes }),
+  getItemStats: (itemPath) => ipcRenderer.invoke('get-item-stats', { itemPath }),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),

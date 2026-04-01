@@ -12,6 +12,7 @@ const tags = require('../src/tags');
 const filetypes = require('../src/filetypes');
 const icons = require('../src/icons');
 const checksum = require('../src/checksum');
+const attributes = require('../src/attributes');
 
 let mainWindow;
 
@@ -175,17 +176,31 @@ ipcMain.handle('get-parent-directory-metadata', (event, dirPath) => {
       return null; // At root, no parent
     }
     
-    // Get database metadata (category, tags, initials)
+    // Get database metadata (category, tags, initials, attributes)
     const dbMetadata = db.getParentDirectoryInfo(dirPath);
     logger.info('[DEBUG] dbMetadata:', dbMetadata);
+
+    // Look up the parent's dot-file for attributes
+    let parentAttributes = null;
+    if (dbMetadata) {
+      const parentDotFile = db.getFileByFilename(dbMetadata.id, '.');
+      if (parentDotFile && parentDotFile.attributes) {
+        parentAttributes = parentDotFile.attributes;
+      }
+    }
     
+    // Get parent tags from files dot-entry (same source as '.' and child dirs)
+    const parentDirPath = path.dirname(dirPath);
+    const parentTags = dbMetadata ? db.getTagsForDirectory(parentDirPath) : null;
+
     // Merge filesystem and database metadata
     const result = {
       ...fsMetadata,
       category: dbMetadata?.category || 'Default',
-      tags: dbMetadata?.tags || null,
+      tags: parentTags,
       initials: dbMetadata?.initials || null,
-      description: dbMetadata?.description || null
+      description: dbMetadata?.description || null,
+      attributes: parentAttributes
     };
     logger.info('[DEBUG] Returning parent metadata:', result);
     return result;
@@ -422,17 +437,17 @@ ipcMain.handle('get-categories-list', () => {
  */
 ipcMain.handle('save-category', (event, categoryData) => {
   try {
-    const { name, bgColor, textColor, description, patterns } = categoryData;
+    const { name, bgColor, textColor, description, patterns, enableChecksum, attributes: attrs } = categoryData;
     
     // Check if category exists
     const existing = categories.getCategory(name);
     
     if (existing) {
       // Update existing
-      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '');
+      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || []);
     } else {
       // Create new
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '');
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || []);
     }
   } catch (err) {
     logger.error('Error saving category:', err.message);
@@ -445,16 +460,16 @@ ipcMain.handle('save-category', (event, categoryData) => {
  */
 ipcMain.handle('update-category', (event, categoryData) => {
   try {
-    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum } = categoryData;
+    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, attributes: attrs } = categoryData;
     const updateName = name || oldName;
     
     // If name changed, delete old and create new
     if (oldName && name && oldName !== name) {
       categories.deleteCategory(oldName);
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false);
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || []);
     } else {
       // Just update
-      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum);
+      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || []);
     }
   } catch (err) {
     logger.error('Error updating category:', err.message);
@@ -658,6 +673,181 @@ ipcMain.handle('delete-tag', (event, name) => {
   }
 });
 
+// ============================================
+// Attributes IPC Handlers
+// ============================================
+
+ipcMain.handle('get-attributes-list', () => {
+  try {
+    return Object.values(attributes.loadAttributes());
+  } catch (err) {
+    logger.error('Error getting attributes list:', err.message);
+    return [];
+  }
+});
+
+ipcMain.handle('save-attribute', (event, attrData) => {
+  try {
+    const { name, description, type, default: defaultValue, options } = attrData;
+    if (!name) throw new Error('Attribute name is required');
+    const existing = attributes.getAttribute(name);
+    if (existing) {
+      return attributes.updateAttribute(name, description || '', type || 'String', defaultValue || '', options || []);
+    } else {
+      return attributes.createAttribute(name, description || '', type || 'String', defaultValue || '', options || []);
+    }
+  } catch (err) {
+    logger.error('Error saving attribute:', err.message);
+    throw err;
+  }
+});
+
+ipcMain.handle('update-attribute', (event, attrData) => {
+  try {
+    const { name, oldName, description, type, default: defaultValue, options } = attrData;
+    const updateName = name || oldName;
+    if (oldName && name && oldName !== name) {
+      attributes.deleteAttribute(oldName);
+      return attributes.createAttribute(name, description || '', type || 'String', defaultValue || '', options || []);
+    } else {
+      return attributes.updateAttribute(updateName, description || '', type || 'String', defaultValue || '', options || []);
+    }
+  } catch (err) {
+    logger.error('Error updating attribute:', err.message);
+    throw err;
+  }
+});
+
+ipcMain.handle('delete-attribute', (event, name) => {
+  try {
+    attributes.deleteAttribute(name);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error deleting attribute:', err.message);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('get-file-attributes', (event, { inode, dir_id }) => {
+  try {
+    return { success: true, attributes: db.getFileAttributes(inode, dir_id) };
+  } catch (err) {
+    logger.error('Error getting file attributes:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('set-file-attributes', (event, { inode, dir_id, attributes: attrs }) => {
+  try {
+    db.setFileAttributes(inode, dir_id, attrs);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error setting file attributes:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Get all metadata for a file/directory (for Item Properties page)
+ */
+ipcMain.handle('get-item-stats', (event, { itemPath }) => {
+  try {
+    const stats = fs.getStats(itemPath);
+    if (!stats) return { success: false, error: 'Could not stat path' };
+
+    const isDir = stats.isDirectory;
+    const dirname = isDir ? itemPath : path.dirname(itemPath);
+    const filename = isDir ? path.basename(itemPath) : path.basename(itemPath);
+
+    // Get DB records
+    const dirEntry = db.getDirectory(dirname);
+    let inode = stats.inode;
+    let dirId = dirEntry ? dirEntry.id : null;
+    let checksumValue = null;
+    let checksumStatus = null;
+    let tagsJson = null;
+    let attrsJson = {};
+    // Always resolve category regardless of whether the directory is in the DB
+    let category = categories.getCategoryForDirectory(dirname);
+
+    if (dirEntry) {
+      if (isDir) {
+        // For directories, get the dot-entry
+        const dotFile = db.getFileByFilename(dirEntry.id, '.');
+        if (dotFile) {
+          tagsJson = dotFile.tags;
+          attrsJson = db.getFileAttributes(dotFile.inode, dirEntry.id);
+        }
+      } else {
+        const fileRecord = db.getFileByFilename(dirEntry.id, filename);
+        if (fileRecord) {
+          inode = fileRecord.inode;
+          dirId = dirEntry.id;
+          checksumValue = fileRecord.checksumValue;
+          checksumStatus = fileRecord.checksumStatus;
+          tagsJson = fileRecord.tags;
+          attrsJson = db.getFileAttributes(fileRecord.inode, dirEntry.id);
+        }
+      }
+    }
+
+    // Resolve category attribute definitions
+    const categoryAttrNames = category ? (category.attributes || []) : [];
+    const allAttributeDefs = attributes.loadAttributes();
+    const categoryAttributeDefs = categoryAttrNames
+      .map(name => allAttributeDefs[name])
+      .filter(Boolean);
+
+    // Resolve file icon
+    const allFileTypes = filetypes.getFileTypes();
+    let fileType = isDir ? 'Directory' : 'File';
+    let openWith = null;
+    let ftIcon = 'user-file.png';
+    if (!isDir) {
+      const matched = allFileTypes.find(ft => {
+        if (ft.pattern.startsWith('*.')) {
+          return filename.toLowerCase().endsWith(ft.pattern.slice(1).toLowerCase());
+        }
+        return filename.toLowerCase() === ft.pattern.toLowerCase();
+      });
+      if (matched) {
+        fileType = matched.type;
+        openWith = matched.openWith || null;
+        ftIcon = matched.icon || 'user-file.png';
+      }
+    }
+
+    let tags = [];
+    if (tagsJson) {
+      try { tags = JSON.parse(tagsJson); } catch {}
+    }
+
+    return {
+      success: true,
+      path: itemPath,
+      filename,
+      isDirectory: isDir,
+      size: stats.size,
+      dateModified: stats.dateModified,
+      dateCreated: stats.dateCreated,
+      inode,
+      dir_id: dirId,
+      checksumValue,
+      checksumStatus,
+      tags,
+      attributes: attrsJson,
+      fileType,
+      ftIcon,
+      openWith,
+      categoryName: category ? category.name : 'Default',
+      categoryAttributes: categoryAttributeDefs
+    };
+  } catch (err) {
+    logger.error('Error getting item stats:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
 /**
  * Tags: Add a tag to a directory or file
  */
@@ -723,9 +913,9 @@ ipcMain.handle('get-file-types', () => {
 /**
  * File Types: Add a new file type
  */
-ipcMain.handle('add-file-type', (event, { pattern, type, icon }) => {
+ipcMain.handle('add-file-type', (event, { pattern, type, icon, openWith }) => {
   try {
-    return filetypes.addFileType(pattern, type, icon || null);
+    return filetypes.addFileType(pattern, type, icon || null, openWith || null);
   } catch (err) {
     logger.error('Error adding file type:', err.message);
     return { error: err.message };
@@ -735,9 +925,9 @@ ipcMain.handle('add-file-type', (event, { pattern, type, icon }) => {
 /**
  * File Types: Update an existing file type
  */
-ipcMain.handle('update-file-type', (event, { pattern, newPattern, newType, icon }) => {
+ipcMain.handle('update-file-type', (event, { pattern, newPattern, newType, icon, openWith }) => {
   try {
-    return filetypes.updateFileType(pattern, newPattern, newType, icon || null);
+    return filetypes.updateFileType(pattern, newPattern, newType, icon || null, openWith || null);
   } catch (err) {
     logger.error('Error updating file type:', err.message);
     return { error: err.message };
@@ -1145,7 +1335,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           checksumStatus: (dbFile && dbFile.checksumStatus) ? dbFile.checksumStatus : null,
           perms: entry.perms || { read: false, write: false },
           mode: entry.mode ?? null,
-          tags: (dbFile && dbFile.tags) ? dbFile.tags : null
+          tags: (dbFile && dbFile.tags) ? dbFile.tags : null,
+          attributes: (dbFile && dbFile.attributes) ? dbFile.attributes : null
         });
         
         // Mark as processed
@@ -1169,7 +1360,12 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           initials: existingDir ? (existingDir.initials || null) : null,
           perms: entry.perms || { read: true, write: false },
           mode: entry.mode ?? null,
-          tags: existingDir ? db.getTagsForDirectory(entry.path) : null
+          tags: existingDir ? db.getTagsForDirectory(entry.path) : null,
+          attributes: (() => {
+            if (!existingDir) return null;
+            const dotFile = db.getFileByFilename(existingDir.id, '.');
+            return (dotFile && dotFile.attributes) ? dotFile.attributes : null;
+          })()
         });
       }
     }
@@ -1403,6 +1599,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         changeState: 'unchanged',
         initials: dirRecord ? (dirRecord.initials || null) : null,
         tags: dotFileRecord.tags || null,
+        attributes: dotFileRecord.attributes || null,
         orphan_id: null,
         new_dir_id: null
       });
