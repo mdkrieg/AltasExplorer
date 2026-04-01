@@ -1,7 +1,22 @@
 ﻿/**
  * AtlasExplorer Renderer Logic
  * Handles all UI interactions and IPC calls
+ * 
+ * MODULAR ORGANIZATION:
+ * This file is being incrementally split into feature modules in public/js/modules/:
+ * - modules/utils.js      – Pure utility functions (formatBytes, escapeHtml, etc.)
+ * - modules/sidebar.js    – Sidebar navigation, tree, and favorites [TODO: extract]
+ * - modules/panels.js     – Grid management, navigation, layout switching [TODO: extract]
+ * - modules/notes.js      – Notes modal and file view [TODO: extract]
+ * - modules/settings.js   – Settings modal, categories, tags, hotkeys [TODO: extract]
+ * - modules/contexts.js   – Context menus and grid interactions [TODO: extract]
+ * 
+ * Functions are being extracted incrementally as features are developed.
+ * See module files for planned function extractions.
  */
+
+// Import utility functions module
+import * as utils from './modules/utils.js';
 
 // Global error handler for debugging
 window.addEventListener('error', (event) => {
@@ -3084,11 +3099,11 @@ function formatFileContent(content, format) {
     case 'PlainText':
       // Escape HTML and wrap in pre tag for plain text
       return '<pre style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">' + 
-             escapeHtml(content) + '</pre>';
+             utils.escapeHtml(content) + '</pre>';
     
     case 'Extended':
       // Escape HTML first
-      let escaped = escapeHtml(content);
+      let escaped = utils.escapeHtml(content);
       // Replace [text](url) patterns with clickable links
       // Note: This works with escaped content by looking for the pattern before escaping
       // We need to revert some escaping for link patterns
@@ -3106,7 +3121,7 @@ function formatFileContent(content, format) {
     
     default:
       return '<pre style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">' + 
-             escapeHtml(content) + '</pre>';
+             utils.escapeHtml(content) + '</pre>';
   }
 }
 
@@ -5095,7 +5110,7 @@ function createHistorySummaryView(fullState, selectedIndex) {
       const displayValue = formatAttributeValue(attr, value);
       const isChanged = selectedState[attr] !== previousState[attr];
       const className = isChanged ? 'file-new' : '';
-      summaryHtml += `<tr style="border-bottom: 1px solid #eee;"><td style="padding: 6px; font-weight: bold; width: 40%;">${escapeHtml(attr)}:</td><td style="padding: 6px;" class="${className}">${escapeHtml(displayValue)}</td></tr>`;
+      summaryHtml += `<tr style="border-bottom: 1px solid #eee;"><td style="padding: 6px; font-weight: bold; width: 40%;">${utils.escapeHtml(attr)}:</td><td style="padding: 6px;" class="${className}">${utils.escapeHtml(displayValue)}</td></tr>`;
     }
     
     summaryHtml += '</table></div>';
@@ -5109,7 +5124,7 @@ function createHistorySummaryView(fullState, selectedIndex) {
       const displayValue = formatAttributeValue(attr, value);
       const isChanged = selectedState[attr] !== previousState[attr];
       const className = isChanged ? 'file-new' : '';
-      summaryHtml += `<tr style="border-bottom: 1px solid #eee;"><td style="padding: 6px; font-weight: bold; width: 40%;">${escapeHtml(attr)}:</td><td style="padding: 6px;" class="${className}">${escapeHtml(displayValue)}</td></tr>`;
+      summaryHtml += `<tr style="border-bottom: 1px solid #eee;"><td style="padding: 6px; font-weight: bold; width: 40%;">${utils.escapeHtml(attr)}:</td><td style="padding: 6px;" class="${className}">${utils.escapeHtml(displayValue)}</td></tr>`;
     }
     
     summaryHtml += '</table></div>';
@@ -5120,7 +5135,7 @@ function createHistorySummaryView(fullState, selectedIndex) {
     $('#history-summary-container').html(summaryHtml);
   } catch (err) {
     console.error('Error creating history summary:', err);
-    $('#history-summary-container').html('<div style="color: red;">Error loading summary: ' + escapeHtml(err.message) + '</div>');
+    $('#history-summary-container').html('<div style="color: red;">Error loading summary: ' + utils.escapeHtml(err.message) + '</div>');
   }
 }
 
@@ -5154,26 +5169,6 @@ function formatAttributeValue(attr, value) {
   }
   
   return String(value);
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-/**
- * Hide history modal
- */
-function hideHistoryModal() {
-  $('#history-modal').hide();
-  // Destroy w2ui grid
-  if (w2ui['history-grid']) {
-    w2ui['history-grid'].destroy();
-  }
 }
 
 // ============================================================

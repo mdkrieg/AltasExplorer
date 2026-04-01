@@ -13,6 +13,7 @@ const filetypes = require('../src/filetypes');
 const icons = require('../src/icons');
 const checksum = require('../src/checksum');
 const attributes = require('../src/attributes');
+const notesParser = require('../src/notesParser');
 
 let mainWindow;
 
@@ -1109,6 +1110,78 @@ ipcMain.handle('write-file-content', async (event, { filePath, content }) => {
     return { success: true };
   } catch (err) {
     logger.error('Error writing notes file:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * Notes Parser: Parse notes.txt file into sections
+ */
+ipcMain.handle('parse-notes-file', async (event, content) => {
+  try {
+    return notesParser.parseNotesFileSections(content);
+  } catch (err) {
+    logger.error('Error parsing notes file:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * Notes Parser: Write section back to notes.txt
+ */
+ipcMain.handle('write-notes-section', async (event, { existingContent, sectionKey, newContent }) => {
+  try {
+    return notesParser.writeNotesSection(existingContent, sectionKey, newContent);
+  } catch (err) {
+    logger.error('Error writing notes section:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * Notes Parser: Extract all file headers
+ */
+ipcMain.handle('extract-notes-headers', async (event, content) => {
+  try {
+    return notesParser.extractAllHeaders(content);
+  } catch (err) {
+    logger.error('Error extracting notes headers:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * Notes Parser: Extract directory-level notes
+ */
+ipcMain.handle('extract-directory-notes', async (event, content) => {
+  try {
+    return notesParser.extractDirectoryNotes(content);
+  } catch (err) {
+    logger.error('Error extracting directory notes:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * Notes Parser: Extract file-specific notes
+ */
+ipcMain.handle('extract-file-notes', async (event, { content, filename }) => {
+  try {
+    return notesParser.extractFileNotes(content, filename);
+  } catch (err) {
+    logger.error('Error extracting file notes:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * Notes Parser: Validate if a line is a valid file header
+ */
+ipcMain.handle('validate-notes-header', async (event, line) => {
+  try {
+    return notesParser.isValidFileHeader(line);
+  } catch (err) {
+    logger.error('Error validating notes header:', err.message);
     throw err;
   }
 });

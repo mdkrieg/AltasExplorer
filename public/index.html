@@ -318,6 +318,11 @@
                   <span style="font-size: 12px;">Hide parent directory ("..") in file grid</span>
                 </label>
                 <span style="color: #666; font-size: 12px;">The ".." entry represents the parent directory. Hidden automatically at root.</span>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input id="browser-show-folder-name-with-dot-entries" type="checkbox" style="width: 18px; height: 18px; cursor: pointer;">
+                  <span style="font-size: 12px;">Show folder name with "." and ".." entries</span>
+                </label>
+                <span style="color: #666; font-size: 12px;">Displays entries as ". (Current Folder)" and ".. (Parent Folder)"</span>
               </div>
               <div style="display: flex; flex-direction: column; gap: 10px;">
                 <div style="font-weight: bold; font-size: 13px;">File Grid Row Height</div>
@@ -757,8 +762,8 @@
   <!-- w2ui -->
   <script src="../node_modules/w2ui/w2ui-2.0.min.js"></script>
 
-  <!-- Renderer logic -->
-  <script src="js/renderer.js"></script>
+  <!-- Renderer logic (ES6 modules enabled) -->
+  <script type="module" src="js/renderer.js"></script>
 </body>
 </html>
 
