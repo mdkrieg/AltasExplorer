@@ -564,7 +564,7 @@ function addRecordsToGrid(records, panelId) {
  * its entries to the grid as results arrive.  Exits immediately if the scan is
  * cancelled or the scanToken has changed (i.e. a new navigation started).
  */
-async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs = {}, hideDotDotDirectory = false) {
+async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs = {}, hideDotDotDirectory = false, showFolderNameWithDotEntries = false) {
   const state = panelState[panelId];
 
   while (state.pendingDirs.length > 0 && !state.scanCancelled && state.scanToken === token) {
@@ -591,9 +591,16 @@ async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, t
         const dotIndex = entries.findIndex(e => e.filename === '.');
         const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
         console.log('[DEBUG] processPendingDirs - Inserting ".." at index:', insertIndex);
+        
+        let parentDisplayFilename = '..';
+        if (showFolderNameWithDotEntries && parentMetadata.path) {
+          const parentFolderName = parentMetadata.path.split(/[\\\/]/).filter(p => p).pop() || parentMetadata.path;
+          parentDisplayFilename = `.. (${parentFolderName})`;
+        }
+        
         entries.splice(insertIndex, 0, {
           ...parentMetadata,
-          displayFilename: '..'
+          displayFilename: parentDisplayFilename
         });
       } else {
         console.log('[DEBUG] processPendingDirs - Parent metadata is null');
@@ -676,6 +683,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
   ]);
   const hideDotDirectory = settings.hide_dot_directory || false;
   const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
+  const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
 
   const iconCache    = new Map();
   const categoryCache = new Map();
@@ -692,9 +700,16 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
   }
 
   const rootRaw = rootScan.entries || [];
+  const currentFolderName = rootPath.split(/[\\\/]/).filter(p => p).pop() || rootPath;
   let rootEntries = rootRaw
     .filter(e => !hideDotDirectory || e.filename !== '.')
-    .map(e => ({ ...e, displayFilename: getRelativePathFromRoot(rootPath, e.path) }));
+    .map(e => {
+      let displayFilename = getRelativePathFromRoot(rootPath, e.path);
+      if (showFolderNameWithDotEntries && e.filename === '.') {
+        displayFilename = `. (${currentFolderName})`;
+      }
+      return { ...e, displayFilename };
+    });
 
   // Add ".." entry (parent directory) if not hidden and not at root
   console.log('[DEBUG] scanDirectoryTreeStreaming - hideDotDotDirectory:', hideDotDotDirectory);
@@ -708,12 +723,19 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
       const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
       console.log('[DEBUG] Inserting ".." at index:', insertIndex);
       console.log('[DEBUG] Root entries before splice:', rootEntries.map(e => e.filename));
+      
+      let parentDisplayFilename = '..';
+      if (showFolderNameWithDotEntries && parentMetadata.path) {
+        const parentFolderName = parentMetadata.path.split(/[\\\/]/).filter(p => p).pop() || parentMetadata.path;
+        parentDisplayFilename = `.. (${parentFolderName})`;
+      }
+      
       rootEntries.splice(insertIndex, 0, {
         ...parentMetadata,
-        displayFilename: '..'
+        displayFilename: parentDisplayFilename
       });
       console.log('[DEBUG] Root entries after splice:', rootEntries.map(e => e.filename));
-      window.DEBUG_PARENT_ENTRY = { ...parentMetadata, displayFilename: '..' };
+      window.DEBUG_PARENT_ENTRY = { ...parentMetadata, displayFilename: parentDisplayFilename };
       window.DEBUG_ALL_ENTRIES = rootEntries;
       console.log('[DEBUG] Stored debug info on window.DEBUG_*');
     } else {
@@ -735,7 +757,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
     for (const subdir of subdirs) {
       state.pendingDirs.push({ path: subdir.path, maxDepth, currentDepth: 1 });
     }
-    await processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs, hideDotDotDirectory);
+    await processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs, hideDotDotDirectory, showFolderNameWithDotEntries);
   }
 
   if (state.scanToken === token) {
@@ -1747,11 +1769,23 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
   ]);
   const hideDotDirectory = settings.hide_dot_directory || false;
   const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
+  const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
   
-  // Filter out "." entries if hiding is enabled
+  // Get current folder name for display
+  const currentFolderName = state.currentPath.split(/[\\\/]/).filter(p => p).pop() || state.currentPath;
+  
+  // Filter out "." entries if hiding is enabled, otherwise update displayFilename if needed
   let filteredEntries = entries;
   if (hideDotDirectory) {
     filteredEntries = entries.filter(e => e.filename !== '.');
+  } else if (showFolderNameWithDotEntries) {
+    // Update "." entry display if setting is enabled
+    filteredEntries = filteredEntries.map(e => {
+      if (e.filename === '.') {
+        return { ...e, displayFilename: `. (${currentFolderName})` };
+      }
+      return e;
+    });
   }
   
   // Add ".." entry (parent directory) if not hidden and not at root
@@ -1765,9 +1799,16 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       const dotIndex = filteredEntries.findIndex(e => e.filename === '.');
       const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
       console.log('[DEBUG] Inserting ".." to filteredEntries at index:', insertIndex);
+      
+      let parentDisplayFilename = '..';
+      if (showFolderNameWithDotEntries && parentMetadata.path) {
+        const parentFolderName = parentMetadata.path.split(/[\\\/]/).filter(p => p).pop() || parentMetadata.path;
+        parentDisplayFilename = `.. (${parentFolderName})`;
+      }
+      
       filteredEntries.splice(insertIndex, 0, {
         ...parentMetadata,
-        displayFilename: '..'
+        displayFilename: parentDisplayFilename
       });
     } else {
       console.log('[DEBUG] Parent metadata is null for populateFileGrid');
@@ -5440,6 +5481,7 @@ async function initializeBrowserSettingsForm() {
   const fileFormat = settings.file_format || 'Markdown';
   const hideDotDirectory = settings.hide_dot_directory || false;
   const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
+  const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
   const recordHeight = settings.record_height || 30;
   const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
   const backgroundRefreshInterval = settings.background_refresh_interval || 30;
@@ -5448,6 +5490,7 @@ async function initializeBrowserSettingsForm() {
   $('#browser-notes-format').val(fileFormat);
   $('#browser-hide-dot-directory').prop('checked', hideDotDirectory);
   $('#browser-hide-dot-dot-directory').prop('checked', hideDotDotDirectory);
+  $('#browser-show-folder-name-with-dot-entries').prop('checked', showFolderNameWithDotEntries);
   $('#browser-record-height').val(recordHeight);
   $('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
   $('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
@@ -5463,6 +5506,10 @@ async function initializeBrowserSettingsForm() {
  * Setup event listeners for browser settings
  */
 function setupBrowserSettingsEventListeners() {
+  // Remove old listeners first (in case modal was reopened)
+  $('#browser-background-refresh-enabled').off('change');
+  $('#btn-browser-save-all').off('click');
+  
   // Toggle refresh interval input based on checkbox
   $('#browser-background-refresh-enabled').on('change', function() {
     $('#browser-background-refresh-interval').prop('disabled', !this.checked);
@@ -5481,6 +5528,7 @@ async function saveBrowserSettings() {
     const fileFormat = ($('#browser-notes-format').val() || 'Markdown').trim();
     const hideDotDirectory = $('#browser-hide-dot-directory').is(':checked');
     const hideDotDotDirectory = $('#browser-hide-dot-dot-directory').is(':checked');
+    const showFolderNameWithDotEntries = $('#browser-show-folder-name-with-dot-entries').is(':checked');
     let recordHeight = parseInt($('#browser-record-height').val() || '30');
     const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
     let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
@@ -5513,6 +5561,7 @@ async function saveBrowserSettings() {
     settings.record_height = recordHeight;
     settings.background_refresh_enabled = backgroundRefreshEnabled;
     settings.background_refresh_interval = backgroundRefreshInterval;
+    settings.show_folder_name_with_dot_entries = showFolderNameWithDotEntries;
 
     const result = await window.electronAPI.saveSettings(settings);
     if (!result || result.success === false) {
@@ -5530,12 +5579,11 @@ async function saveBrowserSettings() {
     // Restart backend background refresh with updated settings
     window.electronAPI.startBackgroundRefresh(backgroundRefreshEnabled, backgroundRefreshInterval);
     
-    // Refresh the current directory if hide dot directory changed
-    if (hideDotDirectory) {
-      const state = panelState[activePanelId];
-      if (state && state.currentPath) {
-        await navigateToDirectory(state.currentPath, activePanelId);
-      }
+    // Always refresh the active panel so any display setting changes (hide dot entries,
+    // folder name labels, etc.) take effect immediately.
+    const state = panelState[activePanelId];
+    if (state && state.currentPath) {
+      await navigateToDirectory(state.currentPath, activePanelId);
     }
   } catch (err) {
     alert('Error saving browser settings: ' + err.message);
@@ -5610,6 +5658,12 @@ function applyRecordHeightToAllGrids(recordHeight) {
       grid.recordHeight = recordHeight;
       if (typeof grid.refresh === 'function') {
         grid.refresh();
+      }
+      // grid.refresh() re-renders the w2ui header and wipes the custom HTML;
+      // re-apply it immediately so the path bar doesn't disappear.
+      const currentPath = panelState[panelId].currentPath;
+      if (currentPath) {
+        updateGridHeader(panelId, currentPath);
       }
     }
   }

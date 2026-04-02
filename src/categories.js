@@ -218,11 +218,36 @@ class CategoryService {
       if (!settings.file_format) {
         settings.file_format = 'Markdown';
       }
+      // Set defaults for new settings if they don't exist
+      if (typeof settings.hide_dot_directory === 'undefined') {
+        settings.hide_dot_directory = false;
+      }
+      if (typeof settings.hide_dot_dot_directory === 'undefined') {
+        settings.hide_dot_dot_directory = false;
+      }
+      if (typeof settings.show_folder_name_with_dot_entries === 'undefined') {
+        settings.show_folder_name_with_dot_entries = false;
+      }
+      if (typeof settings.record_height === 'undefined') {
+        settings.record_height = 30;
+      }
+      if (typeof settings.background_refresh_enabled === 'undefined') {
+        settings.background_refresh_enabled = false;
+      }
+      if (typeof settings.background_refresh_interval === 'undefined') {
+        settings.background_refresh_interval = 30;
+      }
       return settings;
     } catch {
       return { 
         home_directory: os.homedir(),
-        file_format: 'Markdown'
+        file_format: 'Markdown',
+        hide_dot_directory: false,
+        hide_dot_dot_directory: false,
+        show_folder_name_with_dot_entries: false,
+        record_height: 30,
+        background_refresh_enabled: false,
+        background_refresh_interval: 30
       };
     }
   }
