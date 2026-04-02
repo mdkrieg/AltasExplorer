@@ -117,7 +117,7 @@ class FilesystemService {
       
       // Check if we're at root (no parent)
       if (parentPath === dirPath) {
-        logger.info(`[DEBUG] getParentDirectoryMetadata - At root: ${dirPath}`);
+        // logger.info(`[DEBUG] getParentDirectoryMetadata - At root: ${dirPath}`);
         return null;
       }
 
@@ -136,7 +136,7 @@ class FilesystemService {
         perms,
         permError: false
       };
-      logger.info(`[DEBUG] getParentDirectoryMetadata - Returning:`, result);
+      // logger.info(`[DEBUG] getParentDirectoryMetadata - Returning:`, result);
       return result;
     } catch (err) {
       logger.warn(`Error getting parent directory metadata for ${dirPath}:`, err.message);

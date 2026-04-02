@@ -11,8 +11,8 @@
 * Generates audit trail as you browse
 
 ### UP NEXT:
-* Browser settings - the "Show . and .. folder names" setting not retaining accross restart, also I get three consecutive "Saved successfully" popups when I click Save there
-* My custom icon for images not showing in the file grid
+[ ] Add a "pin" to Item Properties that prevents it from updating to the selected item (need good icon, maybe lock?)
+[ ] Fewer alerts. Currently the "All browser settings saved successfully" alert is annoying, things like this should just show some text stating the same, alerts should be reserved for errors only.
 [x] Landing page is an item summary for the item selected in the grid
   [x] Currently locked to panel 1 - make it so it obeys the panel with focus - does nothing if landing page is selected - maybe does if file editor selected?
 [ ] Heighten the grid text wrappers, "g" for example is getting cut off at the bottom

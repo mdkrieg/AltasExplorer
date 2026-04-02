@@ -958,7 +958,7 @@ hr {
     white-space: nowrap;
     /* text-overflow: ellipsis; */
     text-overflow: clip;
-    line-height: 1.2;
+    line-height: 1.4; /* lower case g gets clipped at 1.2*/
 }
 
 /* Settings Button Styles */
