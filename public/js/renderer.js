@@ -17,6 +17,8 @@
 
 // Import utility functions module
 import * as utils from './modules/utils.js';
+// ADD this:
+import { w2ui, w2utils, query, w2layout, w2grid, w2sidebar, w2confirm, w2alert, w2popup, w2prompt } from './modules/vendor/w2ui.es6.min.js';
 
 // Global error handler for debugging
 window.addEventListener('error', (event) => {
@@ -29,10 +31,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null }
 };
 
 // Track directory selection from panel-1 for use in panels 2-4
@@ -93,12 +95,12 @@ let w2layoutInstance = null;
 async function initialize() {
   try {
     console.log('Initializing app...');
-    
+
     // Check if electronAPI is available
     if (!window.electronAPI) {
       throw new Error('electronAPI not found - preload script may not be loaded');
     }
-    
+
     console.log('electronAPI available:', Object.keys(window.electronAPI));
 
     // Initialize w2layout with resizable panels
@@ -106,7 +108,7 @@ async function initialize() {
       name: 'layout',
       padding: 0,
       panels: [
-        { 
+        {
           type: 'left',
           size: parseInt(localStorage.getItem('sidebarWidth') || '250'),
           resizable: true,
@@ -114,7 +116,7 @@ async function initialize() {
           maxSize: 500,
           style: 'border-right: 1px solid #ddd;'
         },
-        { 
+        {
           type: 'main',
           minSize: 300,
           overflow: 'hidden'
@@ -144,7 +146,7 @@ async function initialize() {
     }
 
     // Handle panel resize to save sidebar width
-    w2layoutInstance.on('resize', function() {
+    w2layoutInstance.on('resize', function () {
       const leftPanel = this.get('left');
       if (leftPanel && leftPanel.size) {
         localStorage.setItem('sidebarWidth', leftPanel.size);
@@ -160,7 +162,7 @@ async function initialize() {
     // Get settings and navigate to home directory
     const settings = await window.electronAPI.getSettings();
     console.log('Settings loaded:', settings);
-    
+
     const homePath = settings.home_directory;
 
     // Set initial layout to 1 panel
@@ -187,7 +189,7 @@ async function initialize() {
 
     // Attach event listeners
     attachEventListeners();
-    
+
     // Set up close request listener from main process
     window.electronAPI.onCloseRequest(() => {
       handleCloseRequest();
@@ -202,10 +204,10 @@ async function initialize() {
         });
       }
     });
-    
+
     // Initialize Monaco editor loader
     await initializeMonacoLoader();
-    
+
     // Start backend background refresh
     const bgSettings = await window.electronAPI.getSettings();
     window.electronAPI.startBackgroundRefresh(
@@ -237,22 +239,22 @@ async function initialize() {
 function updateGridHeader(panelId, path) {
   const gridName = `grid-panel-${panelId}`;
   const headerEl = document.getElementById(`grid_${gridName}_header`);
-  
+
   if (!headerEl) return;
-  
+
   // Build toolbar HTML with path and buttons
   let buttonsHtml = `
     <button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
   `;
-  
+
   if (panelId === 1) {
     buttonsHtml += `<button id="btn-add-panel" style="padding: 4px 8px; background: #4CAF50; color: white; border: none; font-weight: bold; border-radius: 4px;">+</button>`;
   }
-  
+
   if (panelId > 1) {
     buttonsHtml += `<button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">-</button>`;
   }
-  
+
   const headerHtml = `
     <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 12px; background: #f0f0f0; border-bottom: 1px solid #e0e0e0;">
       <span class="panel-path" style="font-weight: bold; font-size: 12px; cursor: pointer; user-select: none;">${path}</span>
@@ -262,9 +264,9 @@ function updateGridHeader(panelId, path) {
       </div>
     </div>
   `;
-  
+
   headerEl.innerHTML = headerHtml;
-  
+
   // Reattach event listeners to new elements
   attachGridHeaderEventListeners(panelId);
 }
@@ -274,17 +276,17 @@ function updateGridHeader(panelId, path) {
  */
 function attachGridHeaderEventListeners(panelId) {
   const $header = $(`#grid_grid-panel-${panelId}_header`);
-  
+
   // Path click to edit
-  $header.find('.panel-path').off('click').on('click', function() {
+  $header.find('.panel-path').off('click').on('click', function () {
     const $path = $(this);
     const $input = $header.find('.panel-path-input');
     $path.hide();
     $input.show().select().focus();
   });
-  
+
   // Path input - handle Enter, Escape, blur
-  $header.find('.panel-path-input').off('keydown blur').on('keydown', function(e) {
+  $header.find('.panel-path-input').off('keydown blur').on('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
       const newPath = $(this).val().trim();
@@ -300,13 +302,13 @@ function attachGridHeaderEventListeners(panelId) {
       $(this).hide();
       $header.find('.panel-path').show();
     }
-  }).on('blur', function() {
+  }).on('blur', function () {
     $(this).hide();
     $header.find('.panel-path').show();
   });
-  
+
   // Parent folder button
-  $header.find('.btn-panel-parent').off('click').on('click', function() {
+  $header.find('.btn-panel-parent').off('click').on('click', function () {
     setActivePanelId(panelId);
     const state = panelState[panelId];
     if (state.currentPath && state.currentPath.length > 3) {
@@ -316,38 +318,38 @@ function attachGridHeaderEventListeners(panelId) {
       }
     }
   });
-  
+
   // Refresh button
-  $header.find('.btn-panel-refresh').off('click').on('click', async function() {
+  $header.find('.btn-panel-refresh').off('click').on('click', async function () {
     setActivePanelId(panelId);
     await navigateToDirectory(panelState[panelId].currentPath, panelId);
   });
-  
+
   // Settings button (panel 1 only)
   if (panelId === 1) {
-    $header.find('.btn-panel-settings').off('click').on('click', function() {
+    $header.find('.btn-panel-settings').off('click').on('click', function () {
       setActivePanelId(panelId);
       showSettingsModal();
     });
-    
+
     // Add panel button (green + button)
-    $header.find('#btn-add-panel').off('click').on('click', function() {
+    $header.find('#btn-add-panel').off('click').on('click', function () {
       if (visiblePanels < 4) {
         visiblePanels++;
         const newPanelId = visiblePanels;
         $(`#panel-${newPanelId}`).show();
-        
+
         // Reattach event listeners for the newly visible panel
         attachPanelEventListeners(newPanelId);
-        
+
         updatePanelLayout();
       }
     });
   }
-  
+
   // Remove button (panels 2-4 only)
   if (panelId > 1) {
-    $header.find('.btn-panel-remove').off('click').on('click', function() {
+    $header.find('.btn-panel-remove').off('click').on('click', function () {
       console.log('Close button clicked for panel', panelId);
       removePanel(panelId);
     });
@@ -397,8 +399,8 @@ function renderTagBadges(tagsJson, tagDefs) {
   if (!Array.isArray(names) || names.length === 0) return '';
   const badges = names.map(name => {
     const def = tagDefs[name];
-    const bg   = def ? def.bgColor   : '#888';
-    const fg   = def ? def.textColor : '#fff';
+    const bg = def ? def.bgColor : '#888';
+    const fg = def ? def.textColor : '#fff';
     return `<span class="tag-badge" style="background:${bg};color:${fg}">${name}</span>`;
   });
   return `<div class="tag-badge-container">${badges.join('')}</div>`;
@@ -419,7 +421,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
   }
 
   const folders = entries.filter(e => e.isDirectory);
-  const files   = entries.filter(e => !e.isDirectory);
+  const files = entries.filter(e => !e.isDirectory);
 
   for (const folder of folders) {
     let iconUrl;
@@ -538,7 +540,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
     // Add attribute columns from stored JSON
     if (file.attributes) {
       let attrObj = {};
-      try { attrObj = typeof file.attributes === 'string' ? JSON.parse(file.attributes) : file.attributes; } catch(_) {}
+      try { attrObj = typeof file.attributes === 'string' ? JSON.parse(file.attributes) : file.attributes; } catch (_) { }
       const lastRecord = records[records.length - 1];
       for (const [k, v] of Object.entries(attrObj)) {
         lastRecord[`attr_${k}`] = v !== null && v !== undefined ? String(v) : '';
@@ -591,13 +593,13 @@ async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, t
         const dotIndex = entries.findIndex(e => e.filename === '.');
         const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
         console.log('[DEBUG] processPendingDirs - Inserting ".." at index:', insertIndex);
-        
+
         let parentDisplayFilename = '..';
         if (showFolderNameWithDotEntries && parentMetadata.path) {
           const parentFolderName = parentMetadata.path.split(/[\\\/]/).filter(p => p).pop() || parentMetadata.path;
           parentDisplayFilename = `.. (${parentFolderName})`;
         }
-        
+
         entries.splice(insertIndex, 0, {
           ...parentMetadata,
           displayFilename: parentDisplayFilename
@@ -685,7 +687,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
   const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
   const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
 
-  const iconCache    = new Map();
+  const iconCache = new Map();
   const categoryCache = new Map();
 
   // Clear grid immediately so the user sees the panel reset before results arrive
@@ -723,13 +725,13 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
       const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
       console.log('[DEBUG] Inserting ".." at index:', insertIndex);
       console.log('[DEBUG] Root entries before splice:', rootEntries.map(e => e.filename));
-      
+
       let parentDisplayFilename = '..';
       if (showFolderNameWithDotEntries && parentMetadata.path) {
         const parentFolderName = parentMetadata.path.split(/[\\\/]/).filter(p => p).pop() || parentMetadata.path;
         parentDisplayFilename = `.. (${parentFolderName})`;
       }
-      
+
       rootEntries.splice(insertIndex, 0, {
         ...parentMetadata,
         displayFilename: parentDisplayFilename
@@ -776,7 +778,7 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       console.error(`[navigateToDirectory] Invalid path type - received ${typeof dirPath}:`, dirPath);
       throw new Error('Path must be a non-empty string');
     }
-    
+
     let normalizedPath = dirPath.trim();
     if (!normalizedPath) {
       console.error('[navigateToDirectory] Empty path after normalization');
@@ -787,14 +789,14 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       // append backslash for drive root paths like "C:"
       normalizedPath += '\\';
     }
-    
+
     // Only log on manual navigation (when adding to history), not on background refresh
     const isManualNavigation = addToHistory !== false;
     const isFirstView = !panelState[panelId].hasBeenViewed;
     if (isManualNavigation || isFirstView) {
       console.log(`Navigating panel ${panelId} to:`, normalizedPath);
     }
-    
+
     const state = panelState[panelId];
 
     // Cancel any in-progress tree scan so stale results don't land in the new view
@@ -812,19 +814,19 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
       const depthInput = document.getElementById(`depth-input-${panelId}`);
       if (depthInput) depthInput.value = 0;
     }
-    
+
     // Update navigation history
     if (addToHistory) {
       state.navigationHistory = state.navigationHistory.slice(0, state.navigationIndex + 1);
       state.navigationHistory.push(dirPath);
       state.navigationIndex = state.navigationHistory.length - 1;
     }
-    
+
     // Update sidebar selection if navigating panel-1
     if (panelId === 1) {
       updateSidebarSelection(normalizedPath);
     }
-    
+
     // Update grid header with path (will be called after grid is populated)
     // For now just update the panel state, the header will be set after navigate succeeds
 
@@ -912,16 +914,16 @@ async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistor
     if (category && category.enableChecksum) {
       // Collect files that need checksum calculation
       const grid = panelState[panelId].w2uiGrid;
-      const filesToChecksum = grid.records.filter(r => 
+      const filesToChecksum = grid.records.filter(r =>
         !r.isFolder && r.changeState === 'checksumPending'
       );
-      
+
       if (filesToChecksum.length > 0) {
         // Start queue for both manual navigation and background refresh.
         // Don't restart if a queue is already actively running for this panel.
         const queueIdle = !state.checksumQueue ||
-                          state.checksumCancelled ||
-                          state.checksumQueueIndex >= state.checksumQueue.length;
+          state.checksumCancelled ||
+          state.checksumQueueIndex >= state.checksumQueue.length;
         if (queueIdle) {
           console.log(`Starting checksum calculation for ${filesToChecksum.length} files (panel ${panelId})`);
           startChecksumQueue(filesToChecksum, panelId, dirPath);
@@ -978,73 +980,19 @@ async function initializeAllGrids() {
 }
 
 /**
- * Initialize sidebar with root drives
+ * Initialize sidebar with favorites
  */
 async function initializeSidebar() {
   try {
     console.log('Initializing sidebar...');
-    
-    // Get root drives from main process
-    const drives = await window.electronAPI.getRootDrives();
-    sidebarState.drives = drives;
-    
-    // Render the sidebar tree
-    await renderSidebarTree(drives);
-    
-    // Render favorites list
-    await renderFavoritesList();
 
-    // Attach sidebar event listeners
-    attachSidebarEventListeners();
+    // Initialize W2UI favorites sidebar
+    await initializeFavoritesSidebar();
 
-    // Attach favorites event listeners
-    attachFavoritesEventListeners();
-    
-    console.log('Sidebar initialized with', drives.length, 'drives');
+    console.log('Sidebar initialized');
   } catch (err) {
     console.error('Error initializing sidebar:', err);
   }
-}
-
-/**
- * Render the sidebar tree starting with root drives
- */
-async function renderSidebarTree(drives) {
-  const $tree = $('#sidebar-tree');
-  $tree.empty();
-  
-  // Create "This PC" group section with all drives
-  for (const drive of drives) {
-    const $driveItem = createSidebarDriveItem(drive);
-    $tree.append($driveItem);
-  }
-}
-
-/**
- * Create a sidebar item for a drive
- */
-function createSidebarDriveItem(drive) {
-  const $item = $('<div>')
-    .addClass('sidebar-item sidebar-item-drive')
-    .attr('data-path', drive.path)
-    .attr('data-isDirectory', 'true')
-    .attr('data-expanded', 'false');
-  
-  // Toggle arrow (for expanding/collapsing)
-  const $arrow = $('<div>')
-    .addClass('sidebar-toggle-arrow collapsed')
-    .text('▶')
-    .attr('title', 'Expand drive');
-  
-  // Drive label
-  const $label = $('<div>')
-    .addClass('sidebar-item-label')
-    .text(drive.label)
-    .attr('title', drive.label);
-  
-  $item.append($arrow, $label);
-  
-  return $item;
 }
 
 /**
@@ -1057,20 +1005,20 @@ function createSidebarDirectoryItem(dirName, dirPath, level = 0) {
     .attr('data-path', dirPath)
     .attr('data-isDirectory', 'true')
     .attr('data-expanded', 'false');
-  
+
   // Toggle arrow (will be hidden if no children, determined on first expand)
   const $arrow = $('<div>')
     .addClass('sidebar-toggle-arrow collapsed')
     .text('▶');
-  
+
   // Directory label
   const $label = $('<div>')
     .addClass('sidebar-item-label')
     .text(dirName)
     .attr('title', dirPath);
-  
+
   $item.append($arrow, $label);
-  
+
   return $item;
 }
 
@@ -1084,40 +1032,40 @@ async function loadSidebarItemChildren(path, $item) {
     if ($children.length > 0) {
       return; // Already loaded
     }
-    
+
     // Get directory contents
     const entries = await window.electronAPI.readDirectory(path);
-    
+
     // Filter to only directories
     const directories = entries.filter(e => e.isDirectory);
-    
+
     // If no directories, exit
     if (directories.length === 0) {
       // Update arrow to show no children
       $item.find('.sidebar-toggle-arrow').addClass('no-children');
       return;
     }
-    
+
     // Create children container
     const $childrenContainer = $('<div>').addClass('sidebar-children');
-    
+
     // Get current level from indentation class
     const levelMatch = $item.attr('class').match(/sidebar-item-indent-(\d+)/);
     let currentLevel = levelMatch ? parseInt(levelMatch[1]) : 0;
     const childLevel = currentLevel + 1;
-    
+
     // Create items for each subdirectory
     for (const dir of directories) {
       const $childItem = createSidebarDirectoryItem(dir.filename, dir.path, childLevel);
       $childrenContainer.append($childItem);
     }
-    
+
     // Insert children container after the item
     $item.after($childrenContainer);
-    
+
     // Update arrow to show has children
     $item.find('.sidebar-toggle-arrow').removeClass('no-children');
-    
+
     console.log(`Loaded ${directories.length} subdirectories for ${path}`);
   } catch (err) {
     console.error('Error loading sidebar item children:', err);
@@ -1130,7 +1078,7 @@ async function loadSidebarItemChildren(path, $item) {
 async function toggleSidebarItemExpansion($item) {
   const isExpanded = $item.attr('data-expanded') === 'true';
   const path = $item.attr('data-path');
-  
+
   if (isExpanded) {
     // Collapse
     collapseSidebarItem($item);
@@ -1146,13 +1094,13 @@ async function toggleSidebarItemExpansion($item) {
 async function expandSidebarItem($item, path) {
   // Load children if not loaded yet
   await loadSidebarItemChildren(path, $item);
-  
+
   // Show children container
   const $children = $item.next('.sidebar-children');
   if ($children.length > 0) {
     $children.show();
   }
-  
+
   // Update arrow and state
   $item.attr('data-expanded', 'true');
   $item.find('.sidebar-toggle-arrow').removeClass('collapsed').text('▼');
@@ -1167,7 +1115,7 @@ function collapseSidebarItem($item) {
   if ($children.length > 0) {
     $children.hide();
   }
-  
+
   // Update arrow and state
   $item.attr('data-expanded', 'false');
   $item.find('.sidebar-toggle-arrow').addClass('collapsed').text('▶');
@@ -1179,7 +1127,7 @@ function collapseSidebarItem($item) {
 function updateSidebarSelection(path) {
   // Remove selection from all items
   $('.sidebar-item').removeClass('sidebar-item-selected');
-  
+
   // Add selection to matching path
   if (path) {
     $(`.sidebar-item[data-path="${path}"]`).addClass('sidebar-item-selected');
@@ -1192,18 +1140,18 @@ function updateSidebarSelection(path) {
  */
 function attachSidebarEventListeners() {
   // Delegate click events for dynamic items
-  $('#sidebar-tree').on('click', '.sidebar-toggle-arrow', function(e) {
+  $('#sidebar-tree').on('click', '.sidebar-toggle-arrow', function (e) {
     e.stopPropagation();
     const $item = $(this).closest('.sidebar-item');
     toggleSidebarItemExpansion($item);
   });
-  
+
   // Double-click to navigate
-  $('#sidebar-tree').on('dblclick', '.sidebar-item-label', function(e) {
+  $('#sidebar-tree').on('dblclick', '.sidebar-item-label', function (e) {
     e.stopPropagation();
     const $item = $(this).closest('.sidebar-item');
     const path = $item.attr('data-path');
-    
+
     if (path) {
       // Navigate to directory in panel-1
       navigateToDirectory(path, 1);
@@ -1211,13 +1159,13 @@ function attachSidebarEventListeners() {
       updateSidebarSelection(path);
     }
   });
-  
+
   // Single click to select
-  $('#sidebar-tree').on('click', '.sidebar-item-label', function(e) {
+  $('#sidebar-tree').on('click', '.sidebar-item-label', function (e) {
     e.stopPropagation();
     const $item = $(this).closest('.sidebar-item');
     const path = $item.attr('data-path');
-    
+
     if (path) {
       updateSidebarSelection(path);
     }
@@ -1225,19 +1173,418 @@ function attachSidebarEventListeners() {
 }
 
 // =====================
-// FAVORITES
+// FAVORITES (W2UI Sidebar)
 // =====================
 
-let favoritesContextMenuTarget = null; // path of favorite being right-clicked
-let favoriteDragSrcIndex = null;
+let w2uiFavoritesSidebar = null;
+let favoritesContextMenuTarget = null; // path or group id of selection being right-clicked
+let favIconMap = {}; // nodeId (safe) → data: URL for category folder icon
 
 /**
- * Load favorites array from settings
+ * Initialize W2UI Favorites Sidebar
+ */
+async function initializeFavoritesSidebar() {
+  try {
+    // Wait for DOM to be ready
+    await new Promise(resolve => {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', resolve);
+      } else {
+        resolve();
+      }
+    });
+
+    // Debug: check DOM element
+    const boxElement = document.getElementById('w2ui-favorites');
+    console.log('[DEBUG] w2ui-favorites element exists:', !!boxElement);
+    if (!boxElement) {
+      console.warn('[DEBUG] w2ui-favorites element NOT FOUND in DOM');
+      return;
+    }
+
+    // Check for w2sidebar class (proper w2ui naming in v2.0)
+    if (typeof w2sidebar === 'undefined') {
+      console.error('[DEBUG] w2sidebar class not found - w2ui may not have loaded');
+      console.log('[DEBUG] Checking global scope for sidebar...',
+        Object.keys(window).filter(k => k.toLowerCase().includes('sidebar')).slice(0, 5));
+      return;
+    }
+
+    // Load existing favorites
+    const favorites = await loadFavoritesFromSettings();
+    console.log('[DEBUG] Loaded favorites:', JSON.stringify(favorites).substring(0, 200));
+
+    // Convert to w2ui node format
+    const nodes = await convertFavoritesToW2UINodes(favorites);
+    console.log('[DEBUG] Converted to W2UI nodes count:', nodes.length);
+    if (nodes.length > 0) {
+      console.log('[DEBUG] First node:', JSON.stringify(nodes[0]).substring(0, 150));
+    }
+
+    console.log('Initializing W2UI favorites sidebar with', nodes.length, 'nodes');
+
+    // Initialize w2ui sidebar using the w2sidebar class
+    w2uiFavoritesSidebar = new w2sidebar({
+      box: '#w2ui-favorites',
+      name: 'favorites-sidebar',
+      topHTML: '<div class="favorites-label">FAVORITES</div>',
+      // handle: {
+      //   size: 20,
+      //   style: 'background: none;',
+      //   html: '<span class="fav-drag-handle">&#xFE19;</span>'
+      // },
+      reorder: true,
+      nodes: nodes,
+      onClick: async (event) => {
+        // Navigate to directory on click
+        const node = w2uiFavoritesSidebar.get(event.target);
+        if (node && node.path) {
+          await navigateToDirectory(node.path, 1);
+          updateSidebarSelection(node.path);
+        }
+      },
+      onContextMenu: (event) => {
+        event.preventDefault();
+        const node = w2uiFavoritesSidebar.get(event.target);
+        if (node) {
+          favoritesContextMenuTarget = node;
+          showFavoritesContextMenu(event.clientX, event.clientY, node.group ? 'group' : 'item');
+        }
+      },
+      onDragStart(event) {
+        if (event.detail.node.id.startsWith("empty-")) {
+          event.preventDefault()
+        }
+      },
+      onDragOver(event) {
+        // if (event.detail.append) {
+        //   query('#log').html('Append to the end')
+        // } else {
+        //   query('#log').html(`Dragged before ${event.detail.moveBefore}`)
+        // }
+        return;
+      },
+      onReorder(event) {
+        console.log('Reorder event:', event);
+        let removeNodes = [];
+        for (const node of this.nodes) {
+          if (!node.group) continue;
+          const hasEmptyNode = node.nodes.some(n => n.id.startsWith("empty-"));
+          let realNodesCount = node.nodes.filter(n => !n.id.startsWith("empty-") && n.id !== event.target).length;
+          if (event.detail.moveBefore && event.detail.moveBefore == `empty-${node.id}`) {
+            realNodesCount += 1;
+          }
+          if (realNodesCount === 0 && !hasEmptyNode) {
+            this.insert(node.id, null, [{ id: `empty-${node.id}`, text: '(empty)' }]);
+          }else if (hasEmptyNode && realNodesCount > 0) {
+            removeNodes.push(`empty-${node.id}`);
+          }
+        }
+        // this.refresh();
+        event.complete.then(() => {
+          for (const nodeId of removeNodes) {
+            this.remove(nodeId);
+          }
+        });
+      }
+    });
+
+    // attachFavoritesDragDrop();
+    console.log('W2UI favorites sidebar initialized successfully');
+  } catch (err) {
+    console.error('Error initializing favorites sidebar:', err);
+  }
+  // // TEMPORARY TEST:
+
+  // let sidebar = new w2sidebar({
+  //   box: '#w2ui-favorites2',
+  //   name: 'sidebar',
+  //   reorder: true,
+  //   onDragStart(event) {
+  //     if (event.detail.node.id == 'non-drag') {
+  //       query('#log').html('Cannot drag this node')
+  //       event.preventDefault()
+  //     } else {
+
+  //     }
+  //     w2utils.notify()
+  //   },
+  //   onDragOver(event) {
+  //     if (event.detail.append) {
+  //       query('#log').html('Append to the end')
+  //     } else {
+  //       query('#log').html(`Dragged before ${event.detail.moveBefore}`)
+  //     }
+  //   },
+  //   onReorder(event) {
+  //     if (event.detail.append) {
+  //       w2utils.notify(`Append node "${event.target}" to the end of the sidebar`)
+  //     } else {
+  //       w2utils.notify(`Move node "${event.target}" before "${event.detail.moveBefore}"`)
+  //     }
+  //   },
+  //   nodes: [
+  //     { id: 'top1', text: 'Top 1', icon: 'fa fa-home', count: 1 },
+  //     { id: 'top2', text: 'Top 2', icon: 'fa fa-coffee' },
+  //     { id: 'non-drag', text: `Cann't drag`, icon: 'fa fa-lock' },
+  //     {
+  //       id: 'group-1', text: 'Group 1', expanded: true, group: true,
+  //       nodes: [
+  //         { id: 'item1', text: 'Item 1', icon: 'fa fa-home', count: 1 },
+  //         { id: 'item2', text: 'Item 2', icon: 'fa fa-coffee' },
+  //         { id: 'item3', text: 'Item 3', icon: 'fa fa-comment-o' },
+  //         {
+  //           id: 'sum-item', text: 'Nested Items', icon: 'fa fa-star', expanded: true,
+  //           nodes: [
+  //             { id: 'sub-item1', text: 'Sub Item 1', icon: 'fa fa-star-o', count: 10 },
+  //             { id: 'sub-item2', text: 'Sub Item 2', icon: 'fa fa-star-o' },
+  //             { id: 'sub-item3', text: 'Sub Item 3', icon: 'fa fa-star-o' }
+  //           ]
+  //         },
+  //       ]
+  //     },
+  //     {
+  //       id: 'group-2', text: 'Group 2', expanded: true, group: true,
+  //       nodes: [
+  //         { id: 'sub-item21', text: 'Sub Item 21', icon: 'fa fa-comment-o', count: 'Text' },
+  //         { id: 'sub-item22', text: 'Sub Item 22', icon: 'fa fa-comment-o' },
+  //         { id: 'sub-item23', text: 'Sub Item 23', icon: 'fa fa-comment-o' }
+  //       ]
+  //     }
+  //   ]
+  // })
+}
+
+/**
+ * Convert favorites array to w2ui node format
+ */
+async function convertFavoritesToW2UINodes(favorites, groupPath = []) {
+  if (!Array.isArray(favorites)) return [];
+
+  // Reset icon map at top level only
+  if (groupPath.length === 0) favIconMap = {};
+
+  const nodes = [];
+
+  for (let i = 0; i < favorites.length; i++) {
+    const fav = favorites[i];
+    const nodeId = `fav-${groupPath.join('-')}-${i}`;
+
+    if (fav.type === 'group') {
+      // Groups use a standard folder icon class
+      const groupNodes = await convertFavoritesToW2UINodes(fav.items || [], [...groupPath, i]);
+      nodes.push({
+        id: nodeId,
+        text: fav.name,
+        icon: 'fav-icon-group',
+        group: true,
+        expanded: !fav.collapsed,
+        nodes: groupNodes
+      });
+    } else {
+      // Fetch the category-styled folder icon for this path
+      const safeId = nodeId.replace(/[^a-z0-9]/gi, '_');
+      const iconClass = `fav_icon_${safeId}`;
+      try {
+        const [category, initials] = await Promise.all([
+          window.electronAPI.getCategoryForDirectory(fav.path),
+          window.electronAPI.getDirectoryInitials(fav.path)
+        ]);
+        const iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, initials || null);
+        favIconMap[safeId] = iconUrl;
+      } catch (err) {
+        // fallback – no entry means the default CSS will apply
+      }
+
+      const name = fav.name || fav.path.split(/[\\/]/).filter(Boolean).pop() || fav.path;
+      nodes.push({
+        id: nodeId,
+        text: name,
+        icon: iconClass,
+        path: fav.path,
+        group: false
+      });
+    }
+  }
+
+  // Rebuild the dynamic icon stylesheet at top level
+  if (groupPath.length === 0) {
+    updateFavoriteIconStyles();
+  }
+
+  return nodes;
+}
+
+/**
+ * Build/update the <style> element that maps fav_icon_* classes to their data URLs
+ */
+function updateFavoriteIconStyles() {
+  let styleEl = document.getElementById('fav-node-icon-styles');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'fav-node-icon-styles';
+    document.head.appendChild(styleEl);
+  }
+  const css = Object.entries(favIconMap).map(([safeId, iconUrl]) => {
+    return `.w2ui-node-image span.fav_icon_${safeId} {
+      background-image: url('${iconUrl}');
+      background-size: cover;
+      background-repeat: no-repeat;
+      background-position: center;
+      width: 16px;
+      height: 16px;
+      display: inline-block;
+    }`;
+  }).join('\n');
+  styleEl.textContent = css;
+}
+
+/**
+ * Attach HTML5 drag-to-reorder behaviour to the w2ui favorites sidebar.
+ * Safe to call multiple times – removes previous listeners first.
+ */
+function attachFavoritesDragDrop() {
+  const container = document.getElementById('w2ui-favorites');
+  if (!container || !w2uiFavoritesSidebar) return;
+
+  let dragNodeId = null;
+
+  // Make all current leaf nodes draggable
+  function stampDraggable() {
+    container.querySelectorAll('.w2ui-node:not(.w2ui-node-group)').forEach(el => {
+      el.setAttribute('draggable', 'true');
+    });
+  }
+
+  // Remove old listeners by cloning the container's direct child
+  // (we use a named handler approach instead to avoid DOM cloning issues)
+  container.removeEventListener('dragstart', container._favDragStart);
+  container.removeEventListener('dragend', container._favDragEnd);
+  container.removeEventListener('dragover', container._favDragOver);
+  container.removeEventListener('drop', container._favDrop);
+
+  container._favDragStart = (e) => {
+    const nodeEl = e.target.closest('.w2ui-node:not(.w2ui-node-group)');
+    if (!nodeEl) return;
+    dragNodeId = nodeEl.id.replace('node_', '');
+    e.dataTransfer.effectAllowed = 'move';
+    nodeEl.classList.add('fav-dragging');
+  };
+
+  container._favDragEnd = (e) => {
+    container.querySelectorAll('.fav-dragging, .fav-drag-over').forEach(el => {
+      el.classList.remove('fav-dragging', 'fav-drag-over');
+    });
+    dragNodeId = null;
+  };
+
+  container._favDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const nodeEl = e.target.closest('.w2ui-node:not(.w2ui-node-group)');
+    container.querySelectorAll('.fav-drag-over').forEach(el => el.classList.remove('fav-drag-over'));
+    if (nodeEl && nodeEl.id.replace('node_', '') !== dragNodeId) {
+      nodeEl.classList.add('fav-drag-over');
+    }
+  };
+
+  container._favDrop = async (e) => {
+    e.preventDefault();
+    container.querySelectorAll('.fav-dragging, .fav-drag-over').forEach(el => {
+      el.classList.remove('fav-dragging', 'fav-drag-over');
+    });
+    if (!dragNodeId) return;
+    const targetEl = e.target.closest('.w2ui-node:not(.w2ui-node-group)');
+    if (!targetEl) return;
+    const targetId = targetEl.id.replace('node_', '');
+    if (targetId === dragNodeId) return;
+
+    // Reorder root-level nodes (groups stay in place; only leaf nodes swap)
+    const nodes = w2uiFavoritesSidebar.nodes;
+    const fromIdx = nodes.findIndex(n => n.id === dragNodeId);
+    const toIdx = nodes.findIndex(n => n.id === targetId);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      const [moved] = nodes.splice(fromIdx, 1);
+      // Re-find target index after splice
+      const insertAt = nodes.findIndex(n => n.id === targetId);
+      nodes.splice(insertAt + (fromIdx < toIdx ? 1 : 0), 0, moved);
+      w2uiFavoritesSidebar.refresh();
+      stampDraggable();
+      await persistW2UINodes();
+    }
+    dragNodeId = null;
+  };
+
+  container.addEventListener('dragstart', container._favDragStart);
+  container.addEventListener('dragend', container._favDragEnd);
+  container.addEventListener('dragover', container._favDragOver);
+  container.addEventListener('drop', container._favDrop);
+
+  stampDraggable();
+}
+
+/**
+ * Persist W2UI sidebar nodes back to favorites format
+ */
+async function persistW2UINodes() {
+  if (!w2uiFavoritesSidebar) return;
+
+  const nodes = w2uiFavoritesSidebar.nodes;
+  const favorites = convertW2UINodesToFavorites(nodes);
+
+  await saveFavoritesToSettings(favorites);
+}
+
+/**
+ * Convert w2ui nodes back to favorites format
+ */
+function convertW2UINodesToFavorites(nodes, groupPath = []) {
+  if (!Array.isArray(nodes)) return [];
+
+  const favorites = [];
+
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+
+    if (node.group) {
+      // Convert to group
+      favorites.push({
+        type: 'group',
+        name: node.text,
+        collapsed: !node.expanded,
+        items: convertW2UINodesToFavorites(node.nodes || [], [...groupPath, i])
+      });
+    } else {
+      // Convert to favorite item
+      favorites.push({
+        type: 'favorite',
+        path: node.path,
+        name: node.text
+      });
+    }
+  }
+
+  return favorites;
+}
+
+/**
+ * Load favorites array from settings (with migration support)
  */
 async function loadFavoritesFromSettings() {
   try {
     const settings = await window.electronAPI.getSettings();
-    return Array.isArray(settings.favorites) ? settings.favorites : [];
+    let favorites = Array.isArray(settings.favorites) ? settings.favorites : [];
+
+    // Apply migration if needed
+    favorites = migrateFavoritesToGroupFormat(favorites);
+
+    // If this was an old format, save the migrated version
+    if (favorites.length > 0 && !settings.favorites[0]?.type) {
+      settings.favorites = favorites;
+      await window.electronAPI.saveSettings(settings);
+    }
+
+    return favorites;
   } catch (err) {
     console.error('Error loading favorites:', err);
     return [];
@@ -1258,64 +1605,50 @@ async function saveFavoritesToSettings(favorites) {
 }
 
 /**
- * Render the favorites list in the sidebar
+ * Migrate old flat favorites array to new hierarchical format with groups
  */
-async function renderFavoritesList() {
-  const favorites = await loadFavoritesFromSettings();
-  const $list = $('#favorites-list');
-  $list.empty();
+function migrateFavoritesToGroupFormat(oldFavorites) {
+  if (!Array.isArray(oldFavorites)) return [];
 
-  if (favorites.length === 0) {
-    $list.append(
-      $('<div>').addClass('favorite-item-empty')
-        .css({ padding: '4px 12px', fontSize: '11px', color: '#bbb', fontStyle: 'italic' })
-        .text('No favorites yet')
-    );
-    return;
+  // If already migrated (has type field), return as-is
+  if (oldFavorites.length > 0 && oldFavorites[0].type) {
+    return oldFavorites;
   }
 
-  for (let index = 0; index < favorites.length; index++) {
-    const fav = favorites[index];
-    const name = fav.name || fav.path.split(/[\\/]/).filter(Boolean).pop() || fav.path;
-    const $item = $('<div>')
-      .addClass('favorite-item')
-      .attr('data-path', fav.path)
-      .attr('data-index', index)
-      .attr('draggable', 'true');
-
-    const $handle = $('<div>').addClass('favorite-item-drag-handle').text('⠿');
-    const $icon = $('<div>').addClass('favorite-item-icon');
-    const $label = $('<div>').addClass('favorite-item-label').text(name).attr('title', fav.path);
-
-    // Resolve category-based folder icon with initials
-    try {
-      const [category, initials] = await Promise.all([
-        window.electronAPI.getCategoryForDirectory(fav.path),
-        window.electronAPI.getDirectoryInitials(fav.path)
-      ]);
-      const iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, initials || null);
-      $icon.html(`<img src="${iconUrl}" style="width: 16px; height: 16px; object-fit: contain;">`);
-    } catch (err) {
-      $icon.html('📁');
-    }
-
-    $item.append($handle, $icon, $label);
-    $list.append($item);
-  }
+  // Convert old format to new format (all as root-level favorites)
+  return oldFavorites.map(fav => ({
+    type: 'favorite',
+    path: fav.path,
+    name: fav.name
+  }));
 }
 
 /**
- * Add a directory path to favorites (avoiding duplicates)
+ * Add a directory path to favorites
  */
 async function addToFavorites(dirPath) {
   const favorites = await loadFavoritesFromSettings();
   const normalized = dirPath.replace(/\\/g, '/');
-  const exists = favorites.some(f => f.path.replace(/\\/g, '/') === normalized);
-  if (!exists) {
+
+  // Check for duplicates
+  const isDuplicate = (items) => {
+    return items.some(item => {
+      if (item.path?.replace(/\\/g, '/') === normalized) return true;
+      if (item.items) return isDuplicate(item.items);
+      return false;
+    });
+  };
+
+  if (!isDuplicate(favorites)) {
     const name = dirPath.split(/[\\/]/).filter(Boolean).pop() || dirPath;
-    favorites.push({ path: dirPath, name });
+    favorites.push({
+      type: 'favorite',
+      path: dirPath,
+      name: name
+    });
+
     await saveFavoritesToSettings(favorites);
-    await renderFavoritesList();
+    await refreshFavoritesSidebar();
   }
 }
 
@@ -1325,128 +1658,206 @@ async function addToFavorites(dirPath) {
 async function removeFromFavorites(dirPath) {
   const favorites = await loadFavoritesFromSettings();
   const normalized = dirPath.replace(/\\/g, '/');
-  const updated = favorites.filter(f => f.path.replace(/\\/g, '/') !== normalized);
+
+  const filterItems = (items) => {
+    return items.filter(item => {
+      if (item.type === 'favorite') {
+        return item.path?.replace(/\\/g, '/') !== normalized;
+      } else if (item.type === 'group') {
+        item.items = filterItems(item.items || []);
+      }
+      return true;
+    });
+  };
+
+  const updated = filterItems(favorites);
   await saveFavoritesToSettings(updated);
-  await renderFavoritesList();
+  await refreshFavoritesSidebar();
 }
 
 /**
- * Attach event listeners for the favorites list (drag/drop, click, right-click)
+ * Refresh the favorites sidebar
  */
-function attachFavoritesEventListeners() {
-  const $list = $('#favorites-list');
-
-  // Navigate on click
-  $list.on('click', '.favorite-item', async function(e) {
-    const path = $(this).attr('data-path');
-    if (path) {
-      await navigateToDirectory(path, 1);
-      updateSidebarSelection(path);
-    }
-  });
-
-  // Right-click context menu
-  $list.on('contextmenu', '.favorite-item', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    favoritesContextMenuTarget = $(this).attr('data-path');
-    showFavoritesContextMenu(e.clientX, e.clientY);
-  });
-
-  // Drag events – source
-  $list.on('dragstart', '.favorite-item', function(e) {
-    favoriteDragSrcIndex = parseInt($(this).attr('data-index'));
-    $(this).addClass('dragging');
-    e.originalEvent.dataTransfer.effectAllowed = 'move';
-    e.originalEvent.dataTransfer.setData('text/plain', favoriteDragSrcIndex.toString());
-  });
-
-  $list.on('dragend', '.favorite-item', function() {
-    $(this).removeClass('dragging');
-    $('.favorite-item').removeClass('drag-over-top drag-over-bottom');
-  });
-
-  // Drag events – target
-  $list.on('dragover', '.favorite-item', function(e) {
-    e.preventDefault();
-    e.originalEvent.dataTransfer.dropEffect = 'move';
-    const rect = this.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    $(this).removeClass('drag-over-top drag-over-bottom');
-    if (e.originalEvent.clientY < midY) {
-      $(this).addClass('drag-over-top');
-    } else {
-      $(this).addClass('drag-over-bottom');
-    }
-  });
-
-  $list.on('dragleave', '.favorite-item', function() {
-    $(this).removeClass('drag-over-top drag-over-bottom');
-  });
-
-  $list.on('drop', '.favorite-item', async function(e) {
-    e.preventDefault();
-    $(this).removeClass('drag-over-top drag-over-bottom');
-    const destIndex = parseInt($(this).attr('data-index'));
-    if (favoriteDragSrcIndex === null || favoriteDragSrcIndex === destIndex) return;
-
-    const rect = this.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    const insertAfter = e.originalEvent.clientY >= midY;
-
+async function refreshFavoritesSidebar() {
+  try {
     const favorites = await loadFavoritesFromSettings();
-    const moved = favorites.splice(favoriteDragSrcIndex, 1)[0];
-    let insertAt = destIndex;
-    if (favoriteDragSrcIndex < destIndex) insertAt = destIndex - 1;
-    if (insertAfter) insertAt += 1;
-    favorites.splice(insertAt, 0, moved);
-    await saveFavoritesToSettings(favorites);
-    await renderFavoritesList();
-    favoriteDragSrcIndex = null;
-  });
+    const nodes = await convertFavoritesToW2UINodes(favorites);
+
+    if (w2uiFavoritesSidebar) {
+      w2uiFavoritesSidebar.nodes = nodes;
+      w2uiFavoritesSidebar.refresh();
+      // attachFavoritesDragDrop();
+    }
+  } catch (err) {
+    console.error('Error refreshing favorites sidebar:', err);
+  }
 }
 
 /**
- * Show the favorites right-click context menu
+ * Show modal to add a new group
  */
-function showFavoritesContextMenu(x, y) {
+async function showAddGroupPrompt() {
+  const groupName = await showInputPrompt('Enter group name:', '');
+  if (groupName && groupName.trim()) {
+    await createGroup(groupName.trim());
+  }
+}
+
+/**
+ * Create a new group
+ */
+async function createGroup(name) {
+  const favorites = await loadFavoritesFromSettings();
+  favorites.push({
+    type: 'group',
+    name: name,
+    collapsed: false,
+    items: []
+  });
+  await saveFavoritesToSettings(favorites);
+  await refreshFavoritesSidebar();
+}
+
+/**
+ * Rename a group
+ */
+async function renameGroup(node, newName) {
+  if (!node || !node.group) return;
+
+  const favorites = await loadFavoritesFromSettings();
+
+  // Find and update the group
+  const updateGroup = (items) => {
+    for (let item of items) {
+      if (item.name === node.text && item.type === 'group') {
+        item.name = newName;
+        return true;
+      }
+      if (item.items && updateGroup(item.items)) return true;
+    }
+    return false;
+  };
+
+  if (updateGroup(favorites)) {
+    await saveFavoritesToSettings(favorites);
+    await refreshFavoritesSidebar();
+  }
+}
+
+/**
+ * Delete a group
+ */
+async function deleteGroup(node) {
+  if (!node || !node.group) return;
+
+  const hasItems = node.nodes && node.nodes.length > 0;
+  let shouldDelete = false;
+
+  if (hasItems) {
+    const confirmed = await showConfirmPrompt(
+      `Delete group "${node.text}"? This group contains ${node.nodes.length} item(s) which will be discarded.`
+    );
+    shouldDelete = confirmed;
+  } else {
+    shouldDelete = await showConfirmPrompt(`Delete group "${node.text}"?`);
+  }
+
+  if (shouldDelete) {
+    const favorites = await loadFavoritesFromSettings();
+
+    const removeGroup = (items) => {
+      const index = items.findIndex(item => item.name === node.text && item.type === 'group');
+      if (index !== -1) {
+        items.splice(index, 1);
+        return true;
+      }
+      for (let item of items) {
+        if (item.items && removeGroup(item.items)) return true;
+      }
+      return false;
+    };
+
+    if (removeGroup(favorites)) {
+      await saveFavoritesToSettings(favorites);
+      await refreshFavoritesSidebar();
+    }
+  }
+}
+
+/**
+ * Show the favorites context menu
+ */
+function showFavoritesContextMenu(x, y, targetType = 'item') {
   let $menu = $('#favorites-context-menu');
   if ($menu.length === 0) {
-    $menu = buildFavoritesContextMenuEl();
+    $menu = $('<div>').attr('id', 'favorites-context-menu');
     $('body').append($menu);
   }
 
-  // Rebuild Open In items based on visible panels
-  const $openInSub = $menu.find('.fav-submenu');
-  $openInSub.empty();
-  for (let i = 1; i <= Math.min(visiblePanels + 1, 4); i++) {
-    $openInSub.append(
+  $menu.empty();
+
+  if (targetType === 'item') {
+    // Item context menu
+    $menu.append(
       $('<div>').addClass('fav-menu-item')
-        .attr('data-panel', i)
-        .text(`Panel ${i}`)
-        .on('click', async function(e) {
+        .text('Remove from Favorites')
+        .on('click', async function (e) {
           e.stopPropagation();
-          hideFavoritesContextMenu();
-          const path = favoritesContextMenuTarget;
-          if (!path) return;
-          const panelNum = parseInt($(this).attr('data-panel'));
-          const $panel = $(`#panel-${panelNum}`);
-          if (panelNum > visiblePanels) {
-            visiblePanels = panelNum;
-            $panel.show();
-            updatePanelLayout();
+          if (favoritesContextMenuTarget && favoritesContextMenuTarget.path) {
+            await removeFromFavorites(favoritesContextMenuTarget.path);
           }
-          await navigateToDirectory(path, panelNum);
-          $panel.find('.panel-landing-page').hide();
-          $panel.find('.panel-grid').show();
-          const grid = panelState[panelNum].w2uiGrid;
-          if (grid && grid.resize) grid.resize();
-          setActivePanelId(panelNum);
+          hideFavoritesContextMenu();
+        })
+    );
+  } else if (targetType === 'group') {
+    // Group context menu
+    $menu.append(
+      $('<div>').addClass('fav-menu-item')
+        .text('Rename')
+        .on('click', async function (e) {
+          e.stopPropagation();
+          if (favoritesContextMenuTarget) {
+            const newName = await showInputPrompt('Enter new group name:', favoritesContextMenuTarget.text);
+            if (newName && newName.trim()) {
+              await renameGroup(favoritesContextMenuTarget, newName.trim());
+            }
+          }
+          hideFavoritesContextMenu();
+        })
+    );
+    $menu.append(
+      $('<div>').addClass('fav-menu-item')
+        .text('Add to Group')
+        .on('click', async function (e) {
+          e.stopPropagation();
+          await showAddGroupPrompt();
+          hideFavoritesContextMenu();
+        })
+    );
+    $menu.append(
+      $('<div>').addClass('fav-menu-item')
+        .text('Delete')
+        .on('click', async function (e) {
+          e.stopPropagation();
+          if (favoritesContextMenuTarget) {
+            await deleteGroup(favoritesContextMenuTarget);
+          }
+          hideFavoritesContextMenu();
         })
     );
   }
 
-  $menu.css({ left: x, top: y, display: 'block' });
+  $menu.css({
+    position: 'fixed',
+    left: x,
+    top: y,
+    display: 'block',
+    background: 'white',
+    border: '1px solid #ccc',
+    borderRadius: '4px',
+    minWidth: '160px',
+    zIndex: 10001
+  });
 
   // Ensure menu stays in viewport
   const menuRect = $menu[0].getBoundingClientRect();
@@ -1458,49 +1869,24 @@ function showFavoritesContextMenu(x, y) {
   }
 }
 
-function buildFavoritesContextMenuEl() {
-  const $menu = $('<div>').attr('id', 'favorites-context-menu');
-
-  // Open In (with submenu)
-  const $openIn = $('<div>').addClass('fav-menu-item has-submenu').text('Open In');
-  const $sub = $('<div>').addClass('fav-submenu');
-  $openIn.append($sub);
-  $menu.append($openIn);
-
-  $menu.append($('<hr>').addClass('fav-menu-separator'));
-
-  // Remove
-  $menu.append(
-    $('<div>').addClass('fav-menu-item fav-menu-item-remove').text('Remove')
-      .on('click', async function(e) {
-        e.stopPropagation();
-        hideFavoritesContextMenu();
-        if (favoritesContextMenuTarget) {
-          await removeFromFavorites(favoritesContextMenuTarget);
-        }
-      })
-  );
-
-  return $menu;
-}
-
 function hideFavoritesContextMenu() {
   $('#favorites-context-menu').hide();
 }
 
 // Hide context menu on outside click
-$(document).on('click', function(e) {
+$(document).on('click', function (e) {
   if (!$(e.target).closest('#favorites-context-menu').length) {
     hideFavoritesContextMenu();
   }
 });
+
 
 /**
  * Initialize w2ui grid for a specific panel
  */
 async function initializeGridForPanel(panelId) {
   const gridName = `grid-panel-${panelId}`;
-  
+
   // Destroy existing grid if present
   if (w2ui && w2ui[gridName]) {
     w2ui[gridName].destroy();
@@ -1521,11 +1907,13 @@ async function initializeGridForPanel(panelId) {
     { field: 'perms', text: 'Perms', size: '48px', resizable: true, sortable: true },
     { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false },
     { field: 'tags', text: 'Tags', size: '160px', resizable: true, sortable: false },
-    { field: 'notes', text: 'Notes', size: '32px', resizable: false, sortable: false, render: (record) => {
-      return record.hasNotes 
-        ? `<img src="assets/icons/note-book-icon.svg" style="width: 16px; height: 16px; object-fit: contain; cursor: pointer; opacity: 0.7;" title="Notes" data-notes-icon="true">` 
-        : '';
-    }}
+    {
+      field: 'notes', text: 'Notes', size: '32px', resizable: false, sortable: false, render: (record) => {
+        return record.hasNotes
+          ? `<img src="assets/icons/note-book-icon.svg" style="width: 16px; height: 16px; object-fit: contain; cursor: pointer; opacity: 0.7;" title="Notes" data-notes-icon="true">`
+          : '';
+      }
+    }
   ];
 
   // Add attribute columns — use currentAttrColumns (union from all visible subdirectory categories),
@@ -1580,7 +1968,7 @@ async function initializeGridForPanel(panelId) {
     columns: columns,
     records: [],
     contextMenu: [],
-    onClick: function(event) {
+    onClick: function (event) {
       // For panel-1, detect directory selection for use by panels 2-4
       if (panelId === 1 && event.detail.recid) {
         const record = this.records[event.detail.recid - 1];
@@ -1631,7 +2019,7 @@ async function initializeGridForPanel(panelId) {
           return;
         }
       }
-      
+
       // Single click handling for other panels in select mode
       if (panelId > 1 && panelState[panelId].selectMode && event.detail.recid) {
         const record = this.records[event.detail.recid - 1];
@@ -1641,14 +2029,14 @@ async function initializeGridForPanel(panelId) {
         }
       }
     },
-    onDblClick: function(event) {
+    onDblClick: function (event) {
       // Handle double-click on notes icon to open notes modal
-      if (event.detail.originalEvent && event.detail.originalEvent.target && 
-          event.detail.originalEvent.target.dataset && 
-          event.detail.originalEvent.target.dataset.notesIcon) {
+      if (event.detail.originalEvent && event.detail.originalEvent.target &&
+        event.detail.originalEvent.target.dataset &&
+        event.detail.originalEvent.target.dataset.notesIcon) {
         event.preventDefault();
         event.stopPropagation();
-        
+
         if (event.detail.recid) {
           const record = this.records[event.detail.recid - 1];
           if (record && record.hasNotes) {
@@ -1659,29 +2047,31 @@ async function initializeGridForPanel(panelId) {
       }
 
       const record = this.records[event.detail.recid - 1];
-      
+
       // Check if this is a folder double-click (navigate)
       if (record && record.isFolder) {
         navigateToDirectory(record.path, panelId);
         return;
       }
 
-      // Check if double-clicking notes.txt — open notes viewer in a new (or current) panel
-      if (record && record.filenameRaw && record.filenameRaw.toLowerCase() === 'notes.txt') {
-        if (visiblePanels < 4) {
+      // For any file double-click: open Item Overview in a new panel if possible
+      if (record && !record.isFolder) {
+        let hasPropertiesPanel = false;
+        for (let i = 2; i <= visiblePanels; i++) {
+          if (getPanelViewType(i) === 'properties') { hasPropertiesPanel = true; break; }
+        }
+        if (!hasPropertiesPanel && visiblePanels < 4) {
           visiblePanels++;
           const newPanelId = visiblePanels;
           $(`#panel-${newPanelId}`).show();
           attachPanelEventListeners(newPanelId);
           updatePanelLayout();
-          setTimeout(() => showFileView(newPanelId, record.path), 150);
-        } else {
-          showFileView(panelId, record.path);
+          setTimeout(() => updateItemPropertiesPage(newPanelId), 150);
         }
         return;
       }
     },
-    onContextMenu: function(event) {
+    onContextMenu: function (event) {
       if (event.detail.recid) {
         // Prevent w2ui from showing its built-in context menu
         event.preventDefault();
@@ -1699,7 +2089,7 @@ async function initializeGridForPanel(panelId) {
         showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId);
       }
     },
-    onColumnOnOff: function(event) {
+    onColumnOnOff: function (event) {
       // Sync dateCreated column visibility to panel state
       if (event.detail.field === 'dateCreated') {
         const col = this.getColumn('dateCreated');
@@ -1707,7 +2097,7 @@ async function initializeGridForPanel(panelId) {
         panelState[panelId].showDateCreated = !!col.hidden; // hidden→true means it's being shown
       }
     },
-    onReload: function(event) {
+    onReload: function (event) {
       event.preventDefault();
       setActivePanelId(panelId);
       const s = panelState[panelId];
@@ -1730,13 +2120,13 @@ async function initializeGridForPanel(panelId) {
 
   // Wire up the Stop button — use event delegation so it survives toolbar re-renders
   $(document).off(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`)
-    .on(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`, function() {
+    .on(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`, function () {
       stopScan(panelId);
     });
 
   // Attach depth input change handler via event delegation
   $(document).off('change.depth', `#depth-input-${panelId}`)
-    .on('change.depth', `#depth-input-${panelId}`, function() {
+    .on('change.depth', `#depth-input-${panelId}`, function () {
       let val = parseInt($(this).val(), 10);
       if (isNaN(val) || val < 0) val = 0;
       if (val > 99) val = 99;
@@ -1749,7 +2139,7 @@ async function initializeGridForPanel(panelId) {
 
   // Set initial header
   updateGridHeader(panelId, 'Loading...');
-  
+
   // Store reference in panelState
   panelState[panelId].w2uiGrid = w2ui[gridName];
 }
@@ -1761,7 +2151,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
   console.log(`Populating grid for panel ${panelId} with ${entries.length} entries`);
 
   const state = panelState[panelId];
-  
+
   // Get the hide dot directory setting and tag definitions
   const [settings, tagDefs] = await Promise.all([
     window.electronAPI.getSettings(),
@@ -1770,10 +2160,10 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
   const hideDotDirectory = settings.hide_dot_directory || false;
   const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
   const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
-  
+
   // Get current folder name for display
   const currentFolderName = state.currentPath.split(/[\\\/]/).filter(p => p).pop() || state.currentPath;
-  
+
   // Filter out "." entries if hiding is enabled, otherwise update displayFilename if needed
   let filteredEntries = entries;
   if (hideDotDirectory) {
@@ -1787,7 +2177,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       return e;
     });
   }
-  
+
   // Add ".." entry (parent directory) if not hidden and not at root
   console.log('[DEBUG] populateFileGrid - hideDotDotDirectory:', hideDotDotDirectory);
   if (!hideDotDotDirectory && state.currentPath) {
@@ -1799,13 +2189,13 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       const dotIndex = filteredEntries.findIndex(e => e.filename === '.');
       const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
       console.log('[DEBUG] Inserting ".." to filteredEntries at index:', insertIndex);
-      
+
       let parentDisplayFilename = '..';
       if (showFolderNameWithDotEntries && parentMetadata.path) {
         const parentFolderName = parentMetadata.path.split(/[\\\/]/).filter(p => p).pop() || parentMetadata.path;
         parentDisplayFilename = `.. (${parentFolderName})`;
       }
-      
+
       filteredEntries.splice(insertIndex, 0, {
         ...parentMetadata,
         displayFilename: parentDisplayFilename
@@ -1814,7 +2204,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       console.log('[DEBUG] Parent metadata is null for populateFileGrid');
     }
   }
-  
+
   // Separate folders and files
   const folders = filteredEntries.filter(e => e.isDirectory);
   const files = filteredEntries.filter(e => !e.isDirectory);
@@ -1850,10 +2240,10 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
         for (const a of category.attributes) attrColSet.add(a);
       }
     }
-    
+
     // Use the same getRowClassName function for consistency with files
     const className = getRowClassName(folder.changeState);
-    
+
     records.push({
       recid: recordId++,
       icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`, className),
@@ -1880,7 +2270,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     // Add attribute values from the folder's dot-file
     if (folder.attributes) {
       let attrObj = {};
-      try { attrObj = typeof folder.attributes === 'string' ? JSON.parse(folder.attributes) : folder.attributes; } catch (_) {}
+      try { attrObj = typeof folder.attributes === 'string' ? JSON.parse(folder.attributes) : folder.attributes; } catch (_) { }
       const lastRecord = records[records.length - 1];
       for (const [k, v] of Object.entries(attrObj)) {
         lastRecord[`attr_${k}`] = v !== null && v !== undefined ? String(v) : '';
@@ -1926,7 +2316,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 
     const dateModifiedContent = getDateModifiedCell(file, file.changeState);
     const checksumCell = getChecksumCell(file, file.changeState);
-    
+
     // Determine which file icon to use based on changeState and file type match
     const matchedFt = matchFileType(file.filename);
     const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
@@ -1938,7 +2328,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     } else {
       iconSvg = `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
     }
-    
+
     records.push({
       recid: recordId++,
       icon: applyClass(iconSvg, className),
@@ -1969,7 +2359,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
     // Add attribute columns from stored JSON
     if (file.attributes) {
       let attrObj = {};
-      try { attrObj = typeof file.attributes === 'string' ? JSON.parse(file.attributes) : file.attributes; } catch(_) {}
+      try { attrObj = typeof file.attributes === 'string' ? JSON.parse(file.attributes) : file.attributes; } catch (_) { }
       const lastRecord = records[records.length - 1];
       for (const [k, v] of Object.entries(attrObj)) {
         lastRecord[`attr_${k}`] = v !== null && v !== undefined ? String(v) : '';
@@ -2068,8 +2458,8 @@ function openInitialsEditor(record, panelId) {
       ? `<div class="${className}"><img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials"></div>`
       : `<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`;
     grid.refreshCell(record.recid, 'icon');
-    // Refresh favorites list in case this directory is favorited
-    await renderFavoritesList();
+    // Refresh favorites sidebar in case this directory is favorited
+    await refreshFavoritesSidebar();
   }
 
   confirmBtn.addEventListener('click', () => applyInitials(input.value));
@@ -2122,7 +2512,7 @@ function getRowClassName(changeState) {
 function formatPerms(perms) {
   if (!perms) return '?';
   if (perms.read && perms.write) return 'rw';
-  if (perms.read)  return 'r';
+  if (perms.read) return 'r';
   if (perms.write) return 'w';
   return '--';
 }
@@ -2143,7 +2533,7 @@ function getPermsCell(entry) {
  */
 function getDateModifiedCell(file, changeState) {
   const dateStr = new Date(file.dateModified).toLocaleString();
-  
+
   if (changeState === 'new') {
     return `<div class="file-new">${dateStr}</div>`;
   } else if (changeState === 'dateModified') {
@@ -2153,7 +2543,7 @@ function getDateModifiedCell(file, changeState) {
   } else if (changeState === 'checksumChanged') {
     return `<div class="file-checksum-changed">${dateStr}</div>`;
   }
-  
+
   return dateStr;
 }
 
@@ -2165,12 +2555,12 @@ function getChecksumCell(file, changeState) {
   if (file.isFolder) {
     return '—';
   }
-  
+
   // Show pending status while checksum is being calculated
   if (changeState === 'checksumPending') {
     return '<div class="file-checksum-pending"><span style="animation: spin 1s linear infinite;">⟳</span> Pending</div>';
   }
-  
+
   // Show stored checksum value if available from DB
   if (file.checksumValue) {
     const shortHash = file.checksumValue.substring(0, 12) + '...';
@@ -2187,11 +2577,11 @@ async function acknowledgeFileModification(inode, panelId) {
   try {
     const state = panelState[panelId];
     const currentPath = state.currentPath;
-    
+
     // Get the record to find the current dateModified value
     const grid = state.w2uiGrid;
     const record = grid.records.find(r => r.inode === inode);
-    
+
     if (!record) {
       console.error('Record not found:', inode);
       return;
@@ -2207,10 +2597,10 @@ async function acknowledgeFileModification(inode, panelId) {
     if (result.success) {
       // Update record's changeState
       record.changeState = 'unchanged';
-      
+
       // Rebuild the dateModified cell content (remove styling)
       record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
-      
+
       // Refresh grid
       grid.refresh();
       console.log('File modification acknowledged:', inode);
@@ -2265,7 +2655,7 @@ async function calculateChecksumForFile(record, panelId, dirPath) {
       // Display first 12 characters of hash as a short representation
       const shortHash = result.checksum ? result.checksum.substring(0, 12) + '...' : '—';
       record.checksum = `<span title="${result.checksum || ''}" style="cursor: help;">${shortHash}</span>`;
-      
+
       // Only mark as checksumChanged if there was a previous checksum AND it changed
       // Otherwise leave the existing changeState intact (e.g. 'new', 'dateModified')
       if (result.changed && result.hadPreviousChecksum) {
@@ -2368,14 +2758,14 @@ async function loadHotkeysFromStorage() {
   try {
     const hotkeysData = await window.electronAPI.getHotkeys();
     hotkeyRegistry = {};
-    
+
     // Flatten the nested hotkeys structure into a simple actionId -> key mapping
     for (const context of Object.values(hotkeysData)) {
       for (const [actionId, actionData] of Object.entries(context)) {
         hotkeyRegistry[actionId] = actionData.key;
       }
     }
-    
+
     console.log('Hotkeys loaded:', hotkeyRegistry);
   } catch (err) {
     console.error('Error loading hotkeys:', err);
@@ -2399,11 +2789,11 @@ async function loadHotkeysFromStorage() {
  */
 function getHotKeyCombo(event) {
   let combo = '';
-  
+
   if (event.ctrlKey) combo += 'Ctrl+';
   if (event.altKey) combo += 'Alt+';
   if (event.shiftKey) combo += 'Shift+';
-  
+
   // Normalize arrow keys and other special keys
   let key = event.key;
   if (key === 'ArrowLeft') key = 'Left';
@@ -2413,7 +2803,7 @@ function getHotKeyCombo(event) {
   else if (key === 'Enter') key = 'Enter';
   else if (key === 'Escape') key = 'Escape';
   else if (key === ' ') key = 'Space';
-  
+
   combo += key;
   return combo;
 }
@@ -2502,9 +2892,9 @@ function activatePathEditMode(panelId) {
   const $pathDisplay = $panel.find('.panel-path');
   const $pathInput = $panel.find('.panel-path-input');
   const $title = $panel.find('.w2ui-panel-title');
-  
+
   const currentPath = panelState[panelId].currentPath;
-  
+
   // Show input, hide display, and add editing class
   $pathDisplay.hide();
   $title.addClass('path-input-editing');
@@ -2519,12 +2909,12 @@ async function deactivatePathEditMode(panelId, navigateToNewPath = false, newPat
   const $pathDisplay = $panel.find('.panel-path');
   const $pathInput = $panel.find('.panel-path-input');
   const $title = $panel.find('.w2ui-panel-title');
-  
+
   // Hide input, show display, and remove editing class
   $pathInput.hide();
   $title.removeClass('path-input-editing');
   $pathDisplay.show();
-  
+
   // Navigate to new path if requested and path is not empty
   if (navigateToNewPath && newPath && newPath !== panelState[panelId].currentPath) {
     await navigateToDirectory(newPath, panelId);
@@ -2537,13 +2927,13 @@ async function deactivatePathEditMode(panelId, navigateToNewPath = false, newPat
 async function switchLayout(layoutNumber) {
   currentLayout = layoutNumber;
   console.log('Switching to layout:', layoutNumber);
-  
+
   const $container = $('#panel-container');
-  
+
   // Remove existing layout class and add new one
   $container.removeClass('layout-1 layout-2 layout-3 layout-4');
   $container.addClass(`layout-${layoutNumber}`);
-  
+
   // Ensure grids are properly sized after layout switch
   setTimeout(() => {
     for (let panelId = 1; panelId <= 4; panelId++) {
@@ -2552,7 +2942,7 @@ async function switchLayout(layoutNumber) {
         grid.resize();
       }
     }
-    
+
     // Setup dividers and badges after grids are resized
     setupDividers();
     setupBadgeDragHandles();
@@ -2566,20 +2956,20 @@ function initializeDividers() {
   // Load divider positions from localStorage (as fixed pixel widths/heights)
   panelDividerState.verticalPixels = parseFloat(localStorage.getItem('panelDividerVertical') || '400');
   panelDividerState.horizontalPixels = parseFloat(localStorage.getItem('panelDividerHorizontal') || '300');
-  
+
   console.log('initializeDividers - loaded from localStorage:', panelDividerState);
-  
+
   // Initial setup after a brief delay to allow layout to settle
   setTimeout(() => {
     console.log('initializeDividers - calling setupDividers');
     setupDividers();
   }, 150);
-  
+
   // Handle window resize to maintain percentage-based positioning
   $(window).on('resize.panelDivider', () => {
     setupDividers();
   });
-  
+
   // Also listen to w2layout resize event to catch sidebar resizing
   if (w2layoutInstance) {
     w2layoutInstance.on('resize', () => {
@@ -2601,18 +2991,18 @@ function initializeDividers() {
  */
 function setupDividers() {
   const layout = currentLayout;
-  
+
   // Show/hide dividers based on layout
   const $verticalDivider = $('#panel-divider-vertical');
   const $horizontalDivider = $('#panel-divider-horizontal');
   const $container = $('#panel-container');
-  
+
   console.log('setupDividers called for layout:', layout, 'Container size:', $container.width(), 'x', $container.height());
-  
+
   // Only layouts 2, 3, and 4 have dividers
   const hasVerticalDivider = layout >= 2;
   const hasHorizontalDivider = layout >= 3;
-  
+
   if (hasVerticalDivider) {
     console.log('Showing vertical divider');
     $verticalDivider.css('display', 'block');
@@ -2624,7 +3014,7 @@ function setupDividers() {
     // Reset columns to single column
     $container.css('grid-template-columns', '1fr');
   }
-  
+
   if (hasHorizontalDivider) {
     console.log('Showing horizontal divider');
     $horizontalDivider.css('display', 'block');
@@ -2644,18 +3034,18 @@ function setupDividers() {
 function positionVerticalDivider() {
   const $container = $('#panel-container');
   const $divider = $('#panel-divider-vertical');
-  
+
   const containerWidth = $container.width();
   const containerHeight = $container.height();
-  
+
   if (containerWidth === 0 || containerHeight === 0) {
     console.log('Container has no size yet, skipping vertical divider positioning');
     return;
   }
-  
+
   // Use fixed pixel position for left panel
   const dividerX = panelDividerState.verticalPixels;
-  
+
   console.log('Positioning vertical divider:', {
     containerWidth,
     containerHeight,
@@ -2663,14 +3053,14 @@ function positionVerticalDivider() {
     dividerX,
     computed: { left: dividerX - 2, top: 0, height: containerHeight }
   });
-  
+
   $divider.css({
     left: (dividerX - 2) + 'px',
     top: 0,
     height: containerHeight + 'px',
     display: 'block'
   });
-  
+
   console.log('Vertical divider CSS applied:', {
     left: $divider.css('left'),
     top: $divider.css('top'),
@@ -2680,50 +3070,50 @@ function positionVerticalDivider() {
     display: $divider.css('display'),
     zIndex: $divider.css('z-index')
   });
-  
+
   // Remove old event handlers
   $divider.off('mousedown.panelResize');
-  
+
   // Add drag handler
-  $divider.on('mousedown.panelResize', function(e) {
+  $divider.on('mousedown.panelResize', function (e) {
     console.log('Vertical divider drag started');
     e.preventDefault();
     e.stopPropagation();
     panelDividerState.isResizingVertical = true;
     $divider.addClass('dragging');
-    
+
     const startX = e.pageX;
     const startPixels = panelDividerState.verticalPixels;
-    
-    $(document).on('mousemove.panelResizeVertical', function(moveEvent) {
+
+    $(document).on('mousemove.panelResizeVertical', function (moveEvent) {
       const deltaX = moveEvent.pageX - startX;
       const newPixels = startPixels + deltaX;
-      
+
       // Enforce minimum widths and maximum right panel width
       const maxPixels = containerWidth - panelDividerState.minPanelWidth;
       const constrainedPixels = Math.max(panelDividerState.minPanelWidth, Math.min(maxPixels, newPixels));
       panelDividerState.verticalPixels = constrainedPixels;
-      
+
       // Update grid columns
       updateGridColumns();
-      
+
       // Reposition divider
       positionVerticalDivider();
-      
+
       // In layout 3, also reposition horizontal divider since it depends on vertical divider position
       if (currentLayout === 3) {
         positionHorizontalDivider();
       }
     });
-    
-    $(document).on('mouseup.panelResizeVertical', function() {
+
+    $(document).on('mouseup.panelResizeVertical', function () {
       $(document).off('mousemove.panelResizeVertical mouseup.panelResizeVertical');
       panelDividerState.isResizingVertical = false;
       $divider.removeClass('dragging');
-      
+
       // Save to localStorage
       localStorage.setItem('panelDividerVertical', panelDividerState.verticalPixels);
-      
+
       // Trigger grid resize
       for (let panelId = 1; panelId <= 4; panelId++) {
         const grid = panelState[panelId].w2uiGrid;
@@ -2741,29 +3131,29 @@ function positionVerticalDivider() {
 function positionHorizontalDivider() {
   const $container = $('#panel-container');
   const $divider = $('#panel-divider-horizontal');
-  
+
   const containerWidth = $container.width();
   const containerHeight = $container.height();
-  
+
   if (containerWidth === 0 || containerHeight === 0) {
     console.log('Container has no size yet, skipping horizontal divider positioning');
     return;
   }
-  
+
   // Use fixed pixel position for top panel
   const dividerY = panelDividerState.horizontalPixels;
-  
+
   // In 3-panel mode, horizontal divider should only span the right side (from vertical divider to right edge)
   // In 4-panel mode, it spans the full width
   let dividerLeft = 0;
   let dividerWidth = containerWidth;
-  
+
   if (currentLayout === 3) {
     // In layout 3, horizontal divider only spans the right side
     dividerLeft = panelDividerState.verticalPixels;
     dividerWidth = containerWidth - panelDividerState.verticalPixels;
   }
-  
+
   console.log('Positioning horizontal divider:', {
     containerWidth,
     containerHeight,
@@ -2773,52 +3163,52 @@ function positionHorizontalDivider() {
     dividerWidth,
     computed: { left: dividerLeft, top: dividerY - 2, width: dividerWidth }
   });
-  
+
   $divider.css({
     left: dividerLeft + 'px',
     top: (dividerY - 2) + 'px',
     width: dividerWidth + 'px',
     display: 'block'
   });
-  
+
   // Remove old event handlers
   $divider.off('mousedown.panelResize');
-  
+
   // Add drag handler
-  $divider.on('mousedown.panelResize', function(e) {
+  $divider.on('mousedown.panelResize', function (e) {
     console.log('Horizontal divider drag started');
     e.preventDefault();
     e.stopPropagation();
     panelDividerState.isResizingHorizontal = true;
     $divider.addClass('dragging');
-    
+
     const startY = e.pageY;
     const startPixels = panelDividerState.horizontalPixels;
-    
-    $(document).on('mousemove.panelResizeHorizontal', function(moveEvent) {
+
+    $(document).on('mousemove.panelResizeHorizontal', function (moveEvent) {
       const deltaY = moveEvent.pageY - startY;
       const newPixels = startPixels + deltaY;
-      
+
       // Enforce minimum heights and maximum bottom panel height
       const maxPixels = containerHeight - panelDividerState.minPanelHeight;
       const constrainedPixels = Math.max(panelDividerState.minPanelHeight, Math.min(maxPixels, newPixels));
       panelDividerState.horizontalPixels = constrainedPixels;
-      
+
       // Update grid rows
       updateGridRows();
-      
+
       // Reposition divider
       positionHorizontalDivider();
     });
-    
-    $(document).on('mouseup.panelResizeHorizontal', function() {
+
+    $(document).on('mouseup.panelResizeHorizontal', function () {
       $(document).off('mousemove.panelResizeHorizontal mouseup.panelResizeHorizontal');
       panelDividerState.isResizingHorizontal = false;
       $divider.removeClass('dragging');
-      
+
       // Save to localStorage
       localStorage.setItem('panelDividerHorizontal', panelDividerState.horizontalPixels);
-      
+
       // Trigger grid resize
       for (let panelId = 1; panelId <= 4; panelId++) {
         const grid = panelState[panelId].w2uiGrid;
@@ -2860,24 +3250,24 @@ function updateGridRows() {
 function setupBadgeDragHandles() {
   // Each badge will allow dragging specific dividers based on panel position
   $('.panel-number').off('mousedown.badgeDrag');
-  
-  $('.panel-number').on('mousedown.badgeDrag', function(e) {
+
+  $('.panel-number').on('mousedown.badgeDrag', function (e) {
     e.preventDefault();
-    
+
     const $panelNumber = $(this);
     const panelId = parseInt($panelNumber.text());
-    
+
     const $panel = $(`#panel-${panelId}`);
     if (!$panel.is(':visible')) return;
-    
+
     const layout = currentLayout;
-    
+
     // Badge drag behaviors:
     // Badge 1: Resize sidebar (ew-resize)
     // Badge 2: Resize vertical divider (ew-resize)
     // Badge 3: Resize vertical and horizontal dividers (all-scroll)
     // Badge 4: Resize sidebar and horizontal divider (all-scroll)
-    
+
     if (layout === 1) {
       if (panelId === 1) {
         startBadgeDragSidebar(e);
@@ -2916,25 +3306,25 @@ function setupBadgeDragHandles() {
 function startBadgeDragSidebar(e) {
   const startX = e.pageX;
   const startSidebarWidth = w2layoutInstance.get('left').size;
-  
+
   console.log('Badge 1 drag started. Initial sidebar width:', startSidebarWidth);
   $('body').css('cursor', 'ew-resize');
-  
-  $(document).on('mousemove.badgeDragSidebar', function(moveEvent) {
+
+  $(document).on('mousemove.badgeDragSidebar', function (moveEvent) {
     const deltaX = moveEvent.pageX - startX;
     const newWidth = startSidebarWidth + deltaX;
-    
+
     // Enforce minimum sidebar width (e.g., 150px) and max width
     const minWidth = 150;
     const maxWidth = window.innerWidth - 300; // Leave room for main panel
     const constrainedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
-    
+
     console.log('Badge 1 drag: deltaX=', deltaX, 'newWidth=', constrainedWidth);
-    
+
     // Set the new size (w2ui uses 'size' not 'width')
     w2layoutInstance.set('left', { size: constrainedWidth });
     w2layoutInstance.resize();
-    
+
     // Resize all grids so content fills the new size
     for (let panelId = 1; panelId <= 4; panelId++) {
       const grid = panelState[panelId].w2uiGrid;
@@ -2943,8 +3333,8 @@ function startBadgeDragSidebar(e) {
       }
     }
   });
-  
-  $(document).on('mouseup.badgeDragSidebar', function() {
+
+  $(document).on('mouseup.badgeDragSidebar', function () {
     $(document).off('mousemove.badgeDragSidebar mouseup.badgeDragSidebar');
     $('body').css('cursor', 'default');
     console.log('Badge 1 drag ended');
@@ -2959,38 +3349,38 @@ function startBadgeDragVertical(e) {
   const containerWidth = $container.width();
   const startX = e.pageX;
   const startPixels = panelDividerState.verticalPixels;
-  
+
   $('body').css('cursor', 'ew-resize');
-  
-  $(document).on('mousemove.badgeDragVertical', function(moveEvent) {
+
+  $(document).on('mousemove.badgeDragVertical', function (moveEvent) {
     const deltaX = moveEvent.pageX - startX;
     const newPixels = startPixels + deltaX;
-    
+
     const maxPixels = containerWidth - panelDividerState.minPanelWidth;
     const constrainedPixels = Math.max(panelDividerState.minPanelWidth, Math.min(maxPixels, newPixels));
     panelDividerState.verticalPixels = constrainedPixels;
-    
+
     updateGridColumns();
     positionVerticalDivider();
-    
+
     // In layout 3, also reposition horizontal divider since it depends on vertical divider position
     if (currentLayout === 3) {
       positionHorizontalDivider();
     }
   });
-  
-  $(document).on('mouseup.badgeDragVertical', function() {
+
+  $(document).on('mouseup.badgeDragVertical', function () {
     $(document).off('mousemove.badgeDragVertical mouseup.badgeDragVertical');
     $('body').css('cursor', 'default');
     localStorage.setItem('panelDividerVertical', panelDividerState.verticalPixels);
-    
+
     for (let panelId = 1; panelId <= 4; panelId++) {
       const grid = panelState[panelId].w2uiGrid;
       if (grid) {
         grid.resize();
       }
     }
-    
+
     // Re-attach divider drag handler in its new position
     positionVerticalDivider();
     if (currentLayout === 3) {
@@ -3014,7 +3404,7 @@ function startBadgeDragBoth(e, dragMode) {
 
   $('body').css('cursor', 'all-scroll');
 
-  $(document).on('mousemove.badgeDragBoth', function(moveEvent) {
+  $(document).on('mousemove.badgeDragBoth', function (moveEvent) {
     const deltaX = moveEvent.pageX - startX;
     const deltaY = moveEvent.pageY - startY;
 
@@ -3050,7 +3440,7 @@ function startBadgeDragBoth(e, dragMode) {
     }
   });
 
-  $(document).on('mouseup.badgeDragBoth', function() {
+  $(document).on('mouseup.badgeDragBoth', function () {
     $(document).off('mousemove.badgeDragBoth mouseup.badgeDragBoth');
     $('body').css('cursor', 'default');
 
@@ -3087,9 +3477,9 @@ function hideLayoutModal() {
 function toggleSelectMode(panelId) {
   const state = panelState[panelId];
   state.selectMode = !state.selectMode;
-  
+
   const $selectBtn = $(`#panel-${panelId} .btn-panel-select`);
-  
+
   if (state.selectMode) {
     // Show grid, hide landing page
     $selectBtn.addClass('panel-select-active');
@@ -3118,7 +3508,7 @@ function updatePanelSelectButtons() {
   // Update all panel 2-4 Select buttons
   for (let panelId = 2; panelId <= 4; panelId++) {
     const $selectBtn = $(`#panel-${panelId} .btn-panel-select`);
-    
+
     if (panel1SelectedDirectoryPath && panel1SelectedDirectoryName) {
       // Enable button and show directory name
       $selectBtn.prop('disabled', false);
@@ -3169,9 +3559,9 @@ function formatFileContent(content, format) {
   switch (format) {
     case 'PlainText':
       // Escape HTML and wrap in pre tag for plain text
-      return '<pre style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">' + 
-             utils.escapeHtml(content) + '</pre>';
-    
+      return '<pre style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">' +
+        utils.escapeHtml(content) + '</pre>';
+
     case 'Extended':
       // Escape HTML first
       let escaped = utils.escapeHtml(content);
@@ -3179,20 +3569,20 @@ function formatFileContent(content, format) {
       // Note: This works with escaped content by looking for the pattern before escaping
       // We need to revert some escaping for link patterns
       // Pattern: &lsqb;text&rsqb;&lpar;url&rpar; -> <a href="url">text</a>
-      let formatted = escaped.replace(/&lsqb;([^\]]+)&rsqb;&lpar;([^)]+)&rpar;/g, 
+      let formatted = escaped.replace(/&lsqb;([^\]]+)&rsqb;&lpar;([^)]+)&rpar;/g,
         '<a href="$2" target="_blank" style="color: #2196F3; text-decoration: underline;">$1</a>');
       // Also handle unescaped brackets in case they weren't escaped
-      formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, 
+      formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
         '<a href="$2" target="_blank" style="color: #2196F3; text-decoration: underline;">$1</a>');
       return '<pre style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">' + formatted + '</pre>';
-    
+
     case 'Markdown':
       // Return content as-is for markdown rendering via renderMarkdown IPC call
       return null; // Special case: caller should use renderMarkdown
-    
+
     default:
-      return '<pre style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">' + 
-             utils.escapeHtml(content) + '</pre>';
+      return '<pre style="font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">' +
+        utils.escapeHtml(content) + '</pre>';
   }
 }
 
@@ -3257,17 +3647,17 @@ async function initializeMonacoLoader() {
       resolve();
       return;
     }
-    
+
     // Wait for require to be available (Monaco loader script must load first)
     const waitForRequire = setInterval(() => {
       if (typeof require !== 'undefined') {
         clearInterval(waitForRequire);
-        
+
         // Configure Monaco loader path
         require.config({ paths: { 'vs': '../node_modules/monaco-editor/min/vs' } });
 
         // Load Monaco Editor
-        require(['vs/editor/editor.main'], function() {
+        require(['vs/editor/editor.main'], function () {
           console.log('Monaco editor loader initialized');
           monacoLoaded = true;
 
@@ -3311,7 +3701,7 @@ async function initializeMonacoLoader() {
         });
       }
     }, 100);
-    
+
     // Timeout after 5 seconds to prevent infinite waiting
     setTimeout(() => {
       clearInterval(waitForRequire);
@@ -3331,7 +3721,7 @@ function createMonacoEditorInstance(containerElement) {
     // Dispose existing editor before creating new one
     monacoEditor.dispose();
   }
-  
+
   monacoEditor = monaco.editor.create(containerElement, {
     value: '',
     language: 'plaintext',
@@ -3375,17 +3765,17 @@ async function showFileView(panelId, filePathOverride) {
   const $fileEditorContainer = $fileView.find('.file-editor-container');
   const $fileContentView = $fileView.find('.file-content-view');
   const $fileToolbar = $fileView.find('.w2ui-panel-title');
-  
+
   try {
     // Get current notes format setting
     const settings = await window.electronAPI.getSettings();
     const fileFormat = settings.file_format || 'Markdown';
-    
+
     // Always (re)create Monaco editor in this panel's container.
     // The global monacoEditor may still reference an old/removed panel's DOM element,
     // so recreating here ensures the editor is attached to the correct container.
     createMonacoEditorInstance($fileEditorContainer[0]);
-    
+
     // Try to read notes.txt
     const content = await window.electronAPI.readFileContent(filePath);
 
@@ -3396,14 +3786,14 @@ async function showFileView(panelId, filePathOverride) {
     } catch (_) {
       panelState[panelId].fileViewRecord = null;
     }
-    
+
     // Set Monaco editor content and language
     if (monacoEditor) {
       monacoEditor.setValue(content);
       const language = getLanguageForFormat(fileFormat);
       monaco.editor.setModelLanguage(monacoEditor.getModel(), language);
     }
-    
+
     // Format and display notes based on format setting
     if (fileFormat === 'Markdown') {
       // Render markdown to HTML
@@ -3414,30 +3804,30 @@ async function showFileView(panelId, filePathOverride) {
       const htmlContent = formatFileContent(content, fileFormat);
       $fileContentView.html(htmlContent);
     }
-    
+
     // Hide landing page and grid, show notes view
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
     $fileView.css('display', 'flex');
-    
+
     // Show view mode by default, hide edit mode
     $fileContentView.show();
     $fileEditorContainer.hide();
-    
+
     // Update toolbar with notes path (overlays grid header)
     $fileToolbar.find('.file-path').text(filePath);
     $fileToolbar.show();
-    
+
     // Reset buttons
     $fileToolbar.find('.btn-file-edit').show().text('Edit').css('background', '#2196F3');
     $fileToolbar.find('.btn-file-save').hide();
-    
+
     fileEditMode = false;
   } catch (err) {
     // File doesn't exist, create empty notes
     // Always (re)create Monaco editor in this panel's container (same reason as above).
     createMonacoEditorInstance($fileEditorContainer[0]);
-    
+
     if (monacoEditor) {
       monacoEditor.setValue('');
       // Set default language based on format setting
@@ -3447,26 +3837,26 @@ async function showFileView(panelId, filePathOverride) {
       monaco.editor.setModelLanguage(monacoEditor.getModel(), language);
     }
     $fileContentView.html('');
-    
+
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
     $fileView.css('display', 'flex');
-    
+
     // Start in edit mode for new file
     $fileEditorContainer.show();
     $fileContentView.hide();
-    
+
     // Update toolbar with notes path (overlays grid header)
     $fileToolbar.find('.file-path').text(filePath);
     $fileToolbar.show();
-    
+
     // Show Save button for new file
     $fileToolbar.find('.btn-file-edit').hide();
     $fileToolbar.find('.btn-file-save').show();
-    
+
     fileEditMode = true;
   }
-  
+
   setActivePanelId(panelId);
 }
 
@@ -3478,14 +3868,14 @@ function hideFileView(panelId) {
   const $fileEditorContainer = $fileView.find('.file-editor-container');
   const $fileContentView = $fileView.find('.file-content-view');
   const $fileToolbar = $fileView.find('.w2ui-panel-title');
-  
+
   $fileView.hide();
   $fileToolbar.hide();
   $fileEditorContainer.hide();
   $fileContentView.hide();
   // Panel toolbar (grid header) remains visible
   $(`#panel-${panelId} .panel-landing-page`).show();
-  
+
   fileEditMode = false;
 }
 
@@ -3498,7 +3888,7 @@ async function toggleFileEditMode(panelId) {
   const $fileContentView = $fileView.find('.file-content-view');
   const $editBtn = $fileView.find('.btn-file-edit');
   const $saveBtn = $fileView.find('.btn-file-save');
-  
+
   if (fileEditMode === false) {
     // Enter edit mode
     $fileContentView.hide();
@@ -3513,14 +3903,14 @@ async function toggleFileEditMode(panelId) {
     // Save and exit edit mode
     const content = monacoEditor ? monacoEditor.getValue() : '';
     const filePath = panelState[panelId].fileViewPath || (panelState[1].currentPath + '\\notes.txt');
-    
+
     try {
       await window.electronAPI.writeFileContent(filePath, content);
-      
+
       // Get current notes format setting
       const settings = await window.electronAPI.getSettings();
       const fileFormat = settings.file_format || 'Markdown';
-      
+
       // Format and display notes based on format setting
       if (fileFormat === 'Markdown') {
         // Render markdown to HTML
@@ -3531,10 +3921,10 @@ async function toggleFileEditMode(panelId) {
         const htmlContent = formatFileContent(content, fileFormat);
         $fileContentView.html(htmlContent);
       }
-      
+
       $fileEditorContainer.hide();
       $fileContentView.show();
-      
+
       $editBtn.show().text('Edit').css('background', '#2196F3');
       $saveBtn.hide();
       fileEditMode = false;
@@ -3560,10 +3950,10 @@ async function toggleFileEditMode(panelId) {
 function updatePanelLayout() {
   const $container = $('#panel-container');
   $container.removeClass('layout-1 layout-2 layout-3 layout-4').addClass(`layout-${visiblePanels}`);
-  
+
   // Update current layout and setup dividers
   currentLayout = visiblePanels;
-  
+
   // Give layout time to apply before positioning dividers
   setTimeout(() => {
     console.log('updatePanelLayout: setting up dividers for layout', visiblePanels);
@@ -3580,16 +3970,16 @@ function removePanel(panelId) {
     alert('Cannot remove the last panel');
     return;
   }
-  
+
   // Hide this panel and clear its state
   $(`#panel-${panelId}`).hide();
   clearPanelState(panelId);
-  
+
   // Shift all higher-numbered panels down
   for (let i = panelId; i < visiblePanels; i++) {
     shiftPanelDown(i);
   }
-  
+
   visiblePanels--;
   activePanelId = 1; // Reset to panel 1 after removal
   updatePanelLayout();
@@ -3600,18 +3990,18 @@ function removePanel(panelId) {
  */
 function shiftPanelDown(panelId) {
   const nextPanelId = panelId + 1;
-  
+
   // Copy state from next panel to current panel
   panelState[panelId] = { ...panelState[nextPanelId] };
-  
+
   // Swap grid references
   const $currentGrid = $(`#panel-${panelId} .panel-grid`);
   const $nextGrid = $(`#panel-${nextPanelId} .panel-grid`);
-  
+
   if (panelState[panelId].w2uiGrid) {
     panelState[panelId].w2uiGrid.render($currentGrid[0]);
   }
-  
+
   // Update path display
   $(`#panel-${panelId} .panel-path`).text(panelState[panelId].currentPath);
 }
@@ -3631,7 +4021,9 @@ function clearPanelState(panelId) {
     checksumQueueIndex: 0,
     checksumCancelled: false,
     showDateCreated: false,
-    hasBeenViewed: false
+    hasBeenViewed: false,
+    sectionCollapseState: null,
+    currentItemOpenWith: null
   };
 
   // Unregister from backend background refresh
@@ -3669,49 +4061,49 @@ async function closeActivePanel() {
           style: ''
         }
       }).yes(async () => {
-          // Save notes before closing
-          const filePath = panelState[1].currentPath + '\\notes.txt';
-          try {
-            await window.electronAPI.writeFileContent(filePath, content);
-            
-            // Get current notes format setting
-            const settings = await window.electronAPI.getSettings();
-            const fileFormat = settings.file_format || 'Markdown';
-            
-            // Format and display notes based on format setting
-            const $fileView = $(`#panel-${activePanelId} .panel-file-view`);
-            const $fileContentView = $fileView.find('.file-content-view');
-            const $fileEditorContainer = $fileView.find('.file-editor-container');
-            const $editBtn = $fileView.find('.btn-file-edit');
-            const $saveBtn = $fileView.find('.btn-file-save');
-            
-            if (fileFormat === 'Markdown') {
-              // Render markdown to HTML
-              const htmlContent = await window.electronAPI.renderMarkdown(content);
-              $fileContentView.html(htmlContent);
-            } else {
-              // Use plain text formatting
-              const htmlContent = formatFileContent(content, fileFormat);
-              $fileContentView.html(htmlContent);
-            }
-            
-            $fileEditorContainer.hide();
-            $fileContentView.show();
-            $editBtn.show().text('Edit').css('background', '#2196F3');
-            $saveBtn.hide();
-            fileEditMode = false;
-            
-            // Proceed to close the panel
-            proceedWithPanelClose();
-          } catch (err) {
-            alert('Error saving notes: ' + err.message);
+        // Save notes before closing
+        const filePath = panelState[1].currentPath + '\\notes.txt';
+        try {
+          await window.electronAPI.writeFileContent(filePath, content);
+
+          // Get current notes format setting
+          const settings = await window.electronAPI.getSettings();
+          const fileFormat = settings.file_format || 'Markdown';
+
+          // Format and display notes based on format setting
+          const $fileView = $(`#panel-${activePanelId} .panel-file-view`);
+          const $fileContentView = $fileView.find('.file-content-view');
+          const $fileEditorContainer = $fileView.find('.file-editor-container');
+          const $editBtn = $fileView.find('.btn-file-edit');
+          const $saveBtn = $fileView.find('.btn-file-save');
+
+          if (fileFormat === 'Markdown') {
+            // Render markdown to HTML
+            const htmlContent = await window.electronAPI.renderMarkdown(content);
+            $fileContentView.html(htmlContent);
+          } else {
+            // Use plain text formatting
+            const htmlContent = formatFileContent(content, fileFormat);
+            $fileContentView.html(htmlContent);
           }
-        })
+
+          $fileEditorContainer.hide();
+          $fileContentView.show();
+          $editBtn.show().text('Edit').css('background', '#2196F3');
+          $saveBtn.hide();
+          fileEditMode = false;
+
+          // Proceed to close the panel
+          proceedWithPanelClose();
+        } catch (err) {
+          alert('Error saving notes: ' + err.message);
+        }
+      })
       // If user cancels, do nothing (keep edit mode open)
     }
     return;
   }
-  
+
   // If only one panel is open, confirm before closing the window
   if (visiblePanels === 1) {
     w2confirm({
@@ -3734,7 +4126,7 @@ async function closeActivePanel() {
     });
     return;
   }
-  
+
   // Otherwise, just close the active panel
   proceedWithPanelClose();
 }
@@ -3753,29 +4145,29 @@ async function handleCloseRequest() {
         width: 450,        // width of the dialog
         height: 220,       // height of the dialog
         btn_yes: {
-            text: 'Exit Anyway',   // text for yes button (or yes_text)
-            class: '',     // class for yes button (or yes_class)
-            style: '',     // style for yes button (or yes_style)
-            onClick: null  // callBack for yes button (or yes_callBack)
+          text: 'Exit Anyway',   // text for yes button (or yes_text)
+          class: '',     // class for yes button (or yes_class)
+          style: '',     // style for yes button (or yes_style)
+          onClick: null  // callBack for yes button (or yes_callBack)
         },
         btn_no: {
-            text: 'Cancel',    // text for no button (or no_text)
-            class: '',     // class for no button (or no_class)
-            style: '',     // style for no button (or no_style)
-            onClick: null  // callBack for no button (or no_callBack)
+          text: 'Cancel',    // text for no button (or no_text)
+          class: '',     // class for no button (or no_class)
+          style: '',     // style for no button (or no_style)
+          onClick: null  // callBack for no button (or no_callBack)
         }
       }).yes(async () => {
-          // Save notes before closing
-          const filePath = panelState[1].currentPath + '\\notes.txt';
-          try {
-            // saved in case we want to add a save option to this popup in the future:
-            // await window.electronAPI.writeFileContent(filePath, content);
-            window.electronAPI.allowClose();
-          } catch (err) {
-            console.error('Error saving notes before close:', err.message);
-            window.electronAPI.allowClose();  // Close anyway
-          }
-        });
+        // Save notes before closing
+        const filePath = panelState[1].currentPath + '\\notes.txt';
+        try {
+          // saved in case we want to add a save option to this popup in the future:
+          // await window.electronAPI.writeFileContent(filePath, content);
+          window.electronAPI.allowClose();
+        } catch (err) {
+          console.error('Error saving notes before close:', err.message);
+          window.electronAPI.allowClose();  // Close anyway
+        }
+      });
       // If user cancels, do nothing (app stays open
     }
     return;
@@ -3796,22 +4188,22 @@ function proceedWithPanelClose() {
  */
 function attachPanelEventListeners(panelId) {
   const $panel = $(`#panel-${panelId}`);
-  
+
   // Set active panel when clicking anywhere in the panel (except on interactive elements)
-  $panel.off('click.panelActive').on('click.panelActive', function(e) {
+  $panel.off('click.panelActive').on('click.panelActive', function (e) {
     // Don't retrigger for buttons/inputs that have their own handlers or need focus preserved
     const interactiveSel = 'button, input, select, textarea, label, a';
     if (!$(e.target).is(interactiveSel) && !$(e.target).closest(interactiveSel).length) {
       setActivePanelId(panelId);
     }
   });
-  
+
   // Note: Panel title elements are now managed in the grid header by attachGridHeaderEventListeners
   // which is called from updateGridHeader()
-  
+
   // Select button (panels 2-4 only)
   if (panelId > 1) {
-    $panel.find('.btn-panel-select').off('click').on('click', function() {
+    $panel.find('.btn-panel-select').off('click').on('click', function () {
       setActivePanelId(panelId);
       // If a directory is selected from panel-1, navigate to it and hide landing page
       if (panel1SelectedDirectoryPath) {
@@ -3830,75 +4222,82 @@ function attachPanelEventListeners(panelId) {
         }
       }
     });
-    
+
     // Notes button
-    $panel.find('.btn-panel-file').off('click').on('click', async function() {
+    $panel.find('.btn-panel-file').off('click').on('click', async function () {
       await showFileView(panelId);
     });
-    
+
     // Notes edit button
-    $panel.find('.btn-file-edit').off('click').on('click', async function() {
+    $panel.find('.btn-file-edit').off('click').on('click', async function () {
       await toggleFileEditMode(panelId);
     });
-    
+
     // Notes save button
-    $panel.find('.btn-file-save').off('click').on('click', async function() {
+    $panel.find('.btn-file-save').off('click').on('click', async function () {
       await toggleFileEditMode(panelId);
     });
-    
+
     // Notes back button
-    $panel.find('.btn-file-back').off('click').on('click', function() {
+    $panel.find('.btn-file-back').off('click').on('click', function () {
       hideFileView(panelId);
     });
-    
+
     // Panel remove button (panels 2-4 only)
-    $panel.find('.btn-panel-remove').off('click').on('click', function() {
-      removePanel(panelId);
-    });
-    
-    // Landing page overlay close button (panels 2-4 only)
-    $panel.find('.btn-panel-remove-overlay').off('click').on('click', function() {
+    $panel.find('.btn-panel-remove').off('click').on('click', function () {
       removePanel(panelId);
     });
 
-    // Item Properties: Open button
-    $panel.find('.btn-item-open').off('click').on('click', async function() {
-      if (!selectedItemState.path) return;
-      if (selectedItemState.isDirectory) {
-        navigateToDirectory(selectedItemState.path, panelId);
-        $panel.find('.panel-landing-page').hide();
-        $panel.find('.panel-grid').show();
-        const grid = panelState[panelId].w2uiGrid;
-        if (grid) {
-          const toolbarEl = document.getElementById(`grid_grid-panel-${panelId}_toolbar`);
-          if (toolbarEl && toolbarEl.style.height === '0px') toolbarEl.style.height = '';
-          grid.resize();
-        }
-      } else {
-        // Check openWith setting
-        try {
-          const stats = await window.electronAPI.getItemStats(selectedItemState.path);
-          if (stats && stats.openWith === 'builtin-editor') {
-            showFileView(panelId, selectedItemState.path);
-          }
-        } catch (err) {
-          console.error('Error getting item stats for open:', err);
-        }
+    // Landing page overlay close button (panels 2-4 only)
+    $panel.find('.btn-panel-remove-overlay').off('click').on('click', function () {
+      removePanel(panelId);
+    });
+
+    // Item Properties: icon click to open file
+    $panel.find('.item-props-icon').off('click').on('click', async function () {
+      if (!$(this).hasClass('clickable')) return;
+      const openWith = panelState[panelId].currentItemOpenWith;
+      if (!openWith || openWith === 'none') return;
+      if (openWith === 'image-viewer') {
+        openImageViewerModal(selectedItemState.path);
+      } else if (openWith === 'builtin-editor') {
+        showFileView(panelId, selectedItemState.path);
       }
     });
 
+    // Item Properties: section header click toggles section visibility
+    $panel.find('.item-properties-content').off('click.sectionHeader').on('click.sectionHeader', '.item-props-section-header', function (e) {
+      // Don't toggle when clicking action buttons (Edit, Save, Cancel, etc.)
+      if ($(e.target).is('button') && !$(e.target).hasClass('btn-section-toggle')) return;
+      const section = $(this).attr('data-section');
+      if (!section || !panelState[panelId].sectionCollapseState) return;
+      const collapsed = !panelState[panelId].sectionCollapseState[section];
+      panelState[panelId].sectionCollapseState[section] = collapsed;
+      const body = $(this).parent().find('.item-props-section-body')
+      body.toggle(!collapsed);
+      console.log(this, 'toggled section', section, 'collapsed:', collapsed, body);
+      $(this).find('.btn-section-toggle').html(collapsed ? '&#9656;' : '&#9662;');
+    });
+
+    // Item Properties: copy value button
+    $panel.find('.item-properties-content').off('click.copyValue').on('click.copyValue', '.btn-copy-value', function (e) {
+      e.stopPropagation();
+      const val = $(this).attr('data-copy-value');
+      if (val) navigator.clipboard.writeText(val).catch(() => { });
+    });
+
     // Item Properties: Attributes Edit / Save / Cancel buttons
-    $panel.find('.btn-attrs-edit').off('click').on('click', function() {
+    $panel.find('.btn-attrs-edit').off('click').on('click', function () {
       panelState[panelId].attrEditMode = true;
       updateItemPropertiesPage(panelId);
     });
 
-    $panel.find('.btn-attrs-cancel').off('click').on('click', function() {
+    $panel.find('.btn-attrs-cancel').off('click').on('click', function () {
       panelState[panelId].attrEditMode = false;
       updateItemPropertiesPage(panelId);
     });
 
-    $panel.find('.btn-attrs-save').off('click').on('click', async function() {
+    $panel.find('.btn-attrs-save').off('click').on('click', async function () {
       const inode = panelState[panelId].itemInode || selectedItemState.inode;
       const dir_id = panelState[panelId].itemDirId || selectedItemState.dir_id;
       if (!inode || !dir_id) {
@@ -3906,7 +4305,7 @@ function attachPanelEventListeners(panelId) {
         return;
       }
       const attrs = {};
-      $panel.find('.item-props-attributes .attr-row').each(function() {
+      $panel.find('.item-props-attributes .attr-row').each(function () {
         const name = $(this).data('attr-name');
         const type = $(this).data('attr-type');
         if (!name) return;
@@ -3926,13 +4325,13 @@ function attachPanelEventListeners(panelId) {
     });
 
     // Item Properties: inline Monaco notes editor
-    $panel.find('.btn-notes-edit-item').off('click').on('click', async function() {
+    $panel.find('.btn-notes-edit-item').off('click').on('click', async function () {
       const notesFilePath = panelState[panelId].notesFilePath;
       const notesSectionKey = panelState[panelId].notesSectionKey;
       if (!notesFilePath) return;
 
       let rawFile = '';
-      try { rawFile = await window.electronAPI.readFileContent(notesFilePath) || ''; } catch (_) {}
+      try { rawFile = await window.electronAPI.readFileContent(notesFilePath) || ''; } catch (_) { }
       const sections = await window.electronAPI.invoke('parse-notes-file', rawFile);
       const sectionContent = sections[notesSectionKey] || '';
 
@@ -3964,7 +4363,7 @@ function attachPanelEventListeners(panelId) {
       panelState[panelId].notesMonacoEditor.focus();
     });
 
-    $panel.find('.btn-notes-save-item').off('click').on('click', async function() {
+    $panel.find('.btn-notes-save-item').off('click').on('click', async function () {
       const notesFilePath = panelState[panelId].notesFilePath;
       const notesSectionKey = panelState[panelId].notesSectionKey;
       if (!notesFilePath) return;
@@ -3972,7 +4371,7 @@ function attachPanelEventListeners(panelId) {
       const sectionContent = editor ? editor.getValue() : '';
       try {
         let existingContent = '';
-        try { existingContent = await window.electronAPI.readFileContent(notesFilePath) || ''; } catch (_) {}
+        try { existingContent = await window.electronAPI.readFileContent(notesFilePath) || ''; } catch (_) { }
         const newFullContent = writeNotesSection(existingContent, notesSectionKey, sectionContent);
         await window.electronAPI.writeFileContent(notesFilePath, newFullContent);
       } catch (err) {
@@ -3983,7 +4382,7 @@ function attachPanelEventListeners(panelId) {
       updateItemPropertiesPage(panelId);
     });
 
-    $panel.find('.btn-notes-cancel-item').off('click').on('click', function() {
+    $panel.find('.btn-notes-cancel-item').off('click').on('click', function () {
       panelState[panelId].notesEditMode = false;
       const $notesSection = $panel.find('.item-props-notes-section');
       $notesSection.find('.btn-notes-edit-item').show();
@@ -3995,7 +4394,7 @@ function attachPanelEventListeners(panelId) {
 
     // Add panel button on panel 2 landing page
     if (panelId === 2) {
-      $panel.find('.btn-add-panel-landing').off('click').on('click', function() {
+      $panel.find('.btn-add-panel-landing').off('click').on('click', function () {
         if (visiblePanels < 4) {
           visiblePanels++;
           const newPanelId = visiblePanels;
@@ -4013,7 +4412,13 @@ function attachPanelEventListeners(panelId) {
  */
 function attachEventListeners() {
   // Keyboard shortcuts - detect hotkey and dispatch to appropriate handler
-  $(document).keydown(async function(event) {
+  $(document).keydown(async function (event) {
+    // Escape key: close image viewer modal if open
+    if (event.key === 'Escape' && $('#image-viewer-modal').is(':visible')) {
+      $('#image-viewer-modal').hide();
+      return;
+    }
+
     // Escape key: close notes modal if open
     if (event.key === 'Escape' && $('#notes-modal').is(':visible')) {
       hideNotesModal();
@@ -4022,11 +4427,11 @@ function attachEventListeners() {
 
     const hotkeyCombo = getHotKeyCombo(event);
     const actionId = getActionForHotkey(hotkeyCombo);
-    
+
     // Only handle recognized hotkeys
     if (!actionId) return;
-    
-    switch(actionId) {
+
+    switch (actionId) {
       case 'navigate_back':
         event.preventDefault();
         navigateBack();
@@ -4042,27 +4447,27 @@ function attachEventListeners() {
           console.warn('[navigate_up] Invalid current path');
           break;
         }
-        
+
         let path = state.currentPath.trim();
-        
+
         // Remove trailing backslash for consistent handling
         if (path.endsWith('\\')) {
           path = path.substring(0, path.length - 1);
         }
-        
+
         // Check if at drive root (e.g., "E:", "C:")
         if (path.length === 2 && path[1] === ':') {
           console.info(`[navigate_up] Already at drive root: ${path}`);
           break;
         }
-        
+
         // Find last backslash
         const lastSlash = path.lastIndexOf('\\');
         if (lastSlash <= 2) {
           console.warn(`[navigate_up] Cannot navigate up from: ${path}`);
           break;
         }
-        
+
         const parentPath = path.substring(0, lastSlash);
         if (parentPath.length == 2 && parentPath[1] === ':') {
           // Add backslash for drive root
@@ -4101,50 +4506,50 @@ function attachEventListeners() {
   });
 
   // Window focus/blur handlers for panel selection styling
-  $(window).blur(function() {
+  $(window).blur(function () {
     // When window loses focus, remove selection styling from all panels
     for (let i = 1; i <= 4; i++) {
       $(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
     }
   });
 
-  $(window).focus(function() {
+  $(window).focus(function () {
     // When window regains focus, restore selection styling to active panel
     $(`#panel-${activePanelId} .panel-number`).addClass('panel-number-selected');
   });
 
   // View button - show layout modal
-  $('#btn-view').click(function() {
+  $('#btn-view').click(function () {
     showLayoutModal();
   });
 
   // Add panel button
-  $('#btn-add-panel').click(function() {
+  $('#btn-add-panel').click(function () {
     if (visiblePanels < 4) {
       visiblePanels++;
       const newPanelId = visiblePanels;
       $(`#panel-${newPanelId}`).show();
-      
+
       // Reattach event listeners for the newly visible panel
       attachPanelEventListeners(newPanelId);
-      
+
       updatePanelLayout();
     }
   });
 
   // Layout option buttons
-  $('.layout-option').click(function() {
+  $('.layout-option').click(function () {
     const layoutNumber = parseInt($(this).data('layout'));
     switchLayout(layoutNumber);
     hideLayoutModal();
   });
 
   // Layout modal close button and overlay
-  $('#btn-layout-close').click(function() {
+  $('#btn-layout-close').click(function () {
     hideLayoutModal();
   });
 
-  $('#layout-modal').click(function(e) {
+  $('#layout-modal').click(function (e) {
     if (e.target === this) {
       hideLayoutModal();
     }
@@ -4156,88 +4561,88 @@ function attachEventListeners() {
   }
 
   // Settings modal close button
-  $('#btn-settings-close').click(function() {
+  $('#btn-settings-close').click(function () {
     hideSettingsModal();
   });
 
   // Sidebar toolbar: Settings
-  $('#btn-sidebar-settings-toolbar').click(function() {
+  $('#btn-sidebar-settings-toolbar').click(function () {
     showSettingsModal();
   });
 
   // Sidebar toolbar: Collapse / expand
-  $('#btn-sidebar-collapse').click(function() {
+  $('#btn-sidebar-collapse').click(function () {
     toggleSidebarCollapse();
   });
 
   // Sidebar toolbar: Notifications
-  $('#btn-sidebar-notifications').click(function() {
+  $('#btn-sidebar-notifications').click(function () {
     showNotificationsModal();
   });
 
   // Sidebar toolbar: Tagging
-  $('#btn-sidebar-tagging').click(function() {
+  $('#btn-sidebar-tagging').click(function () {
     showTaggingModal();
   });
 
   // Tagging modal close button
-  $('#btn-tagging-close').click(function() {
+  $('#btn-tagging-close').click(function () {
     hideTaggingModal();
   });
 
   // Tagging modal overlay click to close
-  $('#tagging-modal').click(function(e) {
+  $('#tagging-modal').click(function (e) {
     if (e.target === this) {
       hideTaggingModal();
     }
   });
 
   // Tagging tab buttons
-  $('.tagging-tab-btn').click(function() {
+  $('.tagging-tab-btn').click(function () {
     const tabName = $(this).data('tab');
     switchTaggingTab(tabName);
   });
 
   // Settings modal overlay click to close
-  $('#settings-modal').click(function(e) {
+  $('#settings-modal').click(function (e) {
     if (e.target === this) {
       hideSettingsModal();
     }
   });
 
   // Settings tab buttons
-  $('.settings-tab-btn').click(function() {
+  $('.settings-tab-btn').click(function () {
     const tabName = $(this).data('tab');
     switchSettingsTab(tabName);
   });
 
   // Category form save button
-  $('#btn-cat-save').click(async function() {
+  $('#btn-cat-save').click(async function () {
     await saveCategoryFromForm();
   });
 
   // Category form clear/new button
-  $('#btn-cat-clear').click(function() {
+  $('#btn-cat-clear').click(function () {
     clearCategoryForm();
   });
 
   // Category form delete button
-  $('#btn-cat-delete').click(async function() {
+  $('#btn-cat-delete').click(async function () {
     await deleteCategoryFromForm();
   });
 
   // Browser settings: validate directory while typing
-  $('#browser-home-directory').on('input', async function() {
+  $('#browser-home-directory').on('input', async function () {
     await updateHomeDirectoryWarning($(this).val());
   });
 
   // Browser settings: update preview on recordHeight input change
-  $('#browser-record-height').on('input', function() {
+  $('#browser-record-height').on('input', function () {
     updateRecordHeightPreview();
   });
 
   // Browser Settings - Advanced: reinitialize database button
-  $('#btn-dev-reinitialize-db').click(async function() {
+  $('#btn-dev-reinitialize-db').click(async function () {
     w2confirm({
       msg: 'This will delete all file history and directory assignments.<br><br>This action cannot be undone.',
       title: 'Reinitialize Database?',
@@ -4254,63 +4659,63 @@ function attachEventListeners() {
         style: ''
       }
     }).yes(async () => {
-        try {
-          const result = await window.electronAPI.reinitializeDatabase();
-          if (result.success) {
-            alert('Database reinitialized successfully. The application will now reload.');
-            // Reload the page to reset all state
-            window.location.reload();
-          } else {
-            alert('Error reinitializing database: ' + result.error);
-          }
-        } catch (err) {
-          alert('Error: ' + err.message);
+      try {
+        const result = await window.electronAPI.reinitializeDatabase();
+        if (result.success) {
+          alert('Database reinitialized successfully. The application will now reload.');
+          // Reload the page to reset all state
+          window.location.reload();
+        } else {
+          alert('Error reinitializing database: ' + result.error);
         }
-      });
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    });
   });
 
   // Tag form save button
-  $('#btn-tag-save').click(async function() {
+  $('#btn-tag-save').click(async function () {
     await saveTagFromForm();
   });
 
   // Tag form clear/new button
-  $('#btn-tag-clear').click(function() {
+  $('#btn-tag-clear').click(function () {
     clearTagForm();
   });
 
   // Tag form delete button
-  $('#btn-tag-delete').click(async function() {
+  $('#btn-tag-delete').click(async function () {
     await deleteTagFromForm();
   });
 
   // Attribute form save button
-  $('#btn-attr-save').click(async function() {
+  $('#btn-attr-save').click(async function () {
     await saveAttributeFromForm();
   });
 
   // Attribute form clear/new button
-  $('#btn-attr-clear').click(function() {
+  $('#btn-attr-clear').click(function () {
     clearAttributeForm();
   });
 
   // Attribute form delete button
-  $('#btn-attr-delete').click(async function() {
+  $('#btn-attr-delete').click(async function () {
     await deleteAttributeFromForm();
   });
 
   // Attribute type change - toggle options section
-  $('#form-attr-type').on('change', function() {
+  $('#form-attr-type').on('change', function () {
     toggleAttrOptionsSection();
   });
 
   // Attribute options: Add button and Enter key
-  $('#btn-attr-option-add').on('click', function() {
+  $('#btn-attr-option-add').on('click', function () {
     const val = $('#form-attr-option-input').val();
     addAttrOption(val);
     $('#form-attr-option-input').val('').focus();
   });
-  $('#form-attr-option-input').on('keydown', function(e) {
+  $('#form-attr-option-input').on('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
       const val = $(this).val();
@@ -4320,81 +4725,91 @@ function attachEventListeners() {
   });
 
   // File Types form save button
-  $('#btn-ft-save').click(async function() {
+  $('#btn-ft-save').click(async function () {
     await saveFileTypeFromForm();
   });
 
   // File Types form clear/new button
-  $('#btn-ft-clear').click(function() {
+  $('#btn-ft-clear').click(function () {
     clearFileTypeForm();
   });
 
   // File Types form delete button
-  $('#btn-ft-delete').click(async function() {
+  $('#btn-ft-delete').click(async function () {
     await deleteFileTypeFromForm();
   });
 
   // Hotkeys form demo button
-  $('#btn-hotkey-demo').click(function() {
+  $('#btn-hotkey-demo').click(function () {
     enterHotkeyDemoMode();
   });
 
   // Hotkeys form save button
-  $('#btn-hotkey-save').click(async function() {
+  $('#btn-hotkey-save').click(async function () {
     await saveHotkeyFromForm();
   });
 
   // Hotkeys form reset button
-  $('#btn-hotkey-reset').click(async function() {
+  $('#btn-hotkey-reset').click(async function () {
     await resetHotkeyToDefault();
   });
 
   // History modal close button
-  $('#btn-history-close').click(function() {
+  $('#btn-history-close').click(function () {
     hideHistoryModal();
   });
 
   // History modal overlay click to close
-  $('#history-modal').click(function(e) {
+  $('#history-modal').click(function (e) {
     if (e.target === this) {
       hideHistoryModal();
     }
   });
 
   // Notes modal close button
-  $('#btn-notes-close').click(function() {
+  $('#btn-notes-close').click(function () {
     hideNotesModal();
   });
 
   // Notes modal Edit/Save buttons
-  $('#btn-notes-edit').click(async function() {
+  $('#btn-notes-edit').click(async function () {
     await toggleNotesEditMode();
   });
-  $('#btn-notes-save').click(async function() {
+  $('#btn-notes-save').click(async function () {
     await toggleNotesEditMode();
   });
 
   // Notes modal overlay click to close
-  $('#notes-modal').click(function(e) {
+  $('#notes-modal').click(function (e) {
     if (e.target === this) {
       hideNotesModal();
     }
   });
 
+  // Image viewer modal close button and overlay click
+  $('#btn-image-viewer-close').click(function () {
+    $('#image-viewer-modal').hide();
+  });
+  $('#image-viewer-modal').click(function (e) {
+    if (e.target === this) {
+      $('#image-viewer-modal').hide();
+    }
+  });
+
   // Notifications modal close button
-  $('#btn-notifications-close').click(function() {
+  $('#btn-notifications-close').click(function () {
     hideNotificationsModal();
   });
 
   // Notifications modal overlay click to close
-  $('#notifications-modal').click(function(e) {
+  $('#notifications-modal').click(function (e) {
     if (e.target === this) {
       hideNotificationsModal();
     }
   });
 
   // Notifications modal mark all read
-  $('#btn-notifications-mark-all').click(async function() {
+  $('#btn-notifications-mark-all').click(async function () {
     await window.electronAPI.markAllNotificationsRead();
     unreadNotificationCount = 0;
     updateNotificationBadge();
@@ -4413,22 +4828,22 @@ function setupResizableDivider() {
   let startX = 0;
   let startWidth = 0;
 
-  divider.mousedown(function(e) {
+  divider.mousedown(function (e) {
     isResizing = true;
     startX = e.clientX;
     startWidth = formPanel.width();
     $(document).css('user-select', 'none');
   });
 
-  $(document).mousemove(function(e) {
+  $(document).mousemove(function (e) {
     if (!isResizing) return;
-    
+
     const deltaX = e.clientX - startX;
     const newWidth = Math.max(250, startWidth - deltaX); // Minimum 250px width
     formPanel.css('flex', `0 0 ${newWidth}px`);
   });
 
-  $(document).mouseup(function() {
+  $(document).mouseup(function () {
     if (isResizing) {
       isResizing = false;
       $(document).css('user-select', '');
@@ -4446,22 +4861,22 @@ function setupTagResizableDivider() {
   let startX = 0;
   let startWidth = 0;
 
-  divider.mousedown(function(e) {
+  divider.mousedown(function (e) {
     isResizing = true;
     startX = e.clientX;
     startWidth = formPanel.width();
     $(document).css('user-select', 'none');
   });
 
-  $(document).mousemove(function(e) {
+  $(document).mousemove(function (e) {
     if (!isResizing) return;
-    
+
     const deltaX = e.clientX - startX;
     const newWidth = Math.max(250, startWidth - deltaX); // Minimum 250px width
     formPanel.css('flex', `0 0 ${newWidth}px`);
   });
 
-  $(document).mouseup(function() {
+  $(document).mouseup(function () {
     if (isResizing) {
       isResizing = false;
       $(document).css('user-select', '');
@@ -4479,22 +4894,22 @@ function setupHotkeysResizableDivider() {
   let startX = 0;
   let startWidth = 0;
 
-  divider.mousedown(function(e) {
+  divider.mousedown(function (e) {
     isResizing = true;
     startX = e.clientX;
     startWidth = formPanel.width();
     $(document).css('user-select', 'none');
   });
 
-  $(document).mousemove(function(e) {
+  $(document).mousemove(function (e) {
     if (!isResizing) return;
-    
+
     const deltaX = e.clientX - startX;
     const newWidth = Math.max(250, startWidth - deltaX); // Minimum 250px width
     formPanel.css('flex', `0 0 ${newWidth}px`);
   });
 
-  $(document).mouseup(function() {
+  $(document).mouseup(function () {
     if (isResizing) {
       isResizing = false;
       $(document).css('user-select', '');
@@ -4512,21 +4927,21 @@ function setupFileTypesDivider() {
   let startX = 0;
   let startWidth = 0;
 
-  divider.mousedown(function(e) {
+  divider.mousedown(function (e) {
     isResizing = true;
     startX = e.clientX;
     startWidth = formPanel.width();
     $(document).css('user-select', 'none');
   });
 
-  $(document).mousemove(function(e) {
+  $(document).mousemove(function (e) {
     if (!isResizing) return;
     const deltaX = e.clientX - startX;
     const newWidth = Math.max(250, startWidth - deltaX);
     formPanel.css('flex', `0 0 ${newWidth}px`);
   });
 
-  $(document).mouseup(function() {
+  $(document).mouseup(function () {
     if (isResizing) {
       isResizing = false;
       $(document).css('user-select', '');
@@ -4589,7 +5004,7 @@ function switchTaggingTab(tabName) {
       const $container = $('#form-cat-attributes');
       // Preserve currently checked values before rebuilding
       const checkedValues = [];
-      $container.find('input[type="checkbox"]:checked').each(function() {
+      $container.find('input[type="checkbox"]:checked').each(function () {
         checkedValues.push($(this).val());
       });
       $container.empty();
@@ -4621,7 +5036,7 @@ function switchTaggingTab(tabName) {
   }
 
   // Update tab button styles
-  $('.tagging-tab-btn').each(function() {
+  $('.tagging-tab-btn').each(function () {
     const btn = $(this);
     if (btn.data('tab') === tabName) {
       btn.css('border-bottom-color', '#2196F3').css('color', '#2196F3');
@@ -4657,7 +5072,7 @@ async function buildIconDropdown() {
     $opt.append(`<img src="assets/icons/${filename}" style="width: 16px; height: 16px; object-fit: contain; flex-shrink: 0;">`);
     $opt.append(`<span>${filename.replace('.png', '')}</span>`);
 
-    $opt.on('click', function() {
+    $opt.on('click', function () {
       setFtIconSelection($(this).data('icon'));
       $dropdown.hide();
     });
@@ -4666,7 +5081,7 @@ async function buildIconDropdown() {
   });
 
   // Toggle open/close
-  $('#btn-ft-icon-trigger').off('click.iconPicker').on('click.iconPicker', function(e) {
+  $('#btn-ft-icon-trigger').off('click.iconPicker').on('click.iconPicker', function (e) {
     e.stopPropagation();
     if ($dropdown.is(':visible')) {
       $dropdown.hide();
@@ -4676,7 +5091,7 @@ async function buildIconDropdown() {
   });
 
   // Close on outside click
-  $(document).off('click.ftIconDropdown').on('click.ftIconDropdown', function(e) {
+  $(document).off('click.ftIconDropdown').on('click.ftIconDropdown', function (e) {
     if (!$(e.target).closest('#form-ft-icon-picker').length) {
       $dropdown.hide();
     }
@@ -4701,7 +5116,7 @@ function setFtIconSelection(iconFile) {
   }
 
   // Highlight selected option
-  $('#ft-icon-dropdown .ft-icon-option').each(function() {
+  $('#ft-icon-dropdown .ft-icon-option').each(function () {
     const $opt = $(this);
     if ($opt.data('icon') === iconFile) {
       $opt.addClass('selected');
@@ -4735,14 +5150,14 @@ async function initializeFileTypesGrid() {
     name: 'filetypes-grid',
     show: { header: false, toolbar: false, footer: false },
     columns: [
-      { field: 'iconHtml', text: '',        size: '30px', resizable: false, style: 'text-align: center; padding: 0 4px;' },
-      { field: 'lock',     text: '',        size: '26px', resizable: false, style: 'text-align: center; padding: 0;' },
-      { field: 'pattern',  text: 'Pattern', size: '50%',  resizable: true,  sortable: true },
-      { field: 'type',     text: 'Type',    size: '100%', resizable: true,  sortable: true }
+      { field: 'iconHtml', text: '', size: '30px', resizable: false, style: 'text-align: center; padding: 0 4px;' },
+      { field: 'lock', text: '', size: '26px', resizable: false, style: 'text-align: center; padding: 0;' },
+      { field: 'pattern', text: 'Pattern', size: '50%', resizable: true, sortable: true },
+      { field: 'type', text: 'Type', size: '100%', resizable: true, sortable: true }
     ],
     records,
-    onClick: function(event) {
-      event.onComplete = function() {
+    onClick: function (event) {
+      event.onComplete = function () {
         const grid = this;
         const sel = grid.getSelection();
         if (sel.length > 0) {
@@ -4754,7 +5169,7 @@ async function initializeFileTypesGrid() {
         }
       };
     },
-    onLoad: function(event) { event.preventDefault(); }
+    onLoad: function (event) { event.preventDefault(); }
   });
 
   w2ui['filetypes-grid'].render('#filetypes-grid');
@@ -4885,19 +5300,19 @@ async function deleteFileTypeFromForm() {
  * Show settings modal
  */
 async function showSettingsModal() {
-  
+
   // Reset lazy-init tracking for this modal session
   initializedSettingsTabs = new Set();
 
   // Show modal FIRST so containers have proper dimensions
   $('#settings-modal').show();
-  
+
   // Ensure Browser Settings tab is active by default
   switchSettingsTab('browser');
-  
+
   // Initialize browser settings form
   await initializeBrowserSettingsForm();
-  
+
 }
 
 /**
@@ -4913,7 +5328,7 @@ function hideSettingsModal() {
   if (w2ui['hotkeys-grid']) {
     w2ui['hotkeys-grid'].destroy();
   }
-  
+
 }
 
 
@@ -4924,38 +5339,38 @@ async function openHistoryModal(selectedRecord) {
   try {
     // Get file history from database
     const result = await window.electronAPI.getFileHistory(selectedRecord.inode);
-    
+
     if (!result.success) {
       alert('Error loading file history: ' + result.error);
       return;
     }
-    
+
     // Update modal title
     $('#history-modal-title').text(`History: ${selectedRecord.filenameRaw || selectedRecord.filename}`);
-    
+
     // Destroy existing grid if it exists
     if (w2ui['history-grid']) {
       w2ui['history-grid'].destroy();
     }
-    
+
     // Build the complete file state from history
     const fullState = buildCompleteFileState(result.data || [], selectedRecord);
-    
+
     // Initialize and populate history grid
     const historyData = formatHistoryData(result.data || [], fullState);
-    
+
     const gridColumns = [
       { field: 'detectedAt', text: 'Detected At', size: '160px', resizable: true, sortable: true },
       { field: 'changeValue', text: 'Change', size: '200px', resizable: true, sortable: true },
       { field: 'path', text: 'Path', size: '100%', resizable: true, sortable: true }
     ];
-    
+
     $('#history-grid').w2grid({
       name: 'history-grid',
       columns: gridColumns,
       records: historyData,
       show: { header: true, toolbar: false, footer: true },
-      onClick: function(event) {
+      onClick: function (event) {
         // Update summary when a row is clicked
         if (event.detail && event.detail.recid) {
           const selectedIndex = event.detail.recid - 1;
@@ -4964,10 +5379,10 @@ async function openHistoryModal(selectedRecord) {
         }
       }
     });
-    
+
     // Create summary view below grid with initial selection (first/newest record)
     createHistorySummaryView(fullState, 0);
-    
+
     // Show modal (use flex so the flexbox centering works)
     $('#history-modal').css('display', 'flex');
   } catch (err) {
@@ -4992,19 +5407,19 @@ function formatHistoryData(historyRecords, fullState) {
     'filesizeBytes': 4,
     'status': 5
   };
-  
+
   return historyRecords.map((record, index) => {
     let changeKeyDisplay = '-';
-    
+
     try {
       // If this is the first (earliest) entry, show "INITIAL"
       if (index === historyRecords.length - 1) {
         changeKeyDisplay = 'INITIAL';
       } else {
         // Parse changeValue JSON if it's a string
-        const parsed = typeof record.changeValue === 'string' ? 
+        const parsed = typeof record.changeValue === 'string' ?
           JSON.parse(record.changeValue) : record.changeValue;
-        
+
         if (parsed && typeof parsed === 'object') {
           // Extract all keys and sort by priority
           const keys = Object.keys(parsed);
@@ -5013,7 +5428,7 @@ function formatHistoryData(historyRecords, fullState) {
             const priorityB = KEY_PRIORITY[b] ?? 999;
             return priorityA - priorityB;
           });
-          
+
           if (sortedKeys.length > 0) {
             // Display only the highest priority key
             changeKeyDisplay = sortedKeys[0];
@@ -5024,7 +5439,7 @@ function formatHistoryData(historyRecords, fullState) {
       // If JSON parse fails, use '-'
       changeKeyDisplay = '-';
     }
-    
+
     return {
       recid: index + 1,
       detectedAt: record.detectedAt ? new Date(record.detectedAt).toLocaleString() : '-',
@@ -5045,33 +5460,33 @@ function buildCompleteFileState(historyRecords, selectedRecord) {
   let currentState = {
     path: selectedRecord ? (selectedRecord.path || selectedRecord.filename) : '-'
   };
-  
+
   // First pass: collect all attributes and build state timeline
   // Start from oldest (end of array) to newest (start of array)
   for (let i = historyRecords.length - 1; i >= 0; i--) {
     const record = historyRecords[i];
-    
+
     try {
-      const parsed = typeof record.changeValue === 'string' ? 
+      const parsed = typeof record.changeValue === 'string' ?
         JSON.parse(record.changeValue) : record.changeValue;
-      
+
       if (parsed && typeof parsed === 'object') {
         // Add all keys to the set of attributes
         Object.keys(parsed).forEach(key => allAttributes.add(key));
-        
+
         // Update current state with new values
         Object.assign(currentState, parsed);
       }
     } catch (e) {
       // Skip invalid records
     }
-    
+
     states.push({ ...currentState, detectedAt: record.detectedAt });
   }
-  
+
   // Reverse states to go from oldest to newest
   states.reverse();
-  
+
   return {
     allAttributes: Array.from(allAttributes).sort(),
     states: states,
@@ -5086,25 +5501,25 @@ function createHistorySummaryView(fullState, selectedIndex) {
   try {
     const attributeList = fullState.allAttributes;
     const len = fullState.states.length;
-    
+
     // selectedIndex is 0-based grid index (0 = newest)
     // states index: 0 = newest, states.length-1 = oldest (after reverse)
     // So selectedIndex maps directly to states[selectedIndex]
     const selectedState = (selectedIndex < len) ? fullState.states[selectedIndex] : {};
     const previousState = (selectedIndex + 1 < len) ? fullState.states[selectedIndex + 1] : {};
-    
+
     console.log('Creating summary for selectedIndex:', selectedIndex, 'states length:', len);
-    
+
     // Build HTML for summary
     let summaryHtml = '<div id="history-summary" style="margin-top: 15px; padding: 15px; background: #f9f9f9; border-radius: 4px; border: 1px solid #ddd;">';
     summaryHtml += '<h3 style="margin-top: 0; margin-bottom: 10px;">Change Summary</h3>';
-    
+
     summaryHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">';
-    
+
     // Previous column
     summaryHtml += '<div><h4 style="margin: 5px 0 10px 0; color: #666;">Previous</h4>';
     summaryHtml += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
-    
+
     for (const attr of attributeList) {
       const value = previousState[attr];
       const displayValue = formatAttributeValue(attr, value);
@@ -5112,13 +5527,13 @@ function createHistorySummaryView(fullState, selectedIndex) {
       const className = isChanged ? 'file-new' : '';
       summaryHtml += `<tr style="border-bottom: 1px solid #eee;"><td style="padding: 6px; font-weight: bold; width: 40%;">${utils.escapeHtml(attr)}:</td><td style="padding: 6px;" class="${className}">${utils.escapeHtml(displayValue)}</td></tr>`;
     }
-    
+
     summaryHtml += '</table></div>';
-    
+
     // Changed column
     summaryHtml += '<div><h4 style="margin: 5px 0 10px 0; color: #666;">Changed</h4>';
     summaryHtml += '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
-    
+
     for (const attr of attributeList) {
       const value = selectedState[attr];
       const displayValue = formatAttributeValue(attr, value);
@@ -5126,11 +5541,11 @@ function createHistorySummaryView(fullState, selectedIndex) {
       const className = isChanged ? 'file-new' : '';
       summaryHtml += `<tr style="border-bottom: 1px solid #eee;"><td style="padding: 6px; font-weight: bold; width: 40%;">${utils.escapeHtml(attr)}:</td><td style="padding: 6px;" class="${className}">${utils.escapeHtml(displayValue)}</td></tr>`;
     }
-    
+
     summaryHtml += '</table></div>';
-    
+
     summaryHtml += '</div></div>';
-    
+
     // Update the summary container
     $('#history-summary-container').html(summaryHtml);
   } catch (err) {
@@ -5153,21 +5568,21 @@ function formatAttributeValue(attr, value) {
   if (value === undefined || value === null) {
     return '-';
   }
-  
+
   if (attr === 'dateModified' || attr === 'dateCreated') {
     if (typeof value === 'number') {
       return new Date(value).toLocaleString();
     }
     return String(value);
   }
-  
+
   if (attr === 'size' || attr === 'filesizeBytes') {
     if (typeof value === 'number') {
       return formatBytes(value);
     }
     return String(value);
   }
-  
+
   return String(value);
 }
 
@@ -5423,14 +5838,14 @@ async function loadNotifications() {
     style: 'width: 100%; height: 100%;',
     show: { header: false, toolbar: false, footer: true },
     columns: [
-      { field: 'detectedAt', text: 'Date',           size: '160px', resizable: true, sortable: true },
-      { field: 'filename',   text: 'File',            size: '30%',   resizable: true, sortable: true },
-      { field: 'category',   text: 'Category',        size: '15%',   resizable: true, sortable: true },
-      { field: 'oldValue',   text: 'Old Checksum',    size: '130px', resizable: true },
-      { field: 'newValue',   text: 'New Checksum',    size: '130px', resizable: true }
+      { field: 'detectedAt', text: 'Date', size: '160px', resizable: true, sortable: true },
+      { field: 'filename', text: 'File', size: '30%', resizable: true, sortable: true },
+      { field: 'category', text: 'Category', size: '15%', resizable: true, sortable: true },
+      { field: 'oldValue', text: 'Old Checksum', size: '130px', resizable: true },
+      { field: 'newValue', text: 'New Checksum', size: '130px', resizable: true }
     ],
     records,
-    onLoad: function(event) { event.preventDefault(); }
+    onLoad: function (event) { event.preventDefault(); }
   });
 
   $('#notifications-grid').w2render('notifications-grid');
@@ -5460,9 +5875,9 @@ function switchSettingsTab(tabName) {
   } else {
     $tab.show();
   }
-  
+
   // Update tab button styles
-  $('.settings-tab-btn').each(function() {
+  $('.settings-tab-btn').each(function () {
     const btn = $(this);
     if (btn.data('tab') === tabName) {
       btn.css('border-bottom-color', '#2196F3').css('color', '#2196F3');
@@ -5485,7 +5900,7 @@ async function initializeBrowserSettingsForm() {
   const recordHeight = settings.record_height || 30;
   const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
   const backgroundRefreshInterval = settings.background_refresh_interval || 30;
-  
+
   $('#browser-home-directory').val(homeDirectory);
   $('#browser-notes-format').val(fileFormat);
   $('#browser-hide-dot-directory').prop('checked', hideDotDirectory);
@@ -5494,10 +5909,10 @@ async function initializeBrowserSettingsForm() {
   $('#browser-record-height').val(recordHeight);
   $('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
   $('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
-  
+
   await updateHomeDirectoryWarning(homeDirectory);
   updateRecordHeightPreview();
-  
+
   // Setup event listeners for browser settings
   setupBrowserSettingsEventListeners();
 }
@@ -5509,12 +5924,12 @@ function setupBrowserSettingsEventListeners() {
   // Remove old listeners first (in case modal was reopened)
   $('#browser-background-refresh-enabled').off('change');
   $('#btn-browser-save-all').off('click');
-  
+
   // Toggle refresh interval input based on checkbox
-  $('#browser-background-refresh-enabled').on('change', function() {
+  $('#browser-background-refresh-enabled').on('change', function () {
     $('#browser-background-refresh-interval').prop('disabled', !this.checked);
   });
-  
+
   // Save all browser settings
   $('#btn-browser-save-all').on('click', saveBrowserSettings);
 }
@@ -5532,7 +5947,7 @@ async function saveBrowserSettings() {
     let recordHeight = parseInt($('#browser-record-height').val() || '30');
     const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
     let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
-    
+
     // Validate record height range
     if (isNaN(recordHeight) || recordHeight < 20) {
       recordHeight = 20;
@@ -5541,7 +5956,7 @@ async function saveBrowserSettings() {
       recordHeight = 35;
       $('#browser-record-height').val(recordHeight);
     }
-    
+
     // Validate background refresh interval range
     if (!backgroundRefreshEnabled) {
       backgroundRefreshInterval = 30; // Default when disabled
@@ -5570,15 +5985,15 @@ async function saveBrowserSettings() {
 
     await updateHomeDirectoryWarning(homeDirectory);
     updateRecordHeightPreview();
-    
+
     // Apply record height to all active grids
     applyRecordHeightToAllGrids(recordHeight);
-    
+
     alert('All browser settings saved successfully');
-    
+
     // Restart backend background refresh with updated settings
     window.electronAPI.startBackgroundRefresh(backgroundRefreshEnabled, backgroundRefreshInterval);
-    
+
     // Always refresh the active panel so any display setting changes (hide dot entries,
     // folder name labels, etc.) take effect immediately.
     const state = panelState[activePanelId];
@@ -5615,12 +6030,12 @@ async function updateHomeDirectoryWarning(dirPath) {
  */
 function updateRecordHeightPreview() {
   const recordHeight = parseInt($('#browser-record-height').val() || '30');
-  
+
   // Destroy existing preview grid if it exists
   if (w2ui['preview-record-height-grid']) {
     w2ui['preview-record-height-grid'].destroy();
   }
-  
+
   // Create sample data for preview
   const previewRecords = [
     { recid: 1, filename: 'example-file-1.pdf', size: '2.4 MB', modified: '2026-03-25' },
@@ -5629,7 +6044,7 @@ function updateRecordHeightPreview() {
     { recid: 4, filename: 'image.jpg', size: '1.8 MB', modified: '2026-03-15' },
     { recid: 5, filename: 'archive.zip', size: '156 MB', modified: '2026-03-10' }
   ];
-  
+
   // Create preview grid
   $('#record-height-preview-grid').w2grid({
     name: 'preview-record-height-grid',
@@ -5716,7 +6131,7 @@ async function refreshCategoriesList() {
           'border-radius': '4px',
           'cursor': 'pointer'
         })
-        .click(function() {
+        .click(function () {
           editCategory(name, category);
         });
 
@@ -5731,7 +6146,7 @@ async function refreshCategoriesList() {
           'border-radius': '4px',
           'cursor': 'pointer'
         })
-        .click(async function() {
+        .click(async function () {
           w2confirm({
             msg: `Delete category "${name}"?<br><br>This action cannot be undone.`,
             title: 'Delete Category',
@@ -5748,14 +6163,14 @@ async function refreshCategoriesList() {
               style: ''
             }
           }).yes(async () => {
-              try {
-                await window.electronAPI.deleteCategory(name);
-                await loadCategories();
-                await refreshCategoriesList();
-              } catch (err) {
-                alert('Error deleting category: ' + err.message);
-              }
-            });
+            try {
+              await window.electronAPI.deleteCategory(name);
+              await loadCategories();
+              await refreshCategoriesList();
+            } catch (err) {
+              alert('Error deleting category: ' + err.message);
+            }
+          });
         });
 
       controlsDiv.append(editBtn, deleteBtn);
@@ -5831,18 +6246,18 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
   const directoryCount = selectedRecords.filter(r => r.isFolder).length;
   const fileCount = selectedRecords.filter(r => !r.isFolder).length;
   const orphanCount = selectedRecords.filter(r => r.orphan_id).length;
-  console.log("Generating context menu - selected records:", {selectedRecords, isMultiSelect, directoryCount, fileCount, orphanCount});
-  
+  console.log("Generating context menu - selected records:", { selectedRecords, isMultiSelect, directoryCount, fileCount, orphanCount });
+
   // Debug: log the orphan_id on each record
   if (orphanCount > 0) {
     selectedRecords.forEach((record, idx) => {
-      console.log(`  Record ${idx}:`, {filename: record.filename, orphan_id: record.orphan_id, changeState: record.changeState, keys: Object.keys(record)});
+      console.log(`  Record ${idx}:`, { filename: record.filename, orphan_id: record.orphan_id, changeState: record.changeState, keys: Object.keys(record) });
     });
   }
-  
-  const addSeparator = (menu) =>{
+
+  const addSeparator = (menu) => {
     if (menu.length > 0 && !menu[menu.length - 1].id.startsWith('sep')) {
-      menu.push({id: `sep${menu.length}`, text: '--'});
+      menu.push({ id: `sep${menu.length}`, text: '--' });
     }
   }
 
@@ -5855,19 +6270,19 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
     orphanCount,
     selectedPaths: selectedRecords.map(r => r.path)
   };
-  
+
   // Determine available panels considering opening only one additional panel at a time
   const availablePanels = [];
   for (let i = 1; i <= Math.min(visiblePanelCount + 1, 4); i++) {
     availablePanels.push(i);
   }
-  
+
   let contextMenu = [];
 
-  if(!isMultiSelect && directoryCount > 0) {
+  if (!isMultiSelect && directoryCount > 0) {
     // Build "Open In Panel X" menu items for available panels
     contextMenu.push({
-      id:"open-in",
+      id: "open-in",
       text: 'Open In',
       items: availablePanels.map(panelNum => ({
         id: `open-in-${panelNum}`,
@@ -5876,6 +6291,7 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
     });
     // Build "Set Category" menu items for each category
     contextMenu.push({
+
       id: 'set-category-label',
       text: isMultiSelect ? 'Set Category (all)' : 'Set Category',
       items: Object.keys(allCategories).map(categoryName => ({
@@ -5883,6 +6299,21 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
         text: categoryName
       }))
     });
+  }
+
+  if (!isMultiSelect && fileCount > 0) {
+    // Build "Open In Panel X" menu items for files (panels 2+ only)
+    const filePanels = availablePanels.filter(p => p > 1);
+    if (filePanels.length > 0) {
+      contextMenu.push({
+        id: 'open-in',
+        text: 'Open In',
+        items: filePanels.map(panelNum => ({
+          id: `open-in-${panelNum}`,
+          text: `Panel ${panelNum}`
+        }))
+      });
+    }
   }
 
   // Add "Add Tag" for any selection (directories and/or files)
@@ -5904,7 +6335,7 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
     try {
       if (singleRecord && singleRecord.tagsRaw) existingTags = JSON.parse(singleRecord.tagsRaw);
       if (!Array.isArray(existingTags)) existingTags = [];
-    } catch {}
+    } catch { }
 
     if (existingTags.length > 0) {
       contextMenu.push({
@@ -5951,8 +6382,8 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
   // Add "History" section (only for single selection)
   if (!isMultiSelect) {
     addSeparator(contextMenu);
-    contextMenu.push({id:"view-history", text: 'History', icon: 'fa fa-history'});
-    contextMenu.push({id: 'view-notes', text: 'Notes', icon: 'fa fa-sticky-note'});
+    contextMenu.push({ id: "view-history", text: 'History', icon: 'fa fa-history' });
+    contextMenu.push({ id: 'view-notes', text: 'Notes', icon: 'fa fa-sticky-note' });
   }
 
   // Add "Calculate Checksum" for any selection with 1+ files
@@ -5961,7 +6392,7 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
     const label = fileCount > 1 ? `Calculate Checksum (${fileCount} files)` : 'Calculate Checksum';
     contextMenu.push({ id: 'calculate-checksum', text: label, icon: 'fa fa-hashtag' });
   }
-  
+
   return contextMenu;
 }
 
@@ -5972,47 +6403,58 @@ function generateW2UIContextMenu(selectedRecords, visiblePanelCount = visiblePan
 async function handleContextMenuClick(event, panelId) {
   const menuItemId = event.detail.menuItem.id;
   const { selectedRecords, selectedPaths, isMultiSelect } = panelContextMenuState;
-  
+
   console.log('Menu click:', menuItemId, 'Panel:', panelId);
-  
+
   // Handle "Open In Panel X" clicks
   if (menuItemId.startsWith('open-in-')) {
     const targetPanel = parseInt(menuItemId.split('-')[2]);
-    const firstPath = selectedPaths[0]; // Open first selected directory
+    const firstRecord = selectedRecords[0];
     const $panel = $(`#panel-${targetPanel}`);
-    
+
     try {
       // If target panel is not visible, make it visible
       if (targetPanel > visiblePanels) {
         visiblePanels = targetPanel;
         $panel.show();
+        attachPanelEventListeners(targetPanel);
         updatePanelLayout();
       }
-      
-      // Navigate to the directory in the target panel
-      await navigateToDirectory(firstPath, targetPanel);
-      
-      // Hide landing page and show grid
-      $panel.find('.panel-landing-page').hide();
-      $panel.find('.panel-grid').show();
-      
-      // Force grid resize to fix column visibility
-      const grid = panelState[targetPanel].w2uiGrid;
-      if (grid && grid.resize) {
-        grid.resize();
+
+      if (firstRecord && firstRecord.isFolder) {
+        // Navigate to the directory in the target panel
+        await navigateToDirectory(firstRecord.path, targetPanel);
+        $panel.find('.panel-landing-page').hide();
+        $panel.find('.panel-grid').show();
+        const grid = panelState[targetPanel].w2uiGrid;
+        if (grid && grid.resize) grid.resize();
+      } else if (firstRecord) {
+        // Show Item Overview for the file in the target panel
+        selectedItemState = {
+          path: firstRecord.path,
+          filename: firstRecord.filenameRaw || firstRecord.filename,
+          isDirectory: false,
+          inode: firstRecord.inode,
+          dir_id: firstRecord.dir_id,
+          record: firstRecord
+        };
+        $panel.find('.panel-grid').hide();
+        $panel.find('.panel-file-view').hide();
+        $panel.find('.panel-landing-page').show();
+        updateItemPropertiesPage(targetPanel);
       }
-      
+
       setActivePanelId(targetPanel);
     } catch (err) {
       alert('Error opening in panel: ' + err.message);
     }
   }
-  
+
   // Handle "Set Category" clicks
   if (menuItemId.startsWith('set-category-') && menuItemId !== 'set-category-label') {
     const categoryName = menuItemId.replace('set-category-', '');
     console.log('Setting category:', categoryName);
-    
+
     try {
       if (isMultiSelect) {
         // For multi-select, apply category to all selected directories
@@ -6024,7 +6466,7 @@ async function handleContextMenuClick(event, panelId) {
         // Single-select: apply to the selected directory
         await window.electronAPI.assignCategoryToDirectory(selectedPaths[0], categoryName);
       }
-      
+
       // Refresh the grid to show updated icons
       const state = panelState[activePanelId];
       await navigateToDirectory(state.currentPath, activePanelId);
@@ -6032,7 +6474,7 @@ async function handleContextMenuClick(event, panelId) {
       alert('Error assigning category: ' + err.message);
     }
   }
-  
+
   // Handle "View History" click
   if (menuItemId === 'view-history') {
     const selectedRecord = selectedRecords[0]; // Single selection only
@@ -6040,7 +6482,7 @@ async function handleContextMenuClick(event, panelId) {
       alert('Please select a file or directory to view history');
       return;
     }
-    
+
     try {
       // Open the history modal with the selected record
       await openHistoryModal(selectedRecord);
@@ -6090,7 +6532,7 @@ async function handleContextMenuClick(event, panelId) {
     }
     if (grid) grid.refresh();
   }
-  
+
   // Handle "Add to Favorites" click
   if (menuItemId === 'add-to-favorites') {
     const dirPaths = selectedRecords.filter(r => r.isFolder).map(r => r.path);
@@ -6115,7 +6557,7 @@ async function handleContextMenuClick(event, panelId) {
       alert('Error removing orphan: ' + err.message);
     }
   }
-  
+
   // Handle "Remove orphans" for multiple orphan selections
   if (menuItemId === 'acknowledge-orphans') {
     const orphanRecords = selectedRecords.filter(r => r.orphan_id);
@@ -6134,7 +6576,7 @@ async function handleContextMenuClick(event, panelId) {
       alert('Error removing orphans: ' + err.message);
     }
   }
-  
+
   // Handle "Toggle Date Created" column visibility
   // Handle "Add Tag" clicks
   if (menuItemId.startsWith('add-tag-') && menuItemId !== 'add-tag-label') {
@@ -6159,7 +6601,7 @@ async function handleContextMenuClick(event, panelId) {
             try {
               if (gridRecord.tagsRaw) currentTags = JSON.parse(gridRecord.tagsRaw);
               if (!Array.isArray(currentTags)) currentTags = [];
-            } catch {}
+            } catch { }
             if (!currentTags.includes(tagName)) currentTags.push(tagName);
             gridRecord.tagsRaw = JSON.stringify(currentTags);
             gridRecord.tags = renderTagBadges(gridRecord.tagsRaw, tagDefs);
@@ -6195,7 +6637,7 @@ async function handleContextMenuClick(event, panelId) {
             try {
               if (gridRecord.tagsRaw) currentTags = JSON.parse(gridRecord.tagsRaw);
               if (!Array.isArray(currentTags)) currentTags = [];
-            } catch {}
+            } catch { }
             currentTags = currentTags.filter(t => t !== tagName);
             gridRecord.tagsRaw = currentTags.length > 0 ? JSON.stringify(currentTags) : null;
             const tagDefs = Object.fromEntries(allTags.map(t => [t.name, t]));
@@ -6259,7 +6701,7 @@ function rgbToHex(rgb) {
  */
 async function initializeCategoriesGrid() {
   const gridName = 'categories-grid';
-  
+
   // Destroy existing grid if present
   if (w2ui && w2ui[gridName]) {
     w2ui[gridName].destroy();
@@ -6267,7 +6709,7 @@ async function initializeCategoriesGrid() {
 
   // Get categories list from IPC
   const categoriesData = await window.electronAPI.getCategoriesList();
-  
+
   // Build grid records from categories
   const records = categoriesData.map((cat, index) => ({
     recid: index,
@@ -6298,7 +6740,7 @@ async function initializeCategoriesGrid() {
           return null;
         })
     );
-    
+
     // Wait for ALL icons to generate before rendering grid
     await Promise.all(iconPromises);
     console.log('All icons generated, rendering grid');
@@ -6315,19 +6757,21 @@ async function initializeCategoriesGrid() {
       footer: false
     },
     columns: [
-      { field: 'icon', text: '', size: '40px', resizable: false, sortable: false, render: (record) => {
-        if (record.iconUrl) {
-          return `<div style="width: 30px; height: 20px; display: inline-flex; align-items: center; justify-content: center;"><img src="${record.iconUrl}" style="width: 20px; height: 20px; object-fit: contain;"></div>`;
+      {
+        field: 'icon', text: '', size: '40px', resizable: false, sortable: false, render: (record) => {
+          if (record.iconUrl) {
+            return `<div style="width: 30px; height: 20px; display: inline-flex; align-items: center; justify-content: center;"><img src="${record.iconUrl}" style="width: 20px; height: 20px; object-fit: contain;"></div>`;
+          }
+          // Fallback (shouldn't happen if all icons generated before render)
+          return `<div style="width: 30px; height: 20px; background: ${record.bgColor}; border: 1px solid ${record.textColor}; border-radius: 3px;"></div>`;
         }
-        // Fallback (shouldn't happen if all icons generated before render)
-        return `<div style="width: 30px; height: 20px; background: ${record.bgColor}; border: 1px solid ${record.textColor}; border-radius: 3px;"></div>`;
-      }},
+      },
       { field: 'name', text: 'Name', size: '100px', resizable: true, sortable: true },
       { field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
     ],
     records: records,
-    onClick: function(event) {
-      event.onComplete = function() {
+    onClick: function (event) {
+      event.onComplete = function () {
         const grid = this;
         const sel = grid.getSelection();
         if (sel.length > 0) {
@@ -6384,7 +6828,7 @@ function populateCategoryForm(record) {
   $('#form-cat-enableChecksum').prop('checked', record.enableChecksum || false);
   // Populate attributes checkboxes
   const selectedAttrs = record.attributes || [];
-  $('#form-cat-attributes').find('input[type="checkbox"]').each(function() {
+  $('#form-cat-attributes').find('input[type="checkbox"]').each(function () {
     $(this).prop('checked', selectedAttrs.includes($(this).val()));
   });
 }
@@ -6400,7 +6844,7 @@ function clearCategoryForm() {
   $('#form-cat-description').val('');
   $('#form-cat-enableChecksum').prop('checked', false);
   $('#form-cat-attributes').find('input[type="checkbox"]').prop('checked', false);
-  
+
   // Clear grid selection
   const grid = w2ui['categories-grid'];
   if (grid) {
@@ -6423,14 +6867,14 @@ async function updateGridAfterSave(updatedCategory, isNew = false, oldName = nul
   }
 
   const grid = w2ui[gridName];
-  
+
   try {
     // Generate icon for the updated category
     const iconUrl = await window.electronAPI.generateFolderIcon(
       updatedCategory.bgColor,
       updatedCategory.textColor
     );
-    
+
     if (isNew) {
       // NEW CATEGORY: Add new record to grid
       const newRecid = Math.max(...grid.records.map(r => r.recid), -1) + 1;
@@ -6459,7 +6903,7 @@ async function updateGridAfterSave(updatedCategory, isNew = false, oldName = nul
         record.categoryName = updatedCategory.name;
         record.enableChecksum = updatedCategory.enableChecksum || false;
         record.iconUrl = iconUrl;
-        
+
         grid.refreshRow(record.recid);
         console.log(`Updated category "${updatedCategory.name}" in grid`);
       }
@@ -6488,7 +6932,7 @@ async function saveCategoryFromForm() {
   try {
     // Collect selected attributes
     const selectedAttributes = [];
-    $('#form-cat-attributes').find('input[type="checkbox"]:checked').each(function() {
+    $('#form-cat-attributes').find('input[type="checkbox"]:checked').each(function () {
       selectedAttributes.push($(this).val());
     });
 
@@ -6517,7 +6961,7 @@ async function saveCategoryFromForm() {
     // Update grid selectively instead of reinitializing
     await updateGridAfterSave(categoryData, isNew, oldName);
     clearCategoryForm();
-    
+
     alert(isNew ? 'Category created successfully!' : 'Category updated successfully!');
   } catch (err) {
     alert('Error saving category: ' + err.message);
@@ -6554,27 +6998,27 @@ async function deleteCategoryFromForm() {
       style: ''
     }
   }).yes(async () => {
-      try {
-        const grid = w2ui['categories-grid'];
-        const categoryToDelete = categoryFormState.editingName;
-        
-        await window.electronAPI.deleteCategory(categoryToDelete);
-        
-        // Remove from grid selectively if grid exists
-        if (grid) {
-          const recordIndex = grid.records.findIndex(r => r.categoryName === categoryToDelete);
-          if (recordIndex >= 0) {
-            grid.remove(grid.records[recordIndex].recid);
-            console.log(`Removed category "${categoryToDelete}" from grid`);
-          }
+    try {
+      const grid = w2ui['categories-grid'];
+      const categoryToDelete = categoryFormState.editingName;
+
+      await window.electronAPI.deleteCategory(categoryToDelete);
+
+      // Remove from grid selectively if grid exists
+      if (grid) {
+        const recordIndex = grid.records.findIndex(r => r.categoryName === categoryToDelete);
+        if (recordIndex >= 0) {
+          grid.remove(grid.records[recordIndex].recid);
+          console.log(`Removed category "${categoryToDelete}" from grid`);
         }
-        
-        clearCategoryForm();
-        alert('Category deleted successfully!');
-      } catch (err) {
-        alert('Error deleting category: ' + err.message);
       }
-    })
+
+      clearCategoryForm();
+      alert('Category deleted successfully!');
+    } catch (err) {
+      alert('Error deleting category: ' + err.message);
+    }
+  })
 }
 
 // ==================== Item Properties ====================
@@ -6605,19 +7049,71 @@ async function updateItemPropertiesPage(panelId) {
     panelState[panelId].itemInode = stats.inode;
     panelState[panelId].itemDirId = stats.dir_id;
 
+    // Initialize section collapse state on first load for this panel (all expanded)
+    if (!panelState[panelId].sectionCollapseState) {
+      panelState[panelId].sectionCollapseState = {
+        preview: false, information: false, attributes: false, notes: false, history: false
+      };
+    }
+
+    // Helper: apply collapse state for a section
+    function applyCollapseState(section, $sectionEl) {
+      const collapsed = panelState[panelId].sectionCollapseState[section];
+      $sectionEl.find('.item-props-section-body').toggle(!collapsed);
+      $sectionEl.find(`.btn-section-toggle[data-section="${section}"]`).html(collapsed ? '&#9656;' : '&#9662;');
+    }
+
+    // Store openWith for icon click handler
+    const openWith = stats.openWith || null;
+    panelState[panelId].currentItemOpenWith = openWith;
+
     // Header: icon + filename
     const iconHtml = stats.isDirectory
       ? `<img src="assets/icons/folder.png" style="width:24px;height:24px;object-fit:contain;" onerror="this.src='assets/icons/user-file.png'">`
       : `<img src="assets/icons/${stats.ftIcon || 'user-file.png'}" style="width:24px;height:24px;object-fit:contain;">`;
-    $panel.find('.item-props-icon').html(iconHtml);
+    const $icon = $panel.find('.item-props-icon').html(iconHtml);
+    if (!stats.isDirectory && openWith && openWith !== 'none') {
+      $icon.addClass('clickable');
+    } else {
+      $icon.removeClass('clickable');
+    }
     $panel.find('.item-props-filename').text(stats.filename || selectedItemState.filename || '');
 
-    // Stats section
-    const $stats = $panel.find('.item-props-stats').empty();
-    function statRow(label, value, extra) {
-      return `<div class="stat-row"><span class="stat-label">${label}</span><span class="stat-value">${value}${extra || ''}</span></div>`;
+    // Preview section (always visible)
+    const $previewSection = $panel.find('.item-props-preview-section');
+    if (!stats.isDirectory && stats.fileType === 'Image') {
+      const imgPath = stats.path.replace(/\\/g, '/');
+      $panel.find('.item-preview-img').attr('src', `file:///${imgPath}`).show();
+      $panel.find('.item-preview-unavailable').hide();
+    } else {
+      $panel.find('.item-preview-img').hide();
+      $panel.find('.item-preview-unavailable').show();
     }
-    $stats.append(statRow('Name', stats.filename || ''));
+    $previewSection.css('display', 'flex');
+    applyCollapseState('preview', $previewSection);
+
+    // Information section
+    const $infoSection = $panel.find('.item-props-information-section');
+    $infoSection.css('display', 'flex');
+    applyCollapseState('information', $infoSection);
+
+    const $stats = $panel.find('.item-props-stats').empty();
+    function statRow(label, value, extraHtml) {
+      return `<div class="stat-row"><span class="stat-label">${label}</span><span class="stat-value stat-value-wrap">${value}${extraHtml || ''}</span></div>`;
+    }
+    function copyBtn(value) {
+      const escaped = value.replace(/"/g, '&quot;');
+      return ` <button class="btn-copy-value" data-copy-value="${escaped}" title="Copy">&#x2398;</button>`;
+    }
+
+    // Name row with copy button
+    const filenameVal = stats.filename || '';
+    $stats.append(statRow('Name', filenameVal, copyBtn(filenameVal)));
+
+    // Full path row with copy button
+    const fullPath = stats.path || '';
+    $stats.append(statRow('Full Path', fullPath, copyBtn(fullPath)));
+
     $stats.append(statRow('Type', stats.isDirectory ? 'Folder' : (stats.fileType || 'File')));
     if (!stats.isDirectory) {
       $stats.append(statRow('Size', formatBytes(stats.size || 0)));
@@ -6626,12 +7122,11 @@ async function updateItemPropertiesPage(panelId) {
     $stats.append(statRow('Date Created', stats.dateCreated ? new Date(stats.dateCreated).toLocaleString() : '-'));
     if (!stats.isDirectory) {
       const checksumDisplay = stats.checksumValue
-        ? `<span class="stat-value" title="${stats.checksumValue}">${stats.checksumValue.substring(0, 16)}…</span>`
+        ? `<span class="stat-value" title="${stats.checksumValue}">${stats.checksumValue.substring(0, 16)}\u2026</span>`
         : `<span style="color:#999;">Not calculated</span>`;
       const calcBtn = `<button class="btn-checksum-calc" data-panel="${panelId}">Calculate Now</button>`;
       $stats.append(`<div class="stat-row"><span class="stat-label">Checksum</span>${checksumDisplay}${calcBtn}</div>`);
     }
-    // Tags
     if (stats.tags && stats.tags.length > 0) {
       const tagHtml = stats.tags.map(t => `<span class="tag-pill">${t}</span>`).join('');
       $stats.append(statRow('Tags', tagHtml));
@@ -6644,11 +7139,11 @@ async function updateItemPropertiesPage(panelId) {
     const $attrSection = $panel.find('.item-props-attributes-section');
     if (stats.categoryAttributes && stats.categoryAttributes.length > 0) {
       $attrSection.css('display', 'flex');
+      applyCollapseState('attributes', $attrSection);
       const $attrContainer = $panel.find('.item-props-attributes').empty();
       const currentAttrs = stats.attributes || {};
       const editMode = panelState[panelId].attrEditMode || false;
 
-      // Show/hide Edit / Save / Cancel buttons per mode
       $attrSection.find('.btn-attrs-edit').toggle(!editMode);
       $attrSection.find('.btn-attrs-save').toggle(editMode);
       $attrSection.find('.btn-attrs-cancel').toggle(editMode);
@@ -6682,7 +7177,7 @@ async function updateItemPropertiesPage(panelId) {
       $attrSection.hide();
     }
 
-    // Notes section — derive path and section key for both files and directories
+    // Notes section
     const notesSep = stats.path.includes('\\') ? '\\' : '/';
     let notesFilePath, notesSectionKey;
     if (stats.isDirectory) {
@@ -6697,6 +7192,8 @@ async function updateItemPropertiesPage(panelId) {
     panelState[panelId].notesSectionKey = notesSectionKey;
     const notesEditMode = panelState[panelId].notesEditMode || false;
     const $notesSection = $panel.find('.item-props-notes-section');
+    $notesSection.css('display', 'flex');
+    applyCollapseState('notes', $notesSection);
     $notesSection.find('.btn-notes-edit-item').toggle(!notesEditMode);
     $notesSection.find('.btn-notes-save-item').toggle(notesEditMode);
     $notesSection.find('.btn-notes-cancel-item').toggle(notesEditMode);
@@ -6730,10 +7227,37 @@ async function updateItemPropertiesPage(panelId) {
       panelState[panelId].notesMonacoEditor.layout();
     }
 
+    // History section
+    const $historySection = $panel.find('.item-props-history-section');
+    $historySection.css('display', 'flex');
+    applyCollapseState('history', $historySection);
+    const $historyTable = $panel.find('.item-props-history-table').empty();
+    try {
+      const historyResult = await window.electronAPI.getFileHistory(stats.inode);
+      if (historyResult && historyResult.success && historyResult.data && historyResult.data.length > 0) {
+        const completeState = buildCompleteFileState(historyResult.data, selectedItemState.record);
+        const historyRows = formatHistoryData(historyResult.data, completeState);
+        if (historyRows.length > 0) {
+          let tableHtml = '<table class="history-table"><thead><tr><th>Detected At</th><th>Change</th><th>Path</th></tr></thead><tbody>';
+          historyRows.forEach(row => {
+            tableHtml += `<tr><td>${row.detectedAt || ''}</td><td>${row.changeValue || ''}</td><td>${row.path || ''}</td></tr>`;
+          });
+          tableHtml += '</tbody></table>';
+          $historyTable.html(tableHtml);
+        } else {
+          $historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
+        }
+      } else {
+        $historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
+      }
+    } catch (_) {
+      $historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
+    }
+
     // Wire checksum button
-    $panel.find('.btn-checksum-calc').off('click').on('click', async function() {
+    $panel.find('.btn-checksum-calc').off('click').on('click', async function () {
       if (!selectedItemState.path || !selectedItemState.inode || !selectedItemState.dir_id) return;
-      $(this).prop('disabled', true).text('Calculating…');
+      $(this).prop('disabled', true).text('Calculating\u2026');
       try {
         await window.electronAPI.calculateFileChecksum(
           selectedItemState.path,
@@ -6794,8 +7318,8 @@ async function initializeAttributesGrid() {
       { field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
     ],
     records: records,
-    onClick: function(event) {
-      event.onComplete = function() {
+    onClick: function (event) {
+      event.onComplete = function () {
         const sel = this.getSelection();
         if (sel.length > 0) {
           const record = this.records.find(r => r.recid === sel[0]);
@@ -6884,7 +7408,7 @@ function addAttrOption(value) {
     <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${safeVal}</span>
     <button type="button" data-value="${safeVal}" style="background: none; border: none; cursor: pointer; color: #f44336; font-size: 13px; padding: 0 2px; line-height: 1; flex-shrink: 0;">&times;</button>
   </div>`);
-  $item.find('button').on('click', function() {
+  $item.find('button').on('click', function () {
     $item.remove();
     updateAttrDefaultDropdown();
   });
@@ -6897,7 +7421,7 @@ function addAttrOption(value) {
  */
 function getAttrOptionValues() {
   const values = [];
-  $('#form-attr-options-list .attr-option-item').each(function() {
+  $('#form-attr-options-list .attr-option-item').each(function () {
     values.push($(this).find('span').text());
   });
   return values;
@@ -6994,21 +7518,21 @@ function setupAttributeResizableDivider() {
   let startX = 0;
   let startWidth = 0;
 
-  divider.mousedown(function(e) {
+  divider.mousedown(function (e) {
     isResizing = true;
     startX = e.clientX;
     startWidth = formPanel.width();
     $(document).css('user-select', 'none');
   });
 
-  $(document).mousemove(function(e) {
+  $(document).mousemove(function (e) {
     if (!isResizing) return;
     const deltaX = e.clientX - startX;
     const newWidth = Math.max(250, startWidth - deltaX);
     formPanel.css('flex', `0 0 ${newWidth}px`);
   });
 
-  $(document).mouseup(function() {
+  $(document).mouseup(function () {
     if (isResizing) {
       isResizing = false;
       $(document).css('user-select', '');
@@ -7023,7 +7547,7 @@ function setupAttributeResizableDivider() {
  */
 async function initializeTagsGrid() {
   const gridName = 'tags-grid';
-  
+
   // Destroy existing grid if present
   if (w2ui && w2ui[gridName]) {
     w2ui[gridName].destroy();
@@ -7031,7 +7555,7 @@ async function initializeTagsGrid() {
 
   // Get tags list from IPC
   const tagsData = await window.electronAPI.getTagsList();
-  
+
   // Build grid records from tags
   const records = tagsData.map((tag, index) => ({
     recid: index,
@@ -7061,7 +7585,7 @@ async function initializeTagsGrid() {
           return null;
         })
     );
-    
+
     // Wait for ALL icons to generate before rendering grid
     await Promise.all(iconPromises);
     console.log('All tag icons generated, rendering grid');
@@ -7078,18 +7602,20 @@ async function initializeTagsGrid() {
       footer: false
     },
     columns: [
-      { field: 'icon', text: '', size: '40px', resizable: false, sortable: false, render: (record) => {
-        if (record.iconUrl) {
-          return `<div style="width: 30px; height: 20px; display: inline-flex; align-items: center; justify-content: center;"><img src="${record.iconUrl}" style="width: 20px; height: 20px; object-fit: contain;"></div>`;
+      {
+        field: 'icon', text: '', size: '40px', resizable: false, sortable: false, render: (record) => {
+          if (record.iconUrl) {
+            return `<div style="width: 30px; height: 20px; display: inline-flex; align-items: center; justify-content: center;"><img src="${record.iconUrl}" style="width: 20px; height: 20px; object-fit: contain;"></div>`;
+          }
+          return `<div style="width: 30px; height: 20px; background: ${record.bgColor}; border: 1px solid ${record.textColor}; border-radius: 3px;"></div>`;
         }
-        return `<div style="width: 30px; height: 20px; background: ${record.bgColor}; border: 1px solid ${record.textColor}; border-radius: 3px;"></div>`;
-      }},
+      },
       { field: 'name', text: 'Name', size: '100px', resizable: true, sortable: true },
       { field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
     ],
     records: records,
-    onClick: function(event) {
-      event.onComplete = function() {
+    onClick: function (event) {
+      event.onComplete = function () {
         const grid = this;
         const sel = grid.getSelection();
         if (sel.length > 0) {
@@ -7122,7 +7648,7 @@ function formatHotkeyDisplay(combo) {
 
 async function initializeHotkeysGrid() {
   const gridName = 'hotkeys-grid';
-  
+
   // Destroy existing grid if present
   if (w2ui && w2ui[gridName]) {
     w2ui[gridName].destroy();
@@ -7130,7 +7656,7 @@ async function initializeHotkeysGrid() {
 
   // Get hotkeys data
   const hotkeyData = await window.electronAPI.getHotkeys();
-  
+
   // Build grid records from hotkeys - flatten the nested structure
   const records = [];
   let recid = 0;
@@ -7158,12 +7684,14 @@ async function initializeHotkeysGrid() {
     columns: [
       { field: 'context', text: 'Context', size: '130px', resizable: true, sortable: true },
       { field: 'action', text: 'Action', size: '150px', resizable: true, sortable: true },
-      { field: 'hotkey', text: 'Hotkey', size: '100%', resizable: true, sortable: false,
-        render: (record) => formatHotkeyDisplay(record.hotkey) }
+      {
+        field: 'hotkey', text: 'Hotkey', size: '100%', resizable: true, sortable: false,
+        render: (record) => formatHotkeyDisplay(record.hotkey)
+      }
     ],
     records: records,
-    onClick: function(event) {
-      event.onComplete = function() {
+    onClick: function (event) {
+      event.onComplete = function () {
         const grid = this;
         const sel = grid.getSelection();
         if (sel.length > 0) {
@@ -7191,10 +7719,10 @@ function populateHotkeysForm(record) {
   $('#form-hotkey-context').val(record.context);
   $('#form-hotkey-action').val(record.action);
   $('#form-hotkey-current').val(record.hotkey);
-  
+
   // Store current record in form for later use
   $('#hotkeys-form').data('currentRecord', record);
-  
+
   // Clear demo mode
   $('#hotkey-demo-section').hide();
   $('#form-hotkey-demo').val('');
@@ -7237,7 +7765,7 @@ function clearTagForm() {
   $('#form-tag-bgColor').val('#efe4b0');
   $('#form-tag-textColor').val('#000000');
   $('#form-tag-description').val('');
-  
+
   // Clear grid selection
   const grid = w2ui['tags-grid'];
   if (grid) {
@@ -7260,14 +7788,14 @@ async function updateGridAfterTagSave(updatedTag, isNew = false, oldName = null)
   }
 
   const grid = w2ui[gridName];
-  
+
   try {
     // Generate icon for the updated tag
     const iconUrl = await window.electronAPI.generateFolderIcon(
       updatedTag.bgColor,
       updatedTag.textColor
     );
-    
+
     if (isNew) {
       // NEW TAG: Add new record to grid
       const newRecid = Math.max(...grid.records.map(r => r.recid), -1) + 1;
@@ -7293,7 +7821,7 @@ async function updateGridAfterTagSave(updatedTag, isNew = false, oldName = null)
         record.textColor = updatedTag.textColor;
         record.tagName = updatedTag.name;
         record.iconUrl = iconUrl;
-        
+
         grid.refreshRow(record.recid);
         console.log(`Updated tag "${updatedTag.name}" in grid`);
       }
@@ -7343,7 +7871,7 @@ async function saveTagFromForm() {
     // Update grid selectively instead of reinitializing
     await updateGridAfterTagSave(tagData, isNew, oldName);
     clearTagForm();
-    
+
     alert(isNew ? 'Tag created successfully!' : 'Tag updated successfully!');
   } catch (err) {
     alert('Error saving tag: ' + err.message);
@@ -7375,27 +7903,27 @@ async function deleteTagFromForm() {
       style: ''
     }
   }).yes(async () => {
-      try {
-        const grid = w2ui['tags-grid'];
-        const tagToDelete = tagFormState.editingName;
-        
-        await window.electronAPI.deleteTag(tagToDelete);
-        
-        // Remove from grid selectively if grid exists
-        if (grid) {
-          const recordIndex = grid.records.findIndex(r => r.tagName === tagToDelete);
-          if (recordIndex >= 0) {
-            grid.remove(grid.records[recordIndex].recid);
-            console.log(`Removed tag "${tagToDelete}" from grid`);
-          }
+    try {
+      const grid = w2ui['tags-grid'];
+      const tagToDelete = tagFormState.editingName;
+
+      await window.electronAPI.deleteTag(tagToDelete);
+
+      // Remove from grid selectively if grid exists
+      if (grid) {
+        const recordIndex = grid.records.findIndex(r => r.tagName === tagToDelete);
+        if (recordIndex >= 0) {
+          grid.remove(grid.records[recordIndex].recid);
+          console.log(`Removed tag "${tagToDelete}" from grid`);
         }
-        
-        clearTagForm();
-        alert('Tag deleted successfully!');
-      } catch (err) {
-        alert('Error deleting tag: ' + err.message);
       }
-    })
+
+      clearTagForm();
+      alert('Tag deleted successfully!');
+    } catch (err) {
+      alert('Error deleting tag: ' + err.message);
+    }
+  })
 }
 
 /**
@@ -7406,48 +7934,48 @@ function enterHotkeyDemoMode() {
   const $demoInput = $('#form-hotkey-demo');
   const $editBtn = $('#btn-hotkey-demo');
   const $saveBtn = $('#btn-hotkey-save');
-  
+
   // Show demo section and save button immediately
   $demoSection.show();
   $saveBtn.show();
   $demoInput.val('Press a key combination...').css('color', '#999').focus();
   $editBtn.text('Cancel').css('background', '#f44336');
-  
+
   // Store to track if we're in edit mode
   let isCapturing = true;
   let capturedCombo = '';
-  
-  const keydownHandler = function(e) {
+
+  const keydownHandler = function (e) {
     if (!isCapturing) return;
-    
+
     // Prevent default for modifier keys and special keys
     if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift') {
       return; // Don't prevent, just return - user is building a combo
     }
-    
+
     e.preventDefault(); // Prevent default browser behavior for other keys
-    
+
     const combo = getHotKeyCombo(e);
     capturedCombo = combo;
-    
+
     // Display captured combo in real-time and update form data
     $demoInput.val(combo).css('color', '#333'); // Change text color back to normal when a key is pressed
     $('#hotkeys-form').data('capturedCombo', combo); // Update form data so Save button can find it
   };
-  
+
   // Handle Cancel button click to exit edit mode
-  const cancelHandler = function() {
+  const cancelHandler = function () {
     isCapturing = false;
     cancelHotkeyDemo();
     $(document).off('keydown.hotkeyDemo');
     $editBtn.off('click.hotkeyCancel');
   };
-  
+
   $editBtn.on('click.hotkeyCancel', cancelHandler);
-  
+
   // Attach key capture listener (only on keydown, not keyup)
   $(document).on('keydown.hotkeyDemo', keydownHandler);
-  
+
   // Store captured combo in form data so Save button can use it
   $('#hotkeys-form').data('capturedCombo', capturedCombo);
 }
@@ -7469,20 +7997,20 @@ function cancelHotkeyDemo() {
 async function saveHotkeyFromForm() {
   const record = $('#hotkeys-form').data('currentRecord');
   const capturedCombo = $('#hotkeys-form').data('capturedCombo');
-  
+
   if (!record || !capturedCombo) {
     alert('No hotkey captured. Please use Edit mode to capture a new hotkey.');
     return;
   }
-  
+
   try {
     // Get current hotkeys data
     const hotkeyData = await window.electronAPI.getHotkeys();
-    
+
     // Check for duplicates within the same context
     const context = record.context;
     const newKey = capturedCombo;
-    
+
     for (const [actionId, actionData] of Object.entries(hotkeyData[context])) {
       if (actionId !== record.actionId && actionData.key === newKey) {
         // Duplicate found - prompt user for override
@@ -7502,10 +8030,10 @@ async function saveHotkeyFromForm() {
             style: ''
           }
         }).yes(() => {
-            // User confirmed override
-            actionData.key = capturedCombo;
-            hotkeyData[context][record.actionId].key = capturedCombo;
-          })
+          // User confirmed override
+          actionData.key = capturedCombo;
+          hotkeyData[context][record.actionId].key = capturedCombo;
+        })
           .no(() => {
             // User cancelled - don't continue
             throw new Error('Hotkey conflict - operation cancelled');
@@ -7514,19 +8042,19 @@ async function saveHotkeyFromForm() {
         break;
       }
     }
-    
+
     // Update the hotkey for this action
     hotkeyData[record.context][record.actionId].key = capturedCombo;
-    
+
     // Save to backend
     const result = await window.electronAPI.saveHotkeys(hotkeyData);
     if (!result.success) {
       throw new Error(result.error || 'Failed to save hotkeys');
     }
-    
+
     // Reload hotkey registry in memory
     await loadHotkeysFromStorage();
-    
+
     // Update grid with new hotkey
     const grid = w2ui['hotkeys-grid'];
     if (grid) {
@@ -7536,11 +8064,11 @@ async function saveHotkeyFromForm() {
         grid.refreshRow(gridRecord.recid);
       }
     }
-    
+
     // Update form and clear capture
     $('#form-hotkey-current').val(capturedCombo);
     cancelHotkeyDemo();
-    
+
     alert('Hotkey saved successfully!');
   } catch (err) {
     alert('Error saving hotkey: ' + err.message);
@@ -7556,7 +8084,7 @@ async function resetHotkeyToDefault() {
     alert('Please select a hotkey to reset');
     return;
   }
-  
+
   w2confirm({
     msg: `Reset "${record.action}" hotkey to ${record.defaultKey}?`,
     title: 'Reset Hotkey',
@@ -7573,42 +8101,42 @@ async function resetHotkeyToDefault() {
       style: ''
     }
   }).yes(async () => {
-      try {
-        // Get current hotkeys data
-        const hotkeyData = await window.electronAPI.getHotkeys();
-        
-        // Reset the hotkey for this action to its default
-        hotkeyData[record.context][record.actionId].key = record.defaultKey;
-        
-        // Save to backend
-        const result = await window.electronAPI.saveHotkeys(hotkeyData);
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to save hotkeys');
-        }
-        
-        // Reload hotkey registry in memory
-        await loadHotkeysFromStorage();
-        
-        // Update grid
-        const grid = w2ui['hotkeys-grid'];
-        if (grid) {
-          const gridRecord = grid.records.find(r => r.actionId === record.actionId);
-          if (gridRecord) {
-            gridRecord.hotkey = record.defaultKey;
-            grid.refreshRow(gridRecord.recid);
-          }
-        }
-        
-        // Update form and clear any edit state
-        record.hotkey = record.defaultKey;
-        $('#form-hotkey-current').val(record.defaultKey);
-        cancelHotkeyDemo();
-        
-        alert('Hotkey reset successfully!');
-      } catch (err) {
-        alert('Error resetting hotkey: ' + err.message);
+    try {
+      // Get current hotkeys data
+      const hotkeyData = await window.electronAPI.getHotkeys();
+
+      // Reset the hotkey for this action to its default
+      hotkeyData[record.context][record.actionId].key = record.defaultKey;
+
+      // Save to backend
+      const result = await window.electronAPI.saveHotkeys(hotkeyData);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to save hotkeys');
       }
-    });
+
+      // Reload hotkey registry in memory
+      await loadHotkeysFromStorage();
+
+      // Update grid
+      const grid = w2ui['hotkeys-grid'];
+      if (grid) {
+        const gridRecord = grid.records.find(r => r.actionId === record.actionId);
+        if (gridRecord) {
+          gridRecord.hotkey = record.defaultKey;
+          grid.refreshRow(gridRecord.recid);
+        }
+      }
+
+      // Update form and clear any edit state
+      record.hotkey = record.defaultKey;
+      $('#form-hotkey-current').val(record.defaultKey);
+      cancelHotkeyDemo();
+
+      alert('Hotkey reset successfully!');
+    } catch (err) {
+      alert('Error resetting hotkey: ' + err.message);
+    }
+  });
 }
 
 // ==================== Custom Context Menu ====================
@@ -7756,9 +8284,18 @@ function showCustomContextMenu(items, x, y, panelId) {
   }, 0);
 }
 
+/**
+ * Open the image viewer modal with the given file path
+ */
+function openImageViewerModal(filePath) {
+  const imgUrl = 'file:///' + filePath.replace(/\\/g, '/');
+  $('#image-viewer-img').attr('src', imgUrl);
+  $('#image-viewer-modal').css('display', 'flex');
+}
+
 // Initialize on document ready
 console.log('Page loaded, waiting for jQuery...');
-$(document).ready(function() {
+$(document).ready(function () {
   console.log('Document ready, starting initialization...');
 
   // Always hide any open context menus on any right-click anywhere
@@ -7766,7 +8303,7 @@ $(document).ready(function() {
     hideCustomContextMenu();
     // Also dismiss any open w2ui column-header menu overlay
     if (typeof w2menu !== 'undefined') {
-      try { w2menu.hide(); } catch {}
+      try { w2menu.hide(); } catch { }
     }
   }, true);
 

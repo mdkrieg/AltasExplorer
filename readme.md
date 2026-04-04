@@ -2,6 +2,13 @@
 
 # Atlas Explorer
 
+I'm making this because I'm just not satisfied with the user experience of File Explorer on Windows. There's some alternatives I've tried and while they do bring extra features, none of them are appealing enough to ditch the default Explorer since it is so baked into the Windows OS.
+
+Philosophy:
+* Control over everything. I'd rather be able to shoot myself in the foot than not be able to do something.
+* Keep it usable, the app should make me want to use it.
+* Keep it fast, 200ms IS noticeable.
+
 ## Features:
 
 * Categorizable folders
@@ -11,8 +18,11 @@
 * Generates audit trail as you browse
 
 ### UP NEXT:
+* Do Search and Filter next, make it so that if I start typing it will start filtering on name automatically
+* CTRL + Enter to do same as double click in grid
 [ ] Add a "pin" to Item Properties that prevents it from updating to the selected item (need good icon, maybe lock?)
 [ ] Fewer alerts. Currently the "All browser settings saved successfully" alert is annoying, things like this should just show some text stating the same, alerts should be reserved for errors only.
+
 [x] Landing page is an item summary for the item selected in the grid
   [x] Currently locked to panel 1 - make it so it obeys the panel with focus - does nothing if landing page is selected - maybe does if file editor selected?
 [ ] Heighten the grid text wrappers, "g" for example is getting cut off at the bottom
@@ -23,7 +33,7 @@
 [ ] Collapsible Sidebar - all the stuff hides, should just show icons
 [ ] Dragon Dropping
 [ ] Make New Folder + Make New File
-[ ] Make directory layout (columns shown, column sizes) are stored in the dirs table - empty is default view else store entire state
+[ ] Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need
 
 ### TO PONDER:
 * Should I abandon my "no file edit in panel 1" philosophy?

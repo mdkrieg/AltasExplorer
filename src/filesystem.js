@@ -15,6 +15,13 @@ function checkAccess(fullPath) {
 }
 
 class FilesystemService {
+  constructor() {
+    this.driveCache = [];
+    this.driveCacheExpiry = 0;
+    this.CACHE_TTL = 60000; // 60 seconds in milliseconds
+    this.DRIVE_CHECK_TIMEOUT = 500; // 500ms timeout per drive
+  }
+
   /**
    * Read directory contents and return file/folder info with inode and stats
    */
@@ -164,34 +171,106 @@ class FilesystemService {
   }
 
   /**
-   * Get root drives (Windows drive letters and removable media)
+   * Helper: Check if a drive is accessible within a timeout
+   * @private
    */
-  getRootDrives() {
-    const drives = [];
-    
-    // On Windows, check for drive letters C:, D:, E:, etc.
-    for (let i = 67; i <= 90; i++) { // ASCII codes for C-Z
-      const drive = String.fromCharCode(i) + ':';
+  async checkDriveWithTimeout(drive) {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        logger.warn(`Drive ${drive} timed out after ${this.DRIVE_CHECK_TIMEOUT}ms`);
+        resolve(null);
+      }, this.DRIVE_CHECK_TIMEOUT);
+
       try {
         const fullPath = drive + '\\';
-        // Try to access the drive
         if (fs.existsSync(fullPath)) {
-          const stats = fs.statSync(fullPath);
-          drives.push({
+          // const stats = fs.statSync(fullPath);
+          clearTimeout(timeout);
+          logger.info(`Found drive: ${drive}`);
+          resolve({
             label: drive,
             path: fullPath,
             isRemovable: false,
             isReady: true
           });
+        } else {
+          logger.info(`Drive ${drive} does not exist`);
+          clearTimeout(timeout);
+          resolve(null);
         }
       } catch (err) {
-        // Drive not accessible, skip it
-        logger.warn(`Drive ${drive} not accessible: ${err.message}`);
+        clearTimeout(timeout);
+        logger.warn(`Drive ${drive} check failed: ${err.message}`);
+        resolve(null);
+      }
+    });
+  }
+
+  /**
+   * Get all drives with timeout protection
+   * @private
+   */
+  async getDrivesWithTimeout() {
+    logger.info('Scanning drives with timeout protection...');
+    const drives = [];
+    
+    // Check all drive letters C-Z in parallel with timeout
+    const drivePromises = [];
+    for (let i = 67; i <= 90; i++) { // ASCII codes for C-Z
+      const drive = String.fromCharCode(i) + ':';
+      drivePromises.push(this.checkDriveWithTimeout(drive));
+    }
+
+    const results = await Promise.all(drivePromises);
+    for (const result of results) {
+      if (result) {
+        drives.push(result);
       }
     }
-    
-    logger.info(`Found ${drives.length} root drives`);
+
+    logger.info(`Found ${drives.length} accessible drives`);
     return drives;
+  }
+
+  /**
+   * Refresh the drive cache asynchronously
+   * Called periodically in the background
+   */
+  async refreshDrivesCache() {
+    logger.info('Refreshing drive cache...');
+    try {
+      const drives = await this.getDrivesWithTimeout();
+      this.driveCache = drives;
+      this.driveCacheExpiry = Date.now() + this.CACHE_TTL;
+      logger.info(`Drive cache updated with ${drives.length} drives`);
+    } catch (err) {
+      logger.error('Error refreshing drive cache:', err.message);
+    }
+  }
+
+  /**
+   * Check if the drive cache is still valid
+   * @private
+   */
+  isCacheValid() {
+    return Date.now() < this.driveCacheExpiry && this.driveCache.length > 0;
+  }
+
+  /**
+   * Get root drives (Windows drive letters and removable media)
+   * Returns cached results immediately. If cache is stale, triggers background refresh.
+   */
+  async getRootDrives() {
+    // If cache is valid, return it immediately
+    if (this.isCacheValid()) {
+      logger.info(`Returning cached drives (${this.driveCache.length} drives)`);
+      return this.driveCache;
+    }
+
+    // If cache is empty or expired, refresh it
+    logger.info('Drive cache invalid or expired, refreshing...');
+    await this.refreshDrivesCache();
+    return this.driveCache;
   }
 }
 
