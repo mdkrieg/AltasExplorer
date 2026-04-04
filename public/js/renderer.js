@@ -425,10 +425,11 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 
   for (const folder of folders) {
     let iconUrl;
+    let cat;
     if (folder.changeState === 'moved') {
       iconUrl = 'assets/folder-moved.svg';
     } else {
-      let cat = categoryCache.get(folder.path);
+      cat = categoryCache.get(folder.path);
       if (!cat) {
         cat = await window.electronAPI.getCategoryForDirectory(folder.path);
         categoryCache.set(folder.path, cat);
@@ -449,6 +450,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
       filenameRaw: folder.filename,
       size: applyClass('-', className),
       dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
+      modified: -new Date(folder.dateModified).getTime(),
       perms: applyClass(getPermsCell(folder), className),
       checksum: applyClass('—', className),
       tags: renderTagBadges(folder.tags || null, tagDefs),
@@ -479,6 +481,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
         filenameRaw: file.filename,
         size: applyClass('—', className),
         dateModified: applyClass('—', className),
+        modified: null,
         dateModifiedRaw: null,
         dateCreated: '—',
         dateCreatedRaw: null,
@@ -517,6 +520,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
       filenameRaw: file.filename,
       size: applyClass(formatBytes(file.size), className),
       dateModified: dateModifiedContent,
+      modified: -new Date(file.dateModified).getTime(),
       dateModifiedRaw: file.dateModified,
       dateCreated: file.dateCreated ? new Date(file.dateCreated).toLocaleDateString() : '-',
       dateCreatedRaw: file.dateCreated,
@@ -961,6 +965,7 @@ function showMissingDirectoryRecord(panelId) {
     filename: MISSING_DIRECTORY_LABEL,
     size: '-',
     dateModified: '-',
+    modified: null,
     checksum: '-',
     isFolder: false,
     path: '',
@@ -1179,6 +1184,7 @@ function attachSidebarEventListeners() {
 let w2uiFavoritesSidebar = null;
 let favoritesContextMenuTarget = null; // path or group id of selection being right-clicked
 let favIconMap = {}; // nodeId (safe) → data: URL for category folder icon
+let favEditMode = false; // whether favorites edit mode is active
 
 /**
  * Initialize W2UI Favorites Sidebar
@@ -1227,18 +1233,23 @@ async function initializeFavoritesSidebar() {
     w2uiFavoritesSidebar = new w2sidebar({
       box: '#w2ui-favorites',
       name: 'favorites-sidebar',
-      topHTML: '<div class="favorites-label">FAVORITES</div>',
-      // handle: {
-      //   size: 20,
-      //   style: 'background: none;',
-      //   html: '<span class="fav-drag-handle">&#xFE19;</span>'
-      // },
+      topHTML: `<div class="favorites-header"><span class="favorites-label">FAVORITES</span><button id="btn-favorites-edit" class="btn-favorites-edit" title="Edit favorites">&#9998;</button></div>`,
       reorder: true,
       nodes: nodes,
       onClick: async (event) => {
+        if (event.target === 'edit-AddGroup') {
+          event.preventDefault();
+          await addGroupInEditMode();
+          return;
+        }
+        if (event.target === 'edit-AddFav') {
+          event.preventDefault();
+          await addFavoritesFromSelection();
+          return;
+        }
         // Navigate to directory on click
         const node = w2uiFavoritesSidebar.get(event.target);
-        if (node && node.path) {
+        if (node && node.path && !node.disabled) {
           await navigateToDirectory(node.path, 1);
           updateSidebarSelection(node.path);
         }
@@ -1265,22 +1276,26 @@ async function initializeFavoritesSidebar() {
         return;
       },
       onReorder(event) {
-        console.log('Reorder event:', event);
+        // The groups can't be dragged into if they're empty (or at leas I can't figure it out)
+        // So we add a temporary "empty" node to any group that would become empty
+        // It gets a little complicated because this triggers before the reorder is finalized in the nodes list
         let removeNodes = [];
         for (const node of this.nodes) {
           if (!node.group) continue;
+          const empty_id = `empty-${node.id}`;
           const hasEmptyNode = node.nodes.some(n => n.id.startsWith("empty-"));
           let realNodesCount = node.nodes.filter(n => !n.id.startsWith("empty-") && n.id !== event.target).length;
-          if (event.detail.moveBefore && event.detail.moveBefore == `empty-${node.id}`) {
+          if (event.detail.moveBefore && event.detail.moveBefore == empty_id) {
             realNodesCount += 1;
           }
           if (realNodesCount === 0 && !hasEmptyNode) {
-            this.insert(node.id, null, [{ id: `empty-${node.id}`, text: '(empty)' }]);
-          }else if (hasEmptyNode && realNodesCount > 0) {
-            removeNodes.push(`empty-${node.id}`);
+            this.insert(node.id, null, [{ id: empty_id, text: '(empty)' }]);
+            this.disable(empty_id)
+          } else if (hasEmptyNode && realNodesCount > 0) {
+            removeNodes.push(empty_id);
           }
         }
-        // this.refresh();
+        // this has to come last, no removing nodes while looping them
         event.complete.then(() => {
           for (const nodeId of removeNodes) {
             this.remove(nodeId);
@@ -1289,70 +1304,17 @@ async function initializeFavoritesSidebar() {
       }
     });
 
-    // attachFavoritesDragDrop();
+    // Attach edit button handler using event delegation
+    document.getElementById('w2ui-favorites').addEventListener('click', (e) => {
+      if (e.target.closest('#btn-favorites-edit')) {
+        toggleFavoritesEditMode();
+      }
+    });
+
     console.log('W2UI favorites sidebar initialized successfully');
   } catch (err) {
     console.error('Error initializing favorites sidebar:', err);
   }
-  // // TEMPORARY TEST:
-
-  // let sidebar = new w2sidebar({
-  //   box: '#w2ui-favorites2',
-  //   name: 'sidebar',
-  //   reorder: true,
-  //   onDragStart(event) {
-  //     if (event.detail.node.id == 'non-drag') {
-  //       query('#log').html('Cannot drag this node')
-  //       event.preventDefault()
-  //     } else {
-
-  //     }
-  //     w2utils.notify()
-  //   },
-  //   onDragOver(event) {
-  //     if (event.detail.append) {
-  //       query('#log').html('Append to the end')
-  //     } else {
-  //       query('#log').html(`Dragged before ${event.detail.moveBefore}`)
-  //     }
-  //   },
-  //   onReorder(event) {
-  //     if (event.detail.append) {
-  //       w2utils.notify(`Append node "${event.target}" to the end of the sidebar`)
-  //     } else {
-  //       w2utils.notify(`Move node "${event.target}" before "${event.detail.moveBefore}"`)
-  //     }
-  //   },
-  //   nodes: [
-  //     { id: 'top1', text: 'Top 1', icon: 'fa fa-home', count: 1 },
-  //     { id: 'top2', text: 'Top 2', icon: 'fa fa-coffee' },
-  //     { id: 'non-drag', text: `Cann't drag`, icon: 'fa fa-lock' },
-  //     {
-  //       id: 'group-1', text: 'Group 1', expanded: true, group: true,
-  //       nodes: [
-  //         { id: 'item1', text: 'Item 1', icon: 'fa fa-home', count: 1 },
-  //         { id: 'item2', text: 'Item 2', icon: 'fa fa-coffee' },
-  //         { id: 'item3', text: 'Item 3', icon: 'fa fa-comment-o' },
-  //         {
-  //           id: 'sum-item', text: 'Nested Items', icon: 'fa fa-star', expanded: true,
-  //           nodes: [
-  //             { id: 'sub-item1', text: 'Sub Item 1', icon: 'fa fa-star-o', count: 10 },
-  //             { id: 'sub-item2', text: 'Sub Item 2', icon: 'fa fa-star-o' },
-  //             { id: 'sub-item3', text: 'Sub Item 3', icon: 'fa fa-star-o' }
-  //           ]
-  //         },
-  //       ]
-  //     },
-  //     {
-  //       id: 'group-2', text: 'Group 2', expanded: true, group: true,
-  //       nodes: [
-  //         { id: 'sub-item21', text: 'Sub Item 21', icon: 'fa fa-comment-o', count: 'Text' },
-  //         { id: 'sub-item22', text: 'Sub Item 22', icon: 'fa fa-comment-o' },
-  //         { id: 'sub-item23', text: 'Sub Item 23', icon: 'fa fa-comment-o' }
-  //       ]
-  //     }
-  //   ]
-  // })
 }
 
 /**
@@ -1440,90 +1402,6 @@ function updateFavoriteIconStyles() {
 }
 
 /**
- * Attach HTML5 drag-to-reorder behaviour to the w2ui favorites sidebar.
- * Safe to call multiple times – removes previous listeners first.
- */
-function attachFavoritesDragDrop() {
-  const container = document.getElementById('w2ui-favorites');
-  if (!container || !w2uiFavoritesSidebar) return;
-
-  let dragNodeId = null;
-
-  // Make all current leaf nodes draggable
-  function stampDraggable() {
-    container.querySelectorAll('.w2ui-node:not(.w2ui-node-group)').forEach(el => {
-      el.setAttribute('draggable', 'true');
-    });
-  }
-
-  // Remove old listeners by cloning the container's direct child
-  // (we use a named handler approach instead to avoid DOM cloning issues)
-  container.removeEventListener('dragstart', container._favDragStart);
-  container.removeEventListener('dragend', container._favDragEnd);
-  container.removeEventListener('dragover', container._favDragOver);
-  container.removeEventListener('drop', container._favDrop);
-
-  container._favDragStart = (e) => {
-    const nodeEl = e.target.closest('.w2ui-node:not(.w2ui-node-group)');
-    if (!nodeEl) return;
-    dragNodeId = nodeEl.id.replace('node_', '');
-    e.dataTransfer.effectAllowed = 'move';
-    nodeEl.classList.add('fav-dragging');
-  };
-
-  container._favDragEnd = (e) => {
-    container.querySelectorAll('.fav-dragging, .fav-drag-over').forEach(el => {
-      el.classList.remove('fav-dragging', 'fav-drag-over');
-    });
-    dragNodeId = null;
-  };
-
-  container._favDragOver = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const nodeEl = e.target.closest('.w2ui-node:not(.w2ui-node-group)');
-    container.querySelectorAll('.fav-drag-over').forEach(el => el.classList.remove('fav-drag-over'));
-    if (nodeEl && nodeEl.id.replace('node_', '') !== dragNodeId) {
-      nodeEl.classList.add('fav-drag-over');
-    }
-  };
-
-  container._favDrop = async (e) => {
-    e.preventDefault();
-    container.querySelectorAll('.fav-dragging, .fav-drag-over').forEach(el => {
-      el.classList.remove('fav-dragging', 'fav-drag-over');
-    });
-    if (!dragNodeId) return;
-    const targetEl = e.target.closest('.w2ui-node:not(.w2ui-node-group)');
-    if (!targetEl) return;
-    const targetId = targetEl.id.replace('node_', '');
-    if (targetId === dragNodeId) return;
-
-    // Reorder root-level nodes (groups stay in place; only leaf nodes swap)
-    const nodes = w2uiFavoritesSidebar.nodes;
-    const fromIdx = nodes.findIndex(n => n.id === dragNodeId);
-    const toIdx = nodes.findIndex(n => n.id === targetId);
-    if (fromIdx !== -1 && toIdx !== -1) {
-      const [moved] = nodes.splice(fromIdx, 1);
-      // Re-find target index after splice
-      const insertAt = nodes.findIndex(n => n.id === targetId);
-      nodes.splice(insertAt + (fromIdx < toIdx ? 1 : 0), 0, moved);
-      w2uiFavoritesSidebar.refresh();
-      stampDraggable();
-      await persistW2UINodes();
-    }
-    dragNodeId = null;
-  };
-
-  container.addEventListener('dragstart', container._favDragStart);
-  container.addEventListener('dragend', container._favDragEnd);
-  container.addEventListener('dragover', container._favDragOver);
-  container.addEventListener('drop', container._favDrop);
-
-  stampDraggable();
-}
-
-/**
  * Persist W2UI sidebar nodes back to favorites format
  */
 async function persistW2UINodes() {
@@ -1545,6 +1423,11 @@ function convertW2UINodesToFavorites(nodes, groupPath = []) {
 
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
+
+    // Skip placeholder nodes (empty items and edit controls)
+    if (node.id && (node.id.startsWith('empty-') || node.id.startsWith('edit-'))) {
+      continue;
+    }
 
     if (node.group) {
       // Convert to group
@@ -1880,6 +1763,445 @@ $(document).on('click', function (e) {
   }
 });
 
+// =====================
+// FAVORITES EDIT MODE
+// =====================
+
+function toggleFavoritesEditMode() {
+  if (favEditMode) {
+    exitFavoritesEditMode();
+  } else {
+    enterFavoritesEditMode();
+  }
+}
+
+function enterFavoritesEditMode() {
+  favEditMode = true;
+  $("#w2ui-favorites").addClass('edit-mode');
+
+  // Disable dragging of items while in edit mode to prevent conflicts with renaming and deleting 
+  const itemNodes = w2uiFavoritesSidebar.nodes.filter(n => !n.group && !n.id.startsWith("edit-") );
+  w2uiFavoritesSidebar.disable(...itemNodes.map(n => n.id));
+  w2uiFavoritesSidebar.reorder = false;
+
+  if (!w2uiFavoritesSidebar.get('edit-AddGroup')) {
+    w2uiFavoritesSidebar.add([
+      { id: 'edit-AddGroup', text: 'Add Group', icon: 'w2ui-icon-plus' },
+      { id: 'edit-AddFav', text: 'Add Favorite', icon: 'w2ui-icon-plus' }
+    ]);
+  }
+
+  const btn = document.getElementById('btn-favorites-edit');
+  if (btn) {
+    btn.innerHTML = '&#10003;';
+    btn.title = 'Save changes';
+    btn.classList.add('active');
+  }
+
+  const container = document.getElementById('w2ui-favorites');
+  if (!container || !w2uiFavoritesSidebar) return;
+
+  container.querySelectorAll('.w2ui-node-group').forEach(groupEl => {
+    const nodeId = groupEl.dataset.id;
+    if (!nodeId) return;
+    const node = w2uiFavoritesSidebar.get(nodeId);
+    if (!node || !node.group) return;
+
+    // Replace group text span with an editable input
+    const textSpan = groupEl.querySelector('.w2ui-group-text');
+    if (textSpan && !groupEl.querySelector('.fav-group-edit-input')) {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = node.text;
+      input.className = 'fav-group-edit-input';
+      input.dataset.nodeId = nodeId;
+      input.addEventListener('click', e => e.stopPropagation());
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') exitFavoritesEditMode();
+        e.stopPropagation();
+      });
+      console.log(input);
+      textSpan.replaceWith(input);
+    }
+
+    // Add trash button
+    if (!groupEl.querySelector('.btn-fav-delete-group')) {
+      const trashBtn = document.createElement('button');
+      trashBtn.className = 'btn-fav-delete-group';
+      trashBtn.innerHTML = '&#128465;';
+      trashBtn.title = 'Delete group';
+      trashBtn.dataset.nodeId = nodeId;
+      trashBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await handleDeleteGroupInEditMode(nodeId);
+      });
+      groupEl.appendChild(trashBtn);
+    }
+  });
+
+  // Add trash buttons to individual favorite items (non-group nodes)
+  container.querySelectorAll('.w2ui-node:not(.w2ui-node-group)').forEach(itemEl => {
+    const nodeId = itemEl.dataset.id;
+    if (!nodeId || nodeId.startsWith('empty-') || nodeId.startsWith('edit-')) return;
+    if (itemEl.querySelector('.btn-fav-delete-fav')) return; // Already added
+
+    const trashBtn = document.createElement('button');
+    trashBtn.className = 'btn-fav-delete-fav';
+    trashBtn.innerHTML = '&#128465;';
+    trashBtn.title = 'Delete favorite';
+    trashBtn.dataset.nodeId = nodeId;
+    trashBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await handleDeleteFavoriteInEditMode(nodeId, itemEl);
+    });
+    itemEl.appendChild(trashBtn);
+  });
+}
+
+async function exitFavoritesEditMode() {
+  favEditMode = false;
+  $("#w2ui-favorites").removeClass('edit-mode');
+
+  const btn = document.getElementById('btn-favorites-edit');
+  if (btn) {
+    btn.innerHTML = '&#9998;';
+    btn.title = 'Edit favorites';
+    btn.classList.remove('active');
+  }
+
+  const container = document.getElementById('w2ui-favorites');
+  if (!container || !w2uiFavoritesSidebar) return;
+
+  // Apply renames, then manually restore DOM so refresh() sees clean group rows
+  container.querySelectorAll('.fav-group-edit-input').forEach(input => {
+    const nodeId = input.dataset.nodeId;
+    if (!nodeId) return;
+    const node = w2uiFavoritesSidebar.get(nodeId);
+    if (node && input.value.trim()) {
+      node.text = input.value.trim();
+    }
+    // Restore the .w2ui-group-text span so enterFavoritesEditMode() can find it next time
+    const span = document.createElement('span');
+    span.className = 'w2ui-group-text';
+    span.textContent = node ? node.text : input.value;
+    input.replaceWith(span);
+  });
+  // Remove trash buttons
+  container.querySelectorAll('.btn-fav-delete-group').forEach(trashBtn => trashBtn.remove());
+  container.querySelectorAll('.btn-fav-delete-fav').forEach(trashBtn => trashBtn.remove());
+
+  w2uiFavoritesSidebar.remove('edit-AddGroup', 'edit-AddFav');
+
+  // Re-enable dragging of items after exiting edit mode
+  const itemNodes = w2uiFavoritesSidebar.nodes.filter(n => !n.group);
+  w2uiFavoritesSidebar.enable(...itemNodes.map(n => n.id));
+  w2uiFavoritesSidebar.unlock();
+  w2uiFavoritesSidebar.reorder = true;
+
+
+  await persistW2UINodes();
+  w2uiFavoritesSidebar.refresh();
+}
+
+async function addGroupInEditMode() {
+  if (!w2uiFavoritesSidebar) return;
+  const newId = `group-${Date.now()}`;
+  w2uiFavoritesSidebar.insert(null, 'edit-AddGroup', [{
+    id: newId,
+    text: 'New Group',
+    icon: 'fav-icon-group',
+    group: true,
+    expanded: true,
+    nodes: [{ id: `empty-${newId}`, text: '(empty)' }]
+  }]);
+  // Wait one tick for the sidebar's internal refresh to update the DOM,
+  // then re-enter edit mode (guarded add() makes this safe to call again)
+  await new Promise(r => setTimeout(r, 50));
+  enterFavoritesEditMode();
+  // Wait for DOM update from enterFavoritesEditMode before trying to focus
+  await new Promise(r => setTimeout(r, 30));
+  const input = document.querySelector(`.fav-group-edit-input[data-node-id="${newId}"]`);
+  if (input) {
+    input.focus();
+    input.select();
+  }
+}
+
+async function addFavoritesFromSelection() {
+  const grid = panelState[activePanelId]?.w2uiGrid;
+  let dirs = [];
+
+  if (grid) {
+    const selectedRecids = grid.getSelection();
+    dirs = selectedRecids
+      .map(recid => grid.records[recid - 1])
+      .filter(r => r && r.isFolder && r.path);
+  }
+
+  // Fallback: use selectedItemState if it is a directory
+  if (dirs.length === 0 && selectedItemState.isDirectory && selectedItemState.path) {
+    const label = selectedItemState.filename
+      || selectedItemState.path.split(/[\\/]/).filter(Boolean).pop()
+      || selectedItemState.path;
+    dirs = [{ path: selectedItemState.path, filenameRaw: label }];
+  }
+
+  if (dirs.length === 0) return;
+
+  if (dirs.length === 1) {
+    await addToFavorites(dirs[0].path);
+    enterFavoritesEditMode();
+  } else {
+    showAddFavConfirmModal(dirs);
+  }
+}
+
+function showAddFavConfirmModal(dirs) {
+  let overlay = document.getElementById('fav-add-confirm-modal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'fav-add-confirm-modal';
+    overlay.className = 'fav-modal-overlay';
+    document.body.appendChild(overlay);
+  }
+
+  const listHtml = dirs.map(d => {
+    const name = (d.filenameRaw || d.filename || d.path.split(/[\\/]/).filter(Boolean).pop() || d.path)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const pathEsc = (d.path || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div class="fav-modal-item-row"><span class="fav-modal-item-name" title="${pathEsc}">${name}</span></div>`;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div class="fav-modal-container" role="dialog" aria-modal="true">
+      <div class="fav-modal-header">
+        <span class="fav-modal-title">Add ${dirs.length} folders to Favorites?</span>
+        <button class="fav-modal-close-btn" id="fav-addconfirm-close-btn" title="Cancel" aria-label="Close">&times;</button>
+      </div>
+      <div class="fav-modal-body">
+        <div id="fav-addconfirm-list">${listHtml}</div>
+      </div>
+      <div class="fav-modal-footer">
+        <button id="fav-addconfirm-ok-btn" class="fav-modal-btn-primary">OK</button>
+        <button id="fav-addconfirm-cancel-btn" class="fav-modal-btn-cancel">Cancel</button>
+      </div>
+    </div>`;
+
+  overlay.style.display = 'flex';
+
+  const close = () => {
+    if (overlay._escKeyHandler) {
+      document.removeEventListener('keydown', overlay._escKeyHandler);
+      overlay._escKeyHandler = null;
+    }
+    overlay.style.display = 'none';
+  };
+
+  document.getElementById('fav-addconfirm-close-btn').addEventListener('click', close);
+  document.getElementById('fav-addconfirm-cancel-btn').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  document.getElementById('fav-addconfirm-ok-btn').addEventListener('click', async () => {
+    close();
+    for (const d of dirs) {
+      await addToFavorites(d.path);
+    }
+    enterFavoritesEditMode();
+  });
+
+  overlay._escKeyHandler = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', overlay._escKeyHandler);
+}
+
+/**
+ * Delete a favorite item in edit mode with animation
+ */
+async function handleDeleteFavoriteInEditMode(nodeId, domElement) {
+  // Add animation class for the gap to collapse
+  domElement.classList.add('fav-item-deleting');
+  
+  // Wait for animation to complete before removing from sidebar
+  await new Promise(r => setTimeout(r, 200));
+  
+  // Delete from sidebar
+  w2uiFavoritesSidebar.remove(nodeId);
+  
+  // Persist changes
+  await persistW2UINodes();
+  
+  // Refresh to redraw
+  w2uiFavoritesSidebar.refresh();
+  
+  // Re-enter edit mode to apply trash buttons again
+  if (favEditMode) enterFavoritesEditMode();
+}
+
+async function handleDeleteGroupInEditMode(nodeId) {
+  const node = w2uiFavoritesSidebar.get(nodeId);
+  if (!node || !node.group) return;
+
+  const realItems = (node.nodes || []).filter(n => !n.id.startsWith('empty-'));
+
+  if (realItems.length === 0) {
+    // Delete immediately — no real items
+    deleteGroupById(nodeId);
+    await persistW2UINodes();
+    await refreshFavoritesSidebar();
+    if (favEditMode) enterFavoritesEditMode();
+  } else {
+    // Show confirmation modal
+    showFavDeleteGroupModal(nodeId, realItems);
+  }
+}
+
+function deleteGroupById(nodeId) {
+  const idx = w2uiFavoritesSidebar.nodes.findIndex(n => n.id === nodeId);
+  if (idx !== -1) {
+    w2uiFavoritesSidebar.nodes.splice(idx, 1);
+    return true;
+  }
+  // Try one level of nesting
+  for (const node of w2uiFavoritesSidebar.nodes) {
+    if (node.group && node.nodes) {
+      const childIdx = node.nodes.findIndex(n => n.id === nodeId);
+      if (childIdx !== -1) {
+        node.nodes.splice(childIdx, 1);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// =====================
+// FAVORITES DELETE GROUP MODAL
+// =====================
+
+function buildFavGroupOptionHtml(excludeGroupId) {
+  let html = `<option value="delete">Delete</option><option value="--root--">Move to: (root)</option>`;
+  if (!w2uiFavoritesSidebar) return html;
+  for (const node of w2uiFavoritesSidebar.nodes) {
+    if (node.group && node.id !== excludeGroupId) {
+      const escaped = (node.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      html += `<option value="${node.id}">Move to: ${escaped}</option>`;
+    }
+  }
+  return html;
+}
+
+function showFavDeleteGroupModal(groupNodeId, realItems) {
+  const node = w2uiFavoritesSidebar.get(groupNodeId);
+  if (!node) return;
+
+  let overlay = document.getElementById('fav-delete-group-modal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'fav-delete-group-modal';
+    overlay.className = 'fav-modal-overlay';
+    document.body.appendChild(overlay);
+  }
+
+  const optionsHtml = buildFavGroupOptionHtml(groupNodeId);
+  const groupNameEscaped = (node.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const itemRows = realItems.map(item => {
+    const name = (item.text || item.id).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div class="fav-modal-item-row" data-node-id="${item.id}">
+      <span class="fav-modal-item-name" title="${name}">${name}</span>
+      <select class="fav-modal-item-select">${optionsHtml}</select>
+    </div>`;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div class="fav-modal-container" role="dialog" aria-modal="true">
+      <div class="fav-modal-header">
+        <span class="fav-modal-title">Delete Group &ldquo;${groupNameEscaped}&rdquo;</span>
+        <button class="fav-modal-close-btn" id="fav-modal-close-btn" title="Cancel" aria-label="Close">&times;</button>
+      </div>
+      <div class="fav-modal-body">
+        <div class="fav-modal-bulk-row">
+          <select id="fav-modal-bulk-select">${optionsHtml}</select>
+          <button id="fav-modal-bulk-apply-btn">Apply to all</button>
+        </div>
+        <div id="fav-modal-items-list">${itemRows}</div>
+      </div>
+      <div class="fav-modal-footer">
+        <button id="fav-modal-apply-btn" class="fav-modal-btn-primary">Apply</button>
+        <button id="fav-modal-cancel-btn" class="fav-modal-btn-cancel">Cancel</button>
+      </div>
+    </div>`;
+
+  overlay.style.display = 'flex';
+  overlay.dataset.groupId = groupNodeId;
+
+  document.getElementById('fav-modal-close-btn').addEventListener('click', closeFavDeleteGroupModal);
+  document.getElementById('fav-modal-cancel-btn').addEventListener('click', closeFavDeleteGroupModal);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeFavDeleteGroupModal();
+  });
+
+  document.getElementById('fav-modal-bulk-apply-btn').addEventListener('click', () => {
+    const bulkValue = document.getElementById('fav-modal-bulk-select').value;
+    overlay.querySelectorAll('.fav-modal-item-select').forEach(sel => { sel.value = bulkValue; });
+  });
+
+  document.getElementById('fav-modal-apply-btn').addEventListener('click', async () => {
+    const itemActions = [];
+    overlay.querySelectorAll('.fav-modal-item-row').forEach(row => {
+      itemActions.push({ nodeId: row.dataset.nodeId, action: row.querySelector('.fav-modal-item-select').value });
+    });
+    closeFavDeleteGroupModal();
+    await applyFavDeleteGroup(groupNodeId, itemActions);
+  });
+
+  overlay._escKeyHandler = (e) => { if (e.key === 'Escape') closeFavDeleteGroupModal(); };
+  document.addEventListener('keydown', overlay._escKeyHandler);
+}
+
+function closeFavDeleteGroupModal() {
+  const overlay = document.getElementById('fav-delete-group-modal');
+  if (!overlay) return;
+  if (overlay._escKeyHandler) {
+    document.removeEventListener('keydown', overlay._escKeyHandler);
+    overlay._escKeyHandler = null;
+  }
+  overlay.style.display = 'none';
+}
+
+async function applyFavDeleteGroup(groupNodeId, itemActions) {
+  if (!w2uiFavoritesSidebar) return;
+
+  const groupNode = w2uiFavoritesSidebar.get(groupNodeId);
+  if (!groupNode) return;
+
+  for (const { nodeId, action } of itemActions) {
+    if (action === 'delete') continue;
+
+    const itemNode = (groupNode.nodes || []).find(n => n.id === nodeId);
+    if (!itemNode) continue;
+
+    if (action === '--root--') {
+      w2uiFavoritesSidebar.nodes.push({ ...itemNode });
+    } else {
+      const targetGroup = w2uiFavoritesSidebar.get(action);
+      if (targetGroup && targetGroup.nodes) {
+        // Remove empty placeholder if it was the only item
+        const emptyIdx = targetGroup.nodes.findIndex(n => n.id.startsWith('empty-'));
+        if (emptyIdx !== -1 && targetGroup.nodes.length === 1) {
+          targetGroup.nodes.splice(emptyIdx, 1);
+        }
+        targetGroup.nodes.push({ ...itemNode });
+      }
+    }
+  }
+
+  deleteGroupById(groupNodeId);
+  await persistW2UINodes();
+  await refreshFavoritesSidebar();
+  if (favEditMode) enterFavoritesEditMode();
+}
+
 
 /**
  * Initialize w2ui grid for a specific panel
@@ -1903,6 +2225,15 @@ async function initializeGridForPanel(panelId) {
     { field: 'type', text: 'Type', size: '80px', resizable: true, sortable: true },
     { field: 'size', text: 'Size', size: '60px', resizable: true, sortable: true, align: 'right' },
     { field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true },
+    {
+      field: 'modified', text: 'Modified', size: '70px', resizable: true, sortable: true, render: (record) => {
+        if (!record.modified) return '-';
+        const ts = -record.modified;
+        const fullDate = new Date(ts).toLocaleString();
+        const ago = formatTimeAgo(ts);
+        return `<span title="${fullDate}" style="cursor: help;">${ago}</span>`;
+      }
+    },
     { field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
     { field: 'perms', text: 'Perms', size: '48px', resizable: true, sortable: true },
     { field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false },
@@ -2252,6 +2583,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       type: applyClass(folder.changeState === 'moved' ? '' : (category ? category.name || '' : ''), className),
       size: applyClass('-', className),
       dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
+      modified: -new Date(folder.dateModified).getTime(),
       perms: applyClass(getPermsCell(folder), className),
       checksum: applyClass('—', className),
       tags: renderTagBadges(folder.tags || null, tagDefs),
@@ -2293,6 +2625,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
         type: applyClass('', className),
         size: applyClass('—', className),
         dateModified: applyClass('—', className),
+        modified: null,
         dateModifiedRaw: null,
         dateCreated: '—',
         dateCreatedRaw: null,
@@ -2337,6 +2670,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
       type: applyClass(file.changeState === 'moved' ? '' : ftType, className),
       size: applyClass(formatBytes(file.size), className),
       dateModified: dateModifiedContent,
+      modified: -new Date(file.dateModified).getTime(),
       dateModifiedRaw: file.dateModified, // Store raw timestamp for acknowledgment
       dateCreated: file.dateCreated ? new Date(file.dateCreated).toLocaleDateString() : '-',
       dateCreatedRaw: file.dateCreated,
@@ -2529,6 +2863,26 @@ function getPermsCell(entry) {
 }
 
 /**
+ * Format a timestamp as a compact relative-time string: "Xs", "Xm", "Xh", "Xd", "XyXd"
+ */
+function formatTimeAgo(timestamp) {
+  if (!timestamp) return '-';
+  const diffMs = Date.now() - new Date(timestamp).getTime();
+  if (isNaN(diffMs) || diffMs < 0) return '-';
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return `${diffSec}s`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 365) return `${diffDay}d`;
+  const years = Math.floor(diffDay / 365);
+  const remainingDays = diffDay - years * 365;
+  return remainingDays > 0 ? `${years}y${remainingDays}d` : `${years}y`;
+}
+
+/**
  * Get formatted date modified cell with appropriate styling
  */
 function getDateModifiedCell(file, changeState) {
@@ -2600,6 +2954,7 @@ async function acknowledgeFileModification(inode, panelId) {
 
       // Rebuild the dateModified cell content (remove styling)
       record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
+      record.modified = -new Date(record.dateModifiedRaw).getTime();
 
       // Refresh grid
       grid.refresh();
@@ -2666,6 +3021,7 @@ async function calculateChecksumForFile(record, panelId, dirPath) {
         updateNotificationBadge();
       }
       record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
+      record.modified = -new Date(record.dateModifiedRaw).getTime();
     } else {
       // Mark as error
       record.checksumStatus = 'error';
