@@ -1,14 +1,554 @@
 /**
- * Contexts Module - Skeleton
- * Context menus and grid interactions
- * 
- * Functions for incremental extraction:
- * - generateW2UIContextMenu(selectedRecords, visiblePanelCount)
- * - handleContextMenuClick(event, panelId)
- * - showCustomContextMenu(items, x, y, panelId)
- * - hideCustomContextMenu()
- * - buildMenuEl(items, panelId)
+ * Contexts module.
+ * Owns grid context-menu state, menu generation, click routing, and custom flyout menus.
  */
 
-// Context menu related exports will be populated as functions are extracted
-// For now, this module serves as a namespace placeholder
+import * as panels from './panels.js';
+import * as sidebar from './sidebar.js';
+import {
+	panelState,
+	selectedItemState,
+	activePanelId,
+	openHistoryModal,
+	openNotesModal,
+	getAllCategories,
+	getAllTags
+} from '../renderer.js';
+
+let panelContextMenuState = {};
+let globalHandlersInitialized = false;
+
+export function generateW2UIContextMenu(selectedRecords, visiblePanelCount = panels.visiblePanels) {
+	const allCategories = getAllCategories();
+	const allTags = getAllTags();
+	const isMultiSelect = selectedRecords.length > 1;
+	const directoryCount = selectedRecords.filter(record => record.isFolder).length;
+	const fileCount = selectedRecords.filter(record => !record.isFolder).length;
+	const orphanCount = selectedRecords.filter(record => record.orphan_id).length;
+
+	console.log('Generating context menu - selected records:', {
+		selectedRecords,
+		isMultiSelect,
+		directoryCount,
+		fileCount,
+		orphanCount
+	});
+
+	if (orphanCount > 0) {
+		selectedRecords.forEach((record, index) => {
+			console.log(`  Record ${index}:`, {
+				filename: record.filename,
+				orphan_id: record.orphan_id,
+				changeState: record.changeState,
+				keys: Object.keys(record)
+			});
+		});
+	}
+
+	const addSeparator = (menu) => {
+		if (menu.length > 0 && !menu[menu.length - 1].id.startsWith('sep')) {
+			menu.push({ id: `sep${menu.length}`, text: '--' });
+		}
+	};
+
+	panelContextMenuState = {
+		selectedRecords,
+		isMultiSelect,
+		directoryCount,
+		fileCount,
+		orphanCount,
+		selectedPaths: selectedRecords.map(record => record.path)
+	};
+
+	const availablePanels = [];
+	for (let panelNumber = 1; panelNumber <= Math.min(visiblePanelCount + 1, 4); panelNumber++) {
+		availablePanels.push(panelNumber);
+	}
+
+	const contextMenu = [];
+
+	if (!isMultiSelect && directoryCount > 0) {
+		contextMenu.push({
+			id: 'open-in',
+			text: 'Open In',
+			items: availablePanels.map(panelNumber => ({
+				id: `open-in-${panelNumber}`,
+				text: `Panel ${panelNumber}`
+			}))
+		});
+		contextMenu.push({
+			id: 'set-category-label',
+			text: isMultiSelect ? 'Set Category (all)' : 'Set Category',
+			items: Object.keys(allCategories).map(categoryName => ({
+				id: `set-category-${categoryName}`,
+				text: categoryName
+			}))
+		});
+	}
+
+	if (!isMultiSelect && fileCount > 0) {
+		const filePanels = availablePanels.filter(panelNumber => panelNumber > 1);
+		if (filePanels.length > 0) {
+			contextMenu.push({
+				id: 'open-in',
+				text: 'Open In',
+				items: filePanels.map(panelNumber => ({
+					id: `open-in-${panelNumber}`,
+					text: `Panel ${panelNumber}`
+				}))
+			});
+		}
+	}
+
+	if (allTags.length > 0) {
+		contextMenu.push({
+			id: 'add-tag-label',
+			text: isMultiSelect ? 'Add Tag (all)' : 'Add Tag',
+			items: allTags.map(tag => ({
+				id: `add-tag-${tag.name}`,
+				text: tag.name
+			}))
+		});
+	}
+
+	if (!isMultiSelect) {
+		const singleRecord = selectedRecords[0];
+		let existingTags = [];
+		try {
+			if (singleRecord && singleRecord.tagsRaw) existingTags = JSON.parse(singleRecord.tagsRaw);
+			if (!Array.isArray(existingTags)) existingTags = [];
+		} catch { }
+
+		if (existingTags.length > 0) {
+			contextMenu.push({
+				id: 'remove-tag-label',
+				text: 'Remove Tag',
+				items: existingTags.map(tag => ({ id: `remove-tag-${tag}`, text: tag }))
+			});
+		} else {
+			contextMenu.push({
+				id: 'remove-tag-disabled',
+				text: 'Remove Tag',
+				disabled: true
+			});
+		}
+	}
+
+	if (directoryCount > 0) {
+		addSeparator(contextMenu);
+		const label = directoryCount > 1 ? `Add ${directoryCount} folders to Favorites` : 'Add to Favorites';
+		contextMenu.push({ id: 'add-to-favorites', text: label, icon: 'fa fa-star' });
+	}
+
+	if (orphanCount > 0) {
+		addSeparator(contextMenu);
+		const orphanRecords = selectedRecords.filter(record => record.orphan_id);
+		if (isMultiSelect && orphanRecords.length > 0) {
+			contextMenu.push({
+				id: 'acknowledge-orphans',
+				text: `Remove ${orphanRecords.length} orphaned item${orphanRecords.length > 1 ? 's' : ''}`,
+				icon: 'fa fa-check-circle',
+				orphanIds: orphanRecords.map(record => record.orphan_id)
+			});
+		} else if (!isMultiSelect && orphanRecords.length === 1) {
+			contextMenu.push({
+				id: `acknowledge-orphan-${orphanRecords[0].orphan_id}`,
+				text: 'Acknowledge & Remove',
+				icon: 'fa fa-check-circle'
+			});
+		}
+	}
+
+	if (!isMultiSelect) {
+		addSeparator(contextMenu);
+		contextMenu.push({ id: 'view-history', text: 'History', icon: 'fa fa-history' });
+		contextMenu.push({ id: 'view-notes', text: 'Notes', icon: 'fa fa-sticky-note' });
+	}
+
+	if (fileCount > 0) {
+		addSeparator(contextMenu);
+		const label = fileCount > 1 ? `Calculate Checksum (${fileCount} files)` : 'Calculate Checksum';
+		contextMenu.push({ id: 'calculate-checksum', text: label, icon: 'fa fa-hashtag' });
+	}
+
+	return contextMenu;
+}
+
+async function handleContextMenuClick(event, panelId) {
+	const menuItemId = event.detail.menuItem.id;
+	const { selectedRecords, selectedPaths, isMultiSelect } = panelContextMenuState;
+	const allTags = getAllTags();
+
+	console.log('Menu click:', menuItemId, 'Panel:', panelId);
+
+	if (menuItemId.startsWith('open-in-')) {
+		const targetPanel = parseInt(menuItemId.split('-')[2]);
+		const firstRecord = selectedRecords[0];
+		const $panel = $(`#panel-${targetPanel}`);
+
+		try {
+			if (targetPanel > panels.visiblePanels) {
+				panels.setVisiblePanels(targetPanel);
+				$panel.show();
+				panels.attachPanelEventListeners(targetPanel);
+				panels.updatePanelLayout();
+			}
+
+			if (firstRecord && firstRecord.isFolder) {
+				await panels.navigateToDirectory(firstRecord.path, targetPanel);
+				$panel.find('.panel-landing-page').hide();
+				$panel.find('.panel-grid').show();
+				const grid = panelState[targetPanel].w2uiGrid;
+				if (grid && grid.resize) grid.resize();
+			} else if (firstRecord) {
+				Object.assign(selectedItemState, {
+					path: firstRecord.path,
+					filename: firstRecord.filenameRaw || firstRecord.filename,
+					isDirectory: false,
+					inode: firstRecord.inode,
+					dir_id: firstRecord.dir_id,
+					record: firstRecord
+				});
+				$panel.find('.panel-grid').hide();
+				$panel.find('.panel-file-view').hide();
+				$panel.find('.panel-landing-page').show();
+				panels.updateItemPropertiesPage(targetPanel);
+			}
+
+			panels.setActivePanelId(targetPanel);
+		} catch (err) {
+			alert('Error opening in panel: ' + err.message);
+		}
+	}
+
+	if (menuItemId.startsWith('set-category-') && menuItemId !== 'set-category-label') {
+		const categoryName = menuItemId.replace('set-category-', '');
+		try {
+			if (isMultiSelect) {
+				const result = await window.electronAPI.assignCategoryToDirectories(selectedPaths, categoryName);
+				if (!result.success) {
+					alert('Error assigning category: ' + result.error);
+				}
+			} else {
+				await window.electronAPI.assignCategoryToDirectory(selectedPaths[0], categoryName);
+			}
+
+			const state = panelState[activePanelId];
+			await panels.navigateToDirectory(state.currentPath, activePanelId);
+		} catch (err) {
+			alert('Error assigning category: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'view-history') {
+		const selectedRecord = selectedRecords[0];
+		if (!selectedRecord) {
+			alert('Please select a file or directory to view history');
+			return;
+		}
+
+		try {
+			await openHistoryModal(selectedRecord);
+		} catch (err) {
+			alert('Error opening history: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'view-notes') {
+		const selectedRecord = selectedRecords[0];
+		if (!selectedRecord) return;
+
+		try {
+			await openNotesModal(selectedRecord);
+		} catch (err) {
+			alert('Error opening notes: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'calculate-checksum') {
+		const fileRecords = selectedRecords.filter(record => !record.isFolder && record.inode && record.dir_id);
+		const grid = panelState[activePanelId].w2uiGrid;
+		for (const record of fileRecords) {
+			try {
+				const result = await window.electronAPI.calculateFileChecksum(record.path, record.inode, record.dir_id, true);
+				const gridRecord = grid ? grid.records.find(item => item.inode === record.inode && item.dir_id === record.dir_id) : null;
+				if (gridRecord) {
+					if (result.success) {
+						gridRecord.checksumStatus = result.status;
+						gridRecord.checksumValue = result.checksum;
+						const shortHash = result.checksum ? result.checksum.substring(0, 12) + '...' : '—';
+						gridRecord.checksum = `<span title="${result.checksum || ''}" style="cursor: help;">${shortHash}</span>`;
+						if (result.changed && result.hadPreviousChecksum) {
+							gridRecord.changeState = 'checksumChanged';
+						}
+					} else {
+						gridRecord.checksumStatus = 'error';
+						gridRecord.checksum = '<span style="color: #f00;">Error</span>';
+					}
+				}
+			} catch (err) {
+				console.error(`Error calculating checksum for ${record.filenameRaw || record.filename}:`, err.message);
+			}
+		}
+		if (grid) grid.refresh();
+	}
+
+	if (menuItemId === 'add-to-favorites') {
+		const dirPaths = selectedRecords.filter(record => record.isFolder).map(record => record.path);
+		for (const dirPath of dirPaths) {
+			await sidebar.addToFavorites(dirPath);
+		}
+	}
+
+	if (menuItemId.startsWith('acknowledge-orphan-')) {
+		const orphanId = parseInt(menuItemId.replace('acknowledge-orphan-', ''));
+		try {
+			const result = await window.electronAPI.acknowledgeOrphan(orphanId);
+			if (result.success) {
+				const state = panelState[activePanelId];
+				await panels.navigateToDirectory(state.currentPath, activePanelId);
+			} else {
+				alert('Error removing orphan: ' + result.error);
+			}
+		} catch (err) {
+			alert('Error removing orphan: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'acknowledge-orphans') {
+		const orphanRecords = selectedRecords.filter(record => record.orphan_id);
+		try {
+			for (const record of orphanRecords) {
+				const result = await window.electronAPI.acknowledgeOrphan(record.orphan_id);
+				if (!result.success) {
+					alert(`Error removing orphan ${record.filename}: ${result.error}`);
+					break;
+				}
+			}
+			const state = panelState[activePanelId];
+			await panels.navigateToDirectory(state.currentPath, activePanelId);
+		} catch (err) {
+			alert('Error removing orphans: ' + err.message);
+		}
+	}
+
+	if (menuItemId.startsWith('add-tag-') && menuItemId !== 'add-tag-label') {
+		const tagName = menuItemId.replace('add-tag-', '');
+		try {
+			const grid = panelState[panelId].w2uiGrid;
+			const tagDefs = Object.fromEntries(allTags.map(tag => [tag.name, tag]));
+			for (const record of selectedRecords) {
+				await window.electronAPI.addTagToItem({
+					path: record.path,
+					tagName,
+					isDirectory: record.isFolder,
+					inode: record.inode,
+					dir_id: record.dir_id
+				});
+
+				if (grid) {
+					const gridRecord = grid.records.find(item => item.recid === record.recid);
+					if (gridRecord) {
+						let currentTags = [];
+						try {
+							if (gridRecord.tagsRaw) currentTags = JSON.parse(gridRecord.tagsRaw);
+							if (!Array.isArray(currentTags)) currentTags = [];
+						} catch { }
+						if (!currentTags.includes(tagName)) currentTags.push(tagName);
+						gridRecord.tagsRaw = JSON.stringify(currentTags);
+						gridRecord.tags = panels.renderTagBadges(gridRecord.tagsRaw, tagDefs);
+						grid.refreshRow(gridRecord.recid);
+					}
+				}
+			}
+		} catch (err) {
+			alert('Error adding tag: ' + err.message);
+		}
+	}
+
+	if (menuItemId.startsWith('remove-tag-') && menuItemId !== 'remove-tag-label' && menuItemId !== 'remove-tag-disabled') {
+		const tagName = menuItemId.replace('remove-tag-', '');
+		const record = selectedRecords[0];
+		if (!record) return;
+
+		try {
+			await window.electronAPI.removeTagFromItem({
+				path: record.path,
+				tagName,
+				isDirectory: record.isFolder,
+				inode: record.inode,
+				dir_id: record.dir_id
+			});
+
+			const grid = panelState[panelId].w2uiGrid;
+			if (grid) {
+				const gridRecord = grid.records.find(item => item.recid === record.recid);
+				if (gridRecord) {
+					let currentTags = [];
+					try {
+						if (gridRecord.tagsRaw) currentTags = JSON.parse(gridRecord.tagsRaw);
+						if (!Array.isArray(currentTags)) currentTags = [];
+					} catch { }
+					currentTags = currentTags.filter(tag => tag !== tagName);
+					gridRecord.tagsRaw = currentTags.length > 0 ? JSON.stringify(currentTags) : null;
+					const tagDefs = Object.fromEntries(allTags.map(tag => [tag.name, tag]));
+					gridRecord.tags = panels.renderTagBadges(gridRecord.tagsRaw, tagDefs);
+					grid.refreshRow(gridRecord.recid);
+				}
+			}
+		} catch (err) {
+			alert('Error removing tag: ' + err.message);
+		}
+	}
+}
+
+export function hideCustomContextMenu() {
+	document.getElementById('custom-ctx-menu')?.remove();
+	document.querySelectorAll('.custom-ctx-submenu').forEach(element => element.remove());
+}
+
+function buildMenuEl(items, panelId) {
+	const menu = document.createElement('div');
+	menu.className = 'custom-ctx-menu';
+
+	let activeSubEl = null;
+	let subHideTimer = null;
+
+	const clearHideTimer = () => clearTimeout(subHideTimer);
+	const startHideTimer = () => {
+		subHideTimer = setTimeout(() => {
+			if (activeSubEl) {
+				activeSubEl.remove();
+				activeSubEl = null;
+			}
+		}, 200);
+	};
+
+	for (const item of items) {
+		if (item.text === '--') {
+			const sep = document.createElement('div');
+			sep.className = 'custom-ctx-separator';
+			menu.appendChild(sep);
+			continue;
+		}
+
+		const row = document.createElement('div');
+		row.className = 'custom-ctx-item';
+
+		const label = document.createElement('span');
+		label.className = 'custom-ctx-label';
+		label.textContent = item.text;
+		row.appendChild(label);
+
+		const hasSub = Array.isArray(item.items) && item.items.length > 0;
+		if (hasSub) {
+			const arrow = document.createElement('span');
+			arrow.className = 'custom-ctx-arrow';
+			arrow.textContent = '›';
+			row.appendChild(arrow);
+		}
+
+		row.addEventListener('mouseenter', () => {
+			clearHideTimer();
+			menu.querySelectorAll('.custom-ctx-item').forEach(itemRow => itemRow.classList.remove('active'));
+			row.classList.add('active');
+
+			if (!hasSub) {
+				if (activeSubEl) {
+					activeSubEl.remove();
+					activeSubEl = null;
+				}
+				return;
+			}
+
+			if (activeSubEl) {
+				activeSubEl.remove();
+				activeSubEl = null;
+			}
+
+			const sub = buildMenuEl(item.items, panelId);
+			sub.classList.add('custom-ctx-submenu');
+			const rowRect = row.getBoundingClientRect();
+			sub.style.left = (rowRect.right + 2) + 'px';
+			sub.style.top = rowRect.top + 'px';
+			document.body.appendChild(sub);
+			activeSubEl = sub;
+
+			requestAnimationFrame(() => {
+				const subRect = sub.getBoundingClientRect();
+				if (subRect.right > window.innerWidth) {
+					sub.style.left = (rowRect.left - subRect.width - 2) + 'px';
+				}
+				if (subRect.bottom > window.innerHeight) {
+					sub.style.top = (rowRect.top - (subRect.bottom - window.innerHeight)) + 'px';
+				}
+			});
+
+			sub.addEventListener('mouseenter', () => clearHideTimer());
+			sub.addEventListener('mouseleave', () => startHideTimer());
+		});
+
+		if (hasSub) {
+			row.addEventListener('mouseleave', () => startHideTimer());
+		} else {
+			row.addEventListener('click', (event) => {
+				event.stopPropagation();
+				hideCustomContextMenu();
+				handleContextMenuClick({ detail: { menuItem: item } }, panelId);
+			});
+		}
+
+		menu.appendChild(row);
+	}
+
+	return menu;
+}
+
+export function showCustomContextMenu(items, x, y, panelId) {
+	hideCustomContextMenu();
+
+	const menu = buildMenuEl(items, panelId);
+	menu.id = 'custom-ctx-menu';
+	menu.style.left = x + 'px';
+	menu.style.top = y + 'px';
+	document.body.appendChild(menu);
+
+	requestAnimationFrame(() => {
+		const rect = menu.getBoundingClientRect();
+		if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
+		if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
+	});
+
+	setTimeout(() => {
+		const onOutside = (event) => {
+			if (!event.target.closest?.('#custom-ctx-menu') && !event.target.closest?.('.custom-ctx-submenu')) {
+				hideCustomContextMenu();
+				document.removeEventListener('mousedown', onOutside);
+				document.removeEventListener('keydown', onEsc);
+			}
+		};
+		const onEsc = (event) => {
+			if (event.key === 'Escape') {
+				hideCustomContextMenu();
+				document.removeEventListener('mousedown', onOutside);
+				document.removeEventListener('keydown', onEsc);
+			}
+		};
+		document.addEventListener('mousedown', onOutside);
+		document.addEventListener('keydown', onEsc);
+	}, 0);
+}
+
+export function initializeGlobalContextMenuHandlers() {
+	if (globalHandlersInitialized) return;
+	globalHandlersInitialized = true;
+
+	document.addEventListener('contextmenu', () => {
+		hideCustomContextMenu();
+		if (typeof w2menu !== 'undefined') {
+			try {
+				w2menu.hide();
+			} catch { }
+		}
+	}, true);
+}

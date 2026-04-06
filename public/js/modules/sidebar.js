@@ -9,12 +9,12 @@
  */
 
 import { w2sidebar } from './vendor/w2ui.es6.min.js';
+import { navigateToDirectory } from './panels.js';
 import {
   panelState,
   sidebarState,
   selectedItemState,
   activePanelId,
-  navigateToDirectory,
   w2layoutInstance
 } from '../renderer.js';
 
