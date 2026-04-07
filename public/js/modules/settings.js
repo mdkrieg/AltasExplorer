@@ -1288,7 +1288,8 @@ export async function initializeHotkeysGrid() {
 				action: actionData.label,
 				hotkey: actionData.key,
 				actionId,
-				defaultKey: actionData.default
+				defaultKey: actionData.default,
+				locked: actionData.locked || false
 			});
 		}
 	}
@@ -1297,6 +1298,7 @@ export async function initializeHotkeysGrid() {
 		name: gridName,
 		show: { header: false, toolbar: false, footer: false },
 		columns: [
+			{ field: 'lock', text: '', size: '28px', resizable: false, sortable: false, render: record => record.locked ? '<span title="Locked — cannot be rebound">🔒</span>' : '' },
 			{ field: 'context', text: 'Context', size: '130px', resizable: true, sortable: true },
 			{ field: 'action', text: 'Action', size: '150px', resizable: true, sortable: true },
 			{ field: 'hotkey', text: 'Hotkey', size: '100%', resizable: true, sortable: false, render: record => formatHotkeyDisplay(record.hotkey) }
@@ -1329,8 +1331,15 @@ function populateHotkeysForm(record) {
 	$('#hotkeys-form').data('currentRecord', record);
 	$('#hotkey-demo-section').hide();
 	$('#form-hotkey-demo').val('');
-	$('#btn-hotkey-demo').text('Edit').show();
-	$('#btn-hotkey-save').hide();
+	if (record.locked) {
+		$('#btn-hotkey-demo').hide();
+		$('#btn-hotkey-save').hide();
+		$('#hotkey-locked-indicator').show();
+	} else {
+		$('#btn-hotkey-demo').text('Edit').show();
+		$('#btn-hotkey-save').hide();
+		$('#hotkey-locked-indicator').hide();
+	}
 }
 
 async function initializeHotkeysForm() {
@@ -1397,6 +1406,11 @@ export async function saveHotkeyFromForm() {
 		return;
 	}
 
+	if (record.locked) {
+		alert('This hotkey is locked and cannot be rebound.');
+		return;
+	}
+
 	try {
 		const hotkeyData = await window.electronAPI.getHotkeys();
 		const context = record.context;
@@ -1456,6 +1470,11 @@ export async function resetHotkeyToDefault() {
 		return;
 	}
 
+	if (record.locked) {
+		alert('This hotkey is locked and cannot be changed.');
+		return;
+	}
+
 	w2confirm({
 		msg: `Reset "${record.action}" hotkey to ${record.defaultKey}?`,
 		title: 'Reset Hotkey',
@@ -1502,6 +1521,11 @@ function getHotKeyCombo(event) {
 	if (event.metaKey) parts.push('meta');
 
 	let key = event.key;
+	// Normalize Arrow* key names to match the shorthand used in hotkeys.json
+	// (e.g. "ArrowLeft" → "Left", "ArrowUp" → "Up")
+	if (key.startsWith('Arrow')) {
+		key = key.slice(5);
+	}
 	if (key.length === 1) {
 		key = key.toLowerCase();
 	}

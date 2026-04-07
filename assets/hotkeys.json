@@ -25,6 +25,16 @@
       "key": "Ctrl+w",
       "default": "Ctrl+w"
     },
+    "reopen_panel": {
+      "label": "Reopen Last Closed Panel",
+      "key": "Ctrl+Shift+t",
+      "default": "Ctrl+Shift+t"
+    },
+    "open_item": {
+      "label": "Open Item",
+      "key": "Ctrl+Enter",
+      "default": "Ctrl+Enter"
+    },
     "enter_path": {
       "label": "Enter Path",
       "key": "Enter",
@@ -46,6 +56,20 @@
       "label": "Save File",
       "key": "Ctrl+s",
       "default": "Ctrl+s"
+    }
+  },
+  "Grid Navigation": {
+    "grid_row_up": {
+      "label": "Navigate Row Up",
+      "key": "ArrowUp",
+      "default": "ArrowUp",
+      "locked": true
+    },
+    "grid_row_down": {
+      "label": "Navigate Row Down",
+      "key": "ArrowDown",
+      "default": "ArrowDown",
+      "locked": true
     }
   }
 }

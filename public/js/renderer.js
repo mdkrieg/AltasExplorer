@@ -252,7 +252,7 @@ export async function loadHotkeysFromStorage() {
 
     for (const context of Object.values(hotkeysData)) {
       for (const [actionId, actionData] of Object.entries(context)) {
-        hotkeyRegistry[actionId] = actionData.key;
+        hotkeyRegistry[actionId] = normalizeHotkeyCombo(actionData.key);
       }
     }
 
@@ -260,17 +260,56 @@ export async function loadHotkeysFromStorage() {
   } catch (err) {
     console.error('Error loading hotkeys:', err);
     hotkeyRegistry = {
-      navigate_back: 'Alt+Left',
-      navigate_forward: 'Alt+Right',
-      navigate_up: 'Alt+Up',
-      add_panel: 'Ctrl+T',
-      close_panel: 'Ctrl+W',
-      enter_path: 'Enter',
-      cancel_path: 'Escape',
-      edit_file: 'F2',
-      save_file: 'Ctrl+S'
+      navigate_back: normalizeHotkeyCombo('Alt+Left'),
+      navigate_forward: normalizeHotkeyCombo('Alt+Right'),
+      navigate_up: normalizeHotkeyCombo('Alt+Up'),
+      add_panel: normalizeHotkeyCombo('Ctrl+T'),
+      close_panel: normalizeHotkeyCombo('Ctrl+W'),
+      enter_path: normalizeHotkeyCombo('Enter'),
+      cancel_path: normalizeHotkeyCombo('Escape'),
+      edit_file: normalizeHotkeyCombo('F2'),
+      save_file: normalizeHotkeyCombo('Ctrl+S')
     };
   }
+}
+
+function normalizeHotkeyCombo(combo) {
+  return String(combo || '')
+    .split('+')
+    .map(part => part.trim().toLowerCase())
+    .filter(Boolean)
+    .join('+');
+}
+
+function getHotKeyCombo(event) {
+  const parts = [];
+  if (event.ctrlKey) parts.push('ctrl');
+  if (event.altKey) parts.push('alt');
+  if (event.shiftKey) parts.push('shift');
+  if (event.metaKey) parts.push('meta');
+
+  let key = event.key;
+  // Normalize Arrow* key names to match the shorthand used in hotkeys.json
+  // (e.g. "ArrowLeft" → "Left", "ArrowUp" → "Up")
+  if (key.startsWith('Arrow')) {
+    key = key.slice(5);
+  }
+  if (key.length === 1) {
+    key = key.toLowerCase();
+  }
+
+  if (key === ' ') key = 'space';
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(key)) {
+    return normalizeHotkeyCombo(parts.join('+'));
+  }
+
+  parts.push(key);
+  return normalizeHotkeyCombo(parts.join('+'));
+}
+
+function getActionForHotkey(combo) {
+  const normalizedCombo = normalizeHotkeyCombo(combo);
+  return Object.entries(hotkeyRegistry).find(([, hotkey]) => hotkey === normalizedCombo)?.[0] || null;
 }
 
 // ============================================================
@@ -283,6 +322,39 @@ export async function loadHotkeysFromStorage() {
  * Attach event listeners to buttons and grid
  */
 function attachEventListeners() {
+  // Capture-phase arrow key handler for grid navigation.
+  // Must be capture phase (fires before w2ui's textarea keydown handler) so we can
+  // stopPropagation() and prevent w2ui from also processing the key internally,
+  // which would otherwise trigger its nextRow() and crash on undefined records.
+  document.addEventListener('keydown', function (event) {
+    if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+        !event.altKey && !event.ctrlKey && !event.metaKey) {
+      let targetPanelId = panels.gridFocusedPanelId;
+      if (targetPanelId === null || targetPanelId === undefined) {
+        if (panelState[activePanelId] && panelState[activePanelId].w2uiGrid &&
+            $(`#panel-${activePanelId} .panel-grid`).is(':visible')) {
+          targetPanelId = activePanelId;
+        }
+      }
+      if (targetPanelId !== null && targetPanelId !== undefined &&
+          panelState[targetPanelId] && panelState[targetPanelId].w2uiGrid &&
+          $(`#panel-${targetPanelId} .panel-grid`).is(':visible')) {
+        // Check the event target is not a real user input (path input, search box, etc.).
+        // w2ui's own keyboard-capture textarea lives inside .panel-grid — allow that through.
+        const target = event.target;
+        const isRealInput = target &&
+            (target.tagName === 'INPUT' || target.tagName === 'SELECT' ||
+             target.contentEditable === 'true' ||
+             (target.tagName === 'TEXTAREA' && $(target).closest('.panel-grid').length === 0));
+        if (!isRealInput) {
+          event.preventDefault();
+          event.stopPropagation();
+          panels.gridNavigate(event.key === 'ArrowUp' ? 'up' : 'down', event.shiftKey, targetPanelId);
+        }
+      }
+    }
+  }, true);
+
   // Keyboard shortcuts - detect hotkey and dispatch to appropriate handler
   $(document).keydown(async function (event) {
     // Escape key: close image viewer modal if open
@@ -375,6 +447,14 @@ function attachEventListeners() {
       case 'close_panel':
         event.preventDefault();
         panels.closeActivePanel();
+        break;
+      case 'open_item':
+        event.preventDefault();
+        panels.openSelectedItem(activePanelId);
+        break;
+      case 'reopen_panel':
+        event.preventDefault();
+        await panels.reopenLastClosedPanel();
         break;
     }
   });

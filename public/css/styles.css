@@ -1627,6 +1627,11 @@ hr {
   color: #bbb;
   font-size: 14px;
 }
+
+#w2ui-favorites .w2ui-node-data {
+    height: 28px;
+}
+
 #w2ui-favorites .w2ui-node:hover .w2ui-node-handle {
   opacity: 1;
 }

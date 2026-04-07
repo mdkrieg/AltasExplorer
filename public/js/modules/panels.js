@@ -38,6 +38,9 @@ export let visiblePanels = 1;
 export let unreadNotificationCount = 0;
 export let panel1SelectedDirectoryPath = null;
 export let panel1SelectedDirectoryName = null;
+export let gridFocusedPanelId = null;
+const closedPanelStack = [];
+const selectionAnchorRecids = {};
 export let panelDividerState = {
 	verticalPixels: 400,
 	horizontalPixels: 300,
@@ -639,7 +642,7 @@ async function initializeGridForPanel(panelId) {
 		{ field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true, hideable: false },
 		{ field: 'type', text: 'Type', size: '80px', resizable: true, sortable: true },
 		{ field: 'size', text: 'Size', size: '60px', resizable: true, sortable: true, align: 'right' },
-		{ field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true },
+		{ field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true, hidden: true },
 		{
 			field: 'modified', text: 'Modified', size: '70px', resizable: true, sortable: true, render: (record) => {
 				if (!record.modified) return '-';
@@ -651,7 +654,7 @@ async function initializeGridForPanel(panelId) {
 		},
 		{ field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
 		{ field: 'perms', text: 'Perms', size: '48px', resizable: true, sortable: true },
-		{ field: 'checksum', text: 'Checksum', size: '150px', resizable: true, sortable: false },
+		{ field: 'checksum', text: 'Checksum', size: '70px', resizable: true, sortable: false },
 		{ field: 'tags', text: 'Tags', size: '160px', resizable: true, sortable: false },
 		{
 			field: 'notes', text: 'Notes', size: '32px', resizable: false, sortable: false, render: (record) => {
@@ -684,15 +687,20 @@ async function initializeGridForPanel(panelId) {
 			skipRecords: false,
 			saveRestoreState: false
 		},
+	    multiSelect: true,
+	    multiSearch: false,
+		searches:[
+			{ field: 'filename', caption: 'Filename', type: 'text' },
+		],
 		toolbar: {
 			items: [
 				{
 					type: 'html',
 					id: 'depth-control',
 					html: `<div style="display:inline-flex;align-items:center;gap:4px;padding:0 8px;">
-						<label style="font-size:12px;color:#555;white-space:nowrap;">Depth</label>
+						<label style="font-size:14px;color:#555;white-space:nowrap;">Depth</label>
 						<input id="depth-input-${panelId}" type="number" min="0" max="99" value="${panelState[panelId].depth || 0}"
-							style="width:46px;padding:1px 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;text-align:center;">
+							style="width:46px;padding:1px 4px;font-size:14px;border:1px solid #ccc;border-radius:3px;text-align:center;">
 					</div>`
 				},
 				{
@@ -712,6 +720,7 @@ async function initializeGridForPanel(panelId) {
 		records: [],
 		contextMenu: [],
 		onClick: function (event) {
+			gridFocusedPanelId = panelId;
 			if (panelId === 1 && event.detail.recid) {
 				const record = this.records[event.detail.recid - 1];
 				if (record) {
@@ -1771,6 +1780,14 @@ export function removePanel(panelId) {
 		return;
 	}
 
+	const stateToSave = panelState[panelId];
+	closedPanelStack.push({
+		currentPath: stateToSave ? (stateToSave.currentPath || '') : '',
+		navigationHistory: stateToSave ? [...(stateToSave.navigationHistory || [])] : [],
+		navigationIndex: stateToSave && stateToSave.navigationIndex !== undefined ? stateToSave.navigationIndex : -1,
+		depth: stateToSave ? (stateToSave.depth || 0) : 0
+	});
+
 	$(`#panel-${panelId}`).hide();
 	clearPanelState(panelId);
 	for (let i = panelId; i < visiblePanels; i++) {
@@ -1896,7 +1913,8 @@ export async function handleCloseRequest() {
 }
 
 function proceedWithPanelClose() {
-	removePanel(activePanelId);
+	const targetPanelId = (activePanelId === 1 && visiblePanels > 1) ? visiblePanels : activePanelId;
+	removePanel(targetPanelId);
 }
 
 export function attachPanelEventListeners(panelId) {
@@ -2351,5 +2369,150 @@ export async function updateItemPropertiesPage(panelId) {
 		console.error('Error updating item properties:', err);
 		$content.hide();
 		$placeholder.show();
+	}
+}
+
+export function gridNavigate(direction, isShift, targetPanelId) {
+	const panelId = targetPanelId !== undefined ? targetPanelId : gridFocusedPanelId;
+	if (panelId === null || panelId === undefined) return;
+	gridFocusedPanelId = panelId;
+	const grid = panelState[panelId].w2uiGrid;
+	if (!grid || !grid.records || grid.records.length === 0) return;
+
+	// Use grid.records (full list in display order) rather than DOM tr[recid] queries.
+	// DOM queries only cover visible rows when virtual scrolling is active, causing the
+	// selected recid to drop out of the list when it scrolls off-screen — making indexOf
+	// return -1 and newIndex snap back to 0 (the wrap-around bug).
+	const allRecids = grid.records.map(r => r.recid);
+	if (allRecids.length === 0) return;
+
+	const selected = grid.getSelection();
+
+	if (!isShift) {
+		let currentIndex = -1;
+		if (selected.length > 0) {
+			currentIndex = allRecids.indexOf(selected[selected.length - 1]);
+		}
+		let newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+		newIndex = Math.max(0, Math.min(allRecids.length - 1, newIndex));
+		const newRecid = allRecids[newIndex];
+		grid.selectNone();
+		grid.select(newRecid);
+		if (typeof grid.scrollIntoView === 'function') grid.scrollIntoView(newRecid);
+		selectionAnchorRecids[panelId] = newRecid;
+
+		const record = grid.records.find(r => r.recid === newRecid);
+		if (record && getPanelViewType(panelId) !== 'properties') {
+			Object.assign(selectedItemState, {
+				path: record.path,
+				filename: record.filenameRaw || record.filename,
+				isDirectory: record.isFolder || false,
+				inode: record.inode || null,
+				dir_id: record.dir_id || null,
+				record
+			});
+			for (let pid = 2; pid <= 4; pid++) {
+				if (panelState[pid]) {
+					panelState[pid].attrEditMode = false;
+					panelState[pid].notesEditMode = false;
+				}
+			}
+			refreshItemPropertiesInAllPanels();
+		}
+	} else {
+		let anchorIndex = selectionAnchorRecids[panelId] !== undefined && selectionAnchorRecids[panelId] !== null
+			? allRecids.indexOf(selectionAnchorRecids[panelId])
+			: -1;
+		if (anchorIndex === -1) {
+			anchorIndex = selected.length > 0 ? allRecids.indexOf(selected[0]) : 0;
+			if (anchorIndex === -1) anchorIndex = 0;
+			selectionAnchorRecids[panelId] = allRecids[anchorIndex];
+		}
+
+		const selectedIndices = selected.map(r => allRecids.indexOf(r)).filter(i => i !== -1);
+		let cursorIndex = anchorIndex;
+		if (selectedIndices.length > 0) {
+			const minIdx = Math.min(...selectedIndices);
+			const maxIdx = Math.max(...selectedIndices);
+			cursorIndex = anchorIndex === minIdx ? maxIdx : minIdx;
+		}
+
+		let newCursorIndex = direction === 'up' ? cursorIndex - 1 : cursorIndex + 1;
+		newCursorIndex = Math.max(0, Math.min(allRecids.length - 1, newCursorIndex));
+
+		const startIdx = Math.min(anchorIndex, newCursorIndex);
+		const endIdx = Math.max(anchorIndex, newCursorIndex);
+		grid.selectNone();
+		for (let i = startIdx; i <= endIdx; i++) {
+			grid.select(allRecids[i]);
+		}
+		if (typeof grid.scrollIntoView === 'function') grid.scrollIntoView(allRecids[newCursorIndex]);
+	}
+}
+
+export function openSelectedItem(panelId) {
+	const grid = panelState[panelId].w2uiGrid;
+	if (!grid) return;
+	const selected = grid.getSelection();
+	if (selected.length === 0) return;
+	const recid = selected[0];
+	const record = grid.records.find(r => r.recid === recid);
+	if (!record) return;
+
+	if (record.isFolder) {
+		navigateToDirectory(record.path, panelId);
+		return;
+	}
+
+	let hasPropertiesPanel = false;
+	for (let i = 2; i <= visiblePanels; i++) {
+		if (getPanelViewType(i) === 'properties') {
+			hasPropertiesPanel = true;
+			break;
+		}
+	}
+	if (!hasPropertiesPanel && visiblePanels < 4) {
+		visiblePanels++;
+		const newPanelId = visiblePanels;
+		$(`#panel-${newPanelId}`).show();
+		attachPanelEventListeners(newPanelId);
+		updatePanelLayout();
+		setTimeout(() => updateItemPropertiesPage(newPanelId), 150);
+	}
+}
+
+export async function reopenLastClosedPanel() {
+	if (closedPanelStack.length === 0) return;
+	if (visiblePanels >= 4) {
+		w2alert('Maximum number of panels (4) is already open.');
+		return;
+	}
+
+	const savedState = closedPanelStack.pop();
+	visiblePanels++;
+	const newPanelId = visiblePanels;
+
+	$(`#panel-${newPanelId}`).show();
+	attachPanelEventListeners(newPanelId);
+	updatePanelLayout();
+	await initializeGridForPanel(newPanelId);
+
+	if (savedState.currentPath) {
+		$(`#panel-${newPanelId} .panel-landing-page`).hide();
+		$(`#panel-${newPanelId} .panel-grid`).show();
+		const grid = panelState[newPanelId].w2uiGrid;
+		if (grid) {
+			const toolbarEl = document.getElementById(`grid_grid-panel-${newPanelId}_toolbar`);
+			if (toolbarEl && toolbarEl.style.height === '0px') toolbarEl.style.height = '';
+			grid.resize();
+		}
+
+		panelState[newPanelId].navigationHistory = savedState.navigationHistory;
+		panelState[newPanelId].navigationIndex = savedState.navigationIndex;
+		panelState[newPanelId].depth = savedState.depth;
+		const depthInput = document.getElementById(`depth-input-${newPanelId}`);
+		if (depthInput) depthInput.value = savedState.depth;
+
+		await navigateToDirectory(savedState.currentPath, newPanelId, false);
 	}
 }
