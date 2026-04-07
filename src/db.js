@@ -73,8 +73,9 @@ class DatabaseService {
         FOREIGN KEY (new_dir_id) REFERENCES dirs(id)
       );
 
-      CREATE TABLE IF NOT EXISTS notifications (
+      CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_id INTEGER,
         history_id INTEGER,
         type TEXT NOT NULL,
         filename TEXT,
@@ -84,9 +85,21 @@ class DatabaseService {
         old_value TEXT,
         new_value TEXT,
         created_at INTEGER,
-        read_at INTEGER,
+        acknowledged_at INTEGER,
+        acknowledged_comment TEXT,
+        FOREIGN KEY (rule_id) REFERENCES alert_rules(id),
         FOREIGN KEY (history_id) REFERENCES file_history(id),
         FOREIGN KEY (dir_id) REFERENCES dirs(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS alert_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        categories TEXT NOT NULL DEFAULT 'ANY',
+        tags TEXT NOT NULL DEFAULT 'ANY',
+        attributes TEXT NOT NULL DEFAULT 'ANY',
+        events TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_dirs_dirname ON dirs(dirname);
@@ -94,7 +107,7 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_files_inode ON files(inode);
       CREATE INDEX IF NOT EXISTS idx_file_history_inode ON file_history(inode);
       CREATE INDEX IF NOT EXISTS idx_file_history_dir_id ON file_history(dir_id);
-      CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications(read_at);
+      CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged_at ON alerts(acknowledged_at);
     `;
 
     this.db.exec(schema);
@@ -630,47 +643,106 @@ class DatabaseService {
   }
 
   // ============================================
-  // Notifications
+  // Alerts
   // ============================================
 
   /**
-   * Insert a notification record linked to a file_history entry
+   * Insert an alert record linked to a file_history entry
    */
-  insertNotification(historyId, type, filename, category, dirId, inode, oldValue, newValue) {
+  insertAlert(ruleId, historyId, type, filename, category, dirId, inode, oldValue, newValue) {
     const stmt = this.db.prepare(`
-      INSERT INTO notifications (history_id, type, filename, category, dir_id, inode, old_value, new_value, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO alerts (rule_id, history_id, type, filename, category, dir_id, inode, old_value, new_value, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    return stmt.run(historyId, type, filename, category, dirId, inode, oldValue, newValue, Date.now());
+    return stmt.run(ruleId, historyId, type, filename, category, dirId, inode, oldValue, newValue, Date.now());
   }
 
   /**
-   * Get all notifications ordered by created_at DESC
+   * Get unacknowledged alerts (Summary tab)
    */
-  getNotifications() {
+  getAlertsSummary() {
     const stmt = this.db.prepare(`
-      SELECT n.*, d.dirname
-      FROM notifications n
-      LEFT JOIN dirs d ON n.dir_id = d.id
-      ORDER BY n.created_at DESC
+      SELECT a.*, d.dirname
+      FROM alerts a
+      LEFT JOIN dirs d ON a.dir_id = d.id
+      WHERE a.acknowledged_at IS NULL
+      ORDER BY a.created_at DESC
     `);
     return stmt.all();
   }
 
   /**
-   * Count unread notifications
+   * Get acknowledged alerts (History tab)
    */
-  getUnreadNotificationCount() {
-    const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM notifications WHERE read_at IS NULL`);
+  getAlertsHistory() {
+    const stmt = this.db.prepare(`
+      SELECT a.*, d.dirname
+      FROM alerts a
+      LEFT JOIN dirs d ON a.dir_id = d.id
+      WHERE a.acknowledged_at IS NOT NULL
+      ORDER BY a.acknowledged_at DESC
+    `);
+    return stmt.all();
+  }
+
+  /**
+   * Count unacknowledged alerts
+   */
+  getUnacknowledgedAlertCount() {
+    const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM alerts WHERE acknowledged_at IS NULL`);
     return stmt.get().count;
   }
 
   /**
-   * Mark all notifications as read
+   * Acknowledge a set of alerts by ID with an optional comment
    */
-  markAllNotificationsRead() {
-    const stmt = this.db.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL`);
-    return stmt.run(Date.now());
+  acknowledgeAlerts(ids, comment) {
+    if (!ids || ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(',');
+    const now = Date.now();
+    const commentVal = comment || null;
+    const stmt = this.db.prepare(
+      `UPDATE alerts SET acknowledged_at = ?, acknowledged_comment = ? WHERE id IN (${placeholders})`
+    );
+    return stmt.run(now, commentVal, ...ids);
+  }
+
+  // ============================================
+  // Alert Rules
+  // ============================================
+
+  /**
+   * Get all alert rules
+   */
+  getAlertRules() {
+    return this.db.prepare('SELECT * FROM alert_rules ORDER BY id ASC').all();
+  }
+
+  /**
+   * Save an alert rule (insert if no id, update if id provided)
+   */
+  saveAlertRule(rule) {
+    const { id, categories, tags, attributes, events, enabled } = rule;
+    if (id) {
+      this.db.prepare(
+        'UPDATE alert_rules SET categories=?, tags=?, attributes=?, events=?, enabled=? WHERE id=?'
+      ).run(categories, tags, attributes, events, enabled ? 1 : 0, id);
+      return { id };
+    } else {
+      const result = this.db.prepare(
+        'INSERT INTO alert_rules (categories, tags, attributes, events, enabled, created_at) VALUES (?,?,?,?,?,?)'
+      ).run(categories, tags, attributes, events, enabled ? 1 : 0, Date.now());
+      return { id: result.lastInsertRowid };
+    }
+  }
+
+  /**
+   * Delete alert rules by array of ids
+   */
+  deleteAlertRules(ids) {
+    if (!ids || ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.prepare(`DELETE FROM alert_rules WHERE id IN (${placeholders})`).run(...ids);
   }
 
   /**

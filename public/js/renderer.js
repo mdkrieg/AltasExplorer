@@ -8,7 +8,7 @@
  * - modules/sidebar.js    – Sidebar navigation, tree, and favorites [extracted]
  * - modules/panels.js     – Grid management, navigation, layout switching [in progress]
  * - modules/notes.js      – Notes modal, file view, and Monaco loader [extracted]
- * - modules/notifications.js – Notification badge and modal [extracted]
+ * - modules/alerts.js – Alert badge and modal [extracted]
  * - modules/settings.js   – Settings modal, categories, tags, hotkeys [in progress]
  * - modules/history.js    – History modal and change summaries [extracted]
  * - modules/contexts.js   – Grid context menus and flyout interactions [extracted]
@@ -24,14 +24,14 @@ import * as panels from './modules/panels.js';
 import * as contexts from './modules/contexts.js';
 import * as history from './modules/history.js';
 import * as notes from './modules/notes.js';
-import * as notifications from './modules/notifications.js';
+import * as alerts from './modules/alerts.js';
 import * as settings from './modules/settings.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, hideFileView, toggleFileEditMode } from './modules/notes.js';
 export { generateW2UIContextMenu, showCustomContextMenu } from './modules/contexts.js';
 export { openHistoryModal, formatHistoryData, buildCompleteFileState } from './modules/history.js';
-export { updateNotificationBadge } from './modules/notifications.js';
+export { updateAlertBadge } from './modules/alerts.js';
 
 // Global error handler for debugging
 window.addEventListener('error', (event) => {
@@ -191,6 +191,11 @@ async function initialize() {
       }
     });
 
+    window.electronAPI.onAlertCountUpdated(({ count }) => {
+      panels.setUnacknowledgedAlertCount(count);
+      alerts.updateAlertBadge();
+    });
+
     await notes.initializeMonacoLoader();
 
     const bgSettings = await window.electronAPI.getSettings();
@@ -200,10 +205,10 @@ async function initialize() {
     );
 
     try {
-      const countResult = await window.electronAPI.getUnreadNotificationCount();
+      const countResult = await window.electronAPI.getUnacknowledgedAlertCount();
       if (countResult.success) {
-        panels.setUnreadNotificationCount(countResult.count);
-        notifications.updateNotificationBadge();
+        panels.setUnacknowledgedAlertCount(countResult.count);
+        alerts.updateAlertBadge();
       }
     } catch (err) {
       console.warn('Could not load notification count:', err);
@@ -529,9 +534,9 @@ function attachEventListeners() {
     sidebar.toggleSidebarCollapse();
   });
 
-  // Sidebar toolbar: Notifications
-  $('#btn-sidebar-notifications').click(function () {
-    notifications.showNotificationsModal();
+  // Sidebar toolbar: Alerts
+  $('#btn-sidebar-alerts').click(function () {
+    alerts.showAlertsModal();
   });
 
   // Sidebar toolbar: Tagging
@@ -750,21 +755,55 @@ function attachEventListeners() {
     }
   });
 
-  // Notifications modal close button
-  $('#btn-notifications-close').click(function () {
-    notifications.hideNotificationsModal();
+  // Alerts modal close button
+  $('#btn-alerts-close').click(function () {
+    alerts.hideAlertsModal();
   });
 
-  // Notifications modal overlay click to close
-  $('#notifications-modal').click(function (e) {
+  // Alerts modal overlay click to close
+  $('#alerts-modal').click(function (e) {
     if (e.target === this) {
-      notifications.hideNotificationsModal();
+      alerts.hideAlertsModal();
     }
   });
 
-  // Notifications modal mark all read
-  $('#btn-notifications-mark-all').click(async function () {
-    await notifications.markAllNotificationsRead();
+  // Alerts tab switching
+  $('.alerts-tab-btn').click(function () {
+    alerts.switchTab($(this).data('tab'));
+  });
+
+  // Alerts summary: Acknowledge selected
+  $('#btn-alerts-acknowledge').click(async function () {
+    await alerts.acknowledgeSelected();
+  });
+
+  // Alerts configuration: Add new rule
+  $('#btn-alerts-rule-add').click(function () {
+    alerts.openNewRuleEditor();
+  });
+
+  // Alerts configuration: Edit selected rule
+  $('#btn-alerts-rule-edit').click(function () {
+    const sel = w2ui['alerts-rules-grid'] ? w2ui['alerts-rules-grid'].getSelection() : [];
+    if (sel.length === 1) {
+      const rec = w2ui['alerts-rules-grid'].get(sel[0]);
+      if (rec) alerts.openRuleEditor(rec._raw);
+    }
+  });
+
+  // Alerts configuration: Delete selected rules
+  $('#btn-alerts-rule-delete').click(async function () {
+    await alerts.deleteRules();
+  });
+
+  // Alerts configuration: Save rule
+  $('#btn-alerts-rule-save').click(async function () {
+    await alerts.saveRule();
+  });
+
+  // Alerts configuration: Cancel rule editor
+  $('#btn-alerts-rule-cancel').click(function () {
+    alerts.closeRuleEditor();
   });
 }
 

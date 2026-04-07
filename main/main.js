@@ -1209,8 +1209,14 @@ function startBackgroundRefresh(enabled, interval) {
       for (const [panelId, dirPath] of bgWatchedPaths) {
         try {
           const result = doScanDirectoryWithComparison(dirPath, false, true);
-          if (result.success && result.hasChanges && mainWindow) {
-            mainWindow.webContents.send('directory-changed', { panelId, dirPath });
+          if (result.success && mainWindow) {
+            if (result.alertsCreated) {
+              const newCount = db.getUnacknowledgedAlertCount();
+              mainWindow.webContents.send('alert-count-updated', { count: newCount });
+            }
+            if (result.hasChanges) {
+              mainWindow.webContents.send('directory-changed', { panelId, dirPath });
+            }
           }
         } catch (err) {
           logger.error(`Background refresh error for panel ${panelId} (${dirPath}):`, err.message);
@@ -1246,6 +1252,56 @@ ipcMain.handle('unregister-watched-path', (event, { panelId }) => {
 });
 
 /**
+ * Alert Rule Matching: Returns the first enabled rule that matches all conditions, or null.
+ *
+ * @param {Array}       rules            - Alert rule objects from DB
+ * @param {string}      eventType        - fileAdded | fileRemoved | fileRenamed | fileModified | fileChanged
+ * @param {string}      category         - Category name for the directory
+ * @param {string|null} dirTagsJson      - JSON string array of directory tags (or null)
+ * @param {string|null} fileAttributesJson - JSON string map of file attributes (or null)
+ * @returns {object|null} First matching rule or null
+ */
+function doesEventMatchRules(rules, eventType, category, dirTagsJson, fileAttributesJson) {
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+
+    // Check event type
+    let events;
+    try { events = JSON.parse(rule.events); } catch { continue; }
+    if (!Array.isArray(events) || !events.includes(eventType)) continue;
+
+    // Check category
+    if (rule.categories !== 'ANY') {
+      try {
+        const ruleCategories = JSON.parse(rule.categories);
+        if (!ruleCategories.includes(category)) continue;
+      } catch { continue; }
+    }
+
+    // Check tags (at least one rule tag must appear in item tags)
+    if (rule.tags !== 'ANY') {
+      try {
+        const ruleTags = JSON.parse(rule.tags);
+        const itemTags = dirTagsJson ? JSON.parse(dirTagsJson) : [];
+        if (!ruleTags.some(t => itemTags.includes(t))) continue;
+      } catch { continue; }
+    }
+
+    // Check attributes (all rule attribute conditions must match)
+    if (rule.attributes !== 'ANY') {
+      try {
+        const ruleAttrs = JSON.parse(rule.attributes); // [{name, value}, ...]
+        const fileAttrs = fileAttributesJson ? JSON.parse(fileAttributesJson) : {};
+        if (!ruleAttrs.every(a => fileAttrs[a.name] === a.value)) continue;
+      } catch { continue; }
+    }
+
+    return rule; // First matching rule
+  }
+  return null;
+}
+
+/**
  * Core scan logic (shared by IPC handler and background refresh timer)
  */
 function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBackgroundRefresh = false) {
@@ -1276,6 +1332,13 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
 
     // Create or get the directory entry (returns dir_id)
     const dirId = db.getOrCreateDirectory(normalizedPath, dirInode, categoryName);
+
+    // Load alert rules once for this scan pass
+    let alertRules = [];
+    try { alertRules = db.getAlertRules(); } catch (e) { /* non-fatal */ }
+    const dirRecord0 = db.getDirectory(normalizedPath);
+    const dirTagsJson = dirRecord0 ? dirRecord0.tags : null;
+    let alertsCreated = 0;
 
     // Create/update dot entry for the directory itself
     db.upsertFile({
@@ -1363,6 +1426,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         // For files, determine change state
         const dbFile = dbFileMap.get(entry.inode);
         let changeState = 'unchanged';
+        const wasRenamed = !!(dbFile && entry.filename !== dbFile.filename);
 
         if (!dbFile) {
           // New file
@@ -1397,7 +1461,9 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           perms: entry.perms || { read: false, write: false },
           mode: entry.mode ?? null,
           tags: (dbFile && dbFile.tags) ? dbFile.tags : null,
-          attributes: (dbFile && dbFile.attributes) ? dbFile.attributes : null
+          attributes: (dbFile && dbFile.attributes) ? dbFile.attributes : null,
+          wasRenamed,
+          previousFilename: wasRenamed ? dbFile.filename : null
         });
         
         // Mark as processed
@@ -1470,6 +1536,14 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           } catch (err) {
             logger.error(`Error recording file history for new file ${entry.filename}:`, err.message);
           }
+          // Alert: fileAdded
+          try {
+            const addedRule = doesEventMatchRules(alertRules, 'fileAdded', categoryName, dirTagsJson, entry.attributes || null);
+            if (addedRule) {
+              db.insertAlert(addedRule.id, null, 'fileAdded', entry.filename, categoryName, dirId, entry.inode, null, null);
+              alertsCreated++;
+            }
+          } catch (alertErr) { logger.error(`Error creating fileAdded alert for ${entry.filename}:`, alertErr.message); }
         } else {
           const modeChanged = (dbFile.mode ?? null) !== (entry.mode ?? null);
           const dateChanged = dbFile.dateModified !== entry.dateModified;
@@ -1484,6 +1558,30 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             } catch (err) {
               logger.error(`Error recording file history for ${entry.filename}:`, err.message);
             }
+          }
+          // Alert: fileModified (date change)
+          if (dateChanged) {
+            try {
+              const modRule = doesEventMatchRules(alertRules, 'fileModified', categoryName, dirTagsJson, entry.attributes || null);
+              if (modRule) {
+                db.insertAlert(modRule.id, null, 'fileModified', entry.filename, categoryName, dirId, entry.inode, null, null);
+                alertsCreated++;
+              }
+            } catch (alertErr) { logger.error(`Error creating fileModified alert for ${entry.filename}:`, alertErr.message); }
+          }
+          // Alert: fileRenamed
+          if (entry.wasRenamed) {
+            try {
+              const renameHistResult = db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
+                filename: entry.filename,
+                previousFilename: entry.previousFilename
+              });
+              const renameRule = doesEventMatchRules(alertRules, 'fileRenamed', categoryName, dirTagsJson, entry.attributes || null);
+              if (renameRule) {
+                db.insertAlert(renameRule.id, renameHistResult.lastInsertRowid, 'fileRenamed', entry.filename, categoryName, dirId, entry.inode, entry.previousFilename, entry.filename);
+                alertsCreated++;
+              }
+            } catch (alertErr) { logger.error(`Error creating fileRenamed alert for ${entry.filename}:`, alertErr.message); }
           }
         }
 
@@ -1616,7 +1714,15 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           } catch (err) {
             logger.error(`Error recording orphan history for ${dbFile.filename}:`, err.message);
           }
-          
+          // Alert: fileRemoved
+          try {
+            const removedRule = doesEventMatchRules(alertRules, 'fileRemoved', categoryName, dirTagsJson, null);
+            if (removedRule) {
+              db.insertAlert(removedRule.id, null, 'fileRemoved', dbFile.filename, categoryName, dirId, inode, null, null);
+              alertsCreated++;
+            }
+          } catch (alertErr) { logger.error(`Error creating fileRemoved alert for ${dbFile.filename}:`, alertErr.message); }
+
           // Add to entries as 'orphan' so it displays as red text
           orphanedEntries.push({
             inode: inode,
@@ -1728,7 +1834,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       entries: entriesWithChanges,
       category: categoryName,
       categoryData: category,
-      hasChanges: hasChanges
+      hasChanges: hasChanges,
+      alertsCreated,
     };
   } catch (err) {
     logger.error('Error scanning directory with comparison:', err.message);
@@ -1783,19 +1890,20 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
             checksumValue: result.value,
             checksumStatus: storedStatus
           });
-          // Only notify on actual content changes (not first-time initialization)
+          // Only alert on actual content changes (not first-time initialization)
           if (existingChecksum !== null) {
-            db.insertNotification(
-              historyResult.lastID,
-              'checksumChanged',
-              filename,
-              categoryName,
-              dirId,
-              inode,
-              existingChecksum,
-              result.value
-            );
-            notificationCreated = true;
+            try {
+              const csAlertRules = db.getAlertRules();
+              const csTagsJson = dirRecord ? dirRecord.tags : null;
+              const csAttrsJson = fileRecord ? fileRecord.attributes : null;
+              const csRule = doesEventMatchRules(csAlertRules, 'fileChanged', categoryName, csTagsJson, csAttrsJson);
+              if (csRule) {
+                db.insertAlert(csRule.id, historyResult.lastInsertRowid, 'fileChanged', filename, categoryName, dirId, inode, existingChecksum, result.value);
+                notificationCreated = true;
+              }
+            } catch (alertErr) {
+              logger.error('Error creating fileChanged alert:', alertErr.message);
+            }
           }
         }
       } catch (notifErr) {
@@ -1901,39 +2009,89 @@ ipcMain.handle('update-file-modification-date', (event, { dirPath, inode, newDat
 });
 
 /**
- * Notifications: Get all notifications
+ * Alerts: Get unacknowledged alerts (Summary tab)
  */
-ipcMain.handle('get-notifications', () => {
+ipcMain.handle('get-alerts-summary', () => {
   try {
-    const notifications = db.getNotifications();
-    return { success: true, data: notifications };
+    return { success: true, data: db.getAlertsSummary() };
   } catch (err) {
-    logger.error('Error retrieving notifications:', err.message);
+    logger.error('Error retrieving alerts summary:', err.message);
     return { success: false, error: err.message };
   }
 });
 
 /**
- * Notifications: Get unread count
+ * Alerts: Get acknowledged alerts (History tab)
  */
-ipcMain.handle('get-unread-notification-count', () => {
+ipcMain.handle('get-alerts-history', () => {
   try {
-    return { success: true, count: db.getUnreadNotificationCount() };
+    return { success: true, data: db.getAlertsHistory() };
   } catch (err) {
-    logger.error('Error getting unread notification count:', err.message);
+    logger.error('Error retrieving alerts history:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Alerts: Get unacknowledged count
+ */
+ipcMain.handle('get-unacknowledged-alert-count', () => {
+  try {
+    return { success: true, count: db.getUnacknowledgedAlertCount() };
+  } catch (err) {
+    logger.error('Error getting unacknowledged alert count:', err.message);
     return { success: true, count: 0 };
   }
 });
 
 /**
- * Notifications: Mark all as read
+ * Alerts: Acknowledge a set of alerts with optional comment
  */
-ipcMain.handle('mark-all-notifications-read', () => {
+ipcMain.handle('acknowledge-alerts', (event, { ids, comment }) => {
   try {
-    db.markAllNotificationsRead();
+    db.acknowledgeAlerts(ids, comment || null);
+    const newCount = db.getUnacknowledgedAlertCount();
+    return { success: true, newCount };
+  } catch (err) {
+    logger.error('Error acknowledging alerts:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Alerts: Get all alert rules
+ */
+ipcMain.handle('get-alert-rules', () => {
+  try {
+    return { success: true, data: db.getAlertRules() };
+  } catch (err) {
+    logger.error('Error retrieving alert rules:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Alerts: Save (create or update) an alert rule
+ */
+ipcMain.handle('save-alert-rule', (event, rule) => {
+  try {
+    const result = db.saveAlertRule(rule);
+    return { success: true, id: result.id };
+  } catch (err) {
+    logger.error('Error saving alert rule:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Alerts: Delete alert rules by ID array
+ */
+ipcMain.handle('delete-alert-rules', (event, { ids }) => {
+  try {
+    db.deleteAlertRules(ids);
     return { success: true };
   } catch (err) {
-    logger.error('Error marking notifications read:', err.message);
+    logger.error('Error deleting alert rules:', err.message);
     return { success: false, error: err.message };
   }
 });

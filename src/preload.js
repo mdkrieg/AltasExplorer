@@ -152,10 +152,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileHistory: (inode) => ipcRenderer.invoke('get-file-history', inode),
   getFileRecordByPath: (filePath) => ipcRenderer.invoke('get-file-record-by-path', { filePath }),
 
-  // Notifications
-  getNotifications: () => ipcRenderer.invoke('get-notifications'),
-  getUnreadNotificationCount: () => ipcRenderer.invoke('get-unread-notification-count'),
-  markAllNotificationsRead: () => ipcRenderer.invoke('mark-all-notifications-read'),
+  // Alerts
+  getAlertsSummary: () => ipcRenderer.invoke('get-alerts-summary'),
+  getAlertsHistory: () => ipcRenderer.invoke('get-alerts-history'),
+  getUnacknowledgedAlertCount: () => ipcRenderer.invoke('get-unacknowledged-alert-count'),
+  acknowledgeAlerts: (ids, comment) => ipcRenderer.invoke('acknowledge-alerts', { ids, comment }),
+  getAlertRules: () => ipcRenderer.invoke('get-alert-rules'),
+  saveAlertRule: (rule) => ipcRenderer.invoke('save-alert-rule', rule),
+  deleteAlertRules: (ids) => ipcRenderer.invoke('delete-alert-rules', { ids }),
   
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),
@@ -169,5 +173,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Generic IPC invoke for custom handlers
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   
-  onDirectoryChanged: (callback) => ipcRenderer.on('directory-changed', (event, data) => callback(data))
+  onDirectoryChanged: (callback) => ipcRenderer.on('directory-changed', (event, data) => callback(data)),
+  onAlertCountUpdated: (callback) => ipcRenderer.on('alert-count-updated', (event, data) => callback(data))
 });

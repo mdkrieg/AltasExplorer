@@ -1366,8 +1366,8 @@ hr {
   background: rgba(0, 0, 0, 0.14);
 }
 
-/* Notification badge */
-#notifications-badge {
+/* Alert badge */
+#alerts-badge {
   display: none;
   position: absolute;
   top: 1px;
@@ -1390,13 +1390,106 @@ hr {
    ===================== */
 
 #sidebar-content.sidebar-collapsed #btn-sidebar-settings-toolbar,
-#sidebar-content.sidebar-collapsed #btn-sidebar-notifications,
+#sidebar-content.sidebar-collapsed #btn-sidebar-alerts,
 #sidebar-content.sidebar-collapsed #btn-sidebar-tagging {
   display: none;
 }
 
 #sidebar-content.sidebar-collapsed .w2ui-node-text {
   display: none;
+}
+
+/* =====================
+   Alerts Modal
+   ===================== */
+
+/* Tab bar buttons */
+.alerts-tab-btn {
+  border-radius: 0;
+}
+
+.alerts-tab-btn:hover {
+  background: rgba(0,0,0,0.04) !important;
+}
+
+/* Tab content panels — only one visible at a time */
+.alerts-tab-content {
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+.alerts-tab-content.alerts-tab-active {
+  display: flex;
+}
+
+/* Acknowledge toolbar button state */
+#btn-alerts-acknowledge:not([disabled]) {
+  opacity: 1;
+  cursor: pointer;
+}
+
+/* Rule editor toolbar button states */
+#btn-alerts-rule-edit:not([disabled]),
+#btn-alerts-rule-delete:not([disabled]) {
+  opacity: 1;
+  cursor: pointer;
+}
+
+/* Rule editor form layout */
+.alerts-rule-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.alerts-rule-section-label {
+  font-size: 11px;
+  font-weight: bold;
+  color: #333;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #eee;
+}
+
+.alerts-rule-any-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+
+.alerts-rule-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 4px;
+}
+
+.alerts-rule-options-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.alerts-rule-attr-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.alerts-rule-attr-row input,
+.alerts-rule-attr-row select {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-size: 11px;
 }
 
 /* Sidebar Tree Items */

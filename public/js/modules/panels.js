@@ -16,7 +16,7 @@ import {
 	syncRendererActivePanelId,
 	monacoEditor,
 	showSettingsModal,
-	updateNotificationBadge,
+	updateAlertBadge,
 	generateW2UIContextMenu,
 	showCustomContextMenu,
 	openNotesModal,
@@ -35,7 +35,7 @@ export let allTags = [];
 export let allFileTypes = [];
 export let currentLayout = 1;
 export let visiblePanels = 1;
-export let unreadNotificationCount = 0;
+export let unacknowledgedAlertCount = 0;
 export let panel1SelectedDirectoryPath = null;
 export let panel1SelectedDirectoryName = null;
 export let gridFocusedPanelId = null;
@@ -54,12 +54,12 @@ export function setVisiblePanels(value) {
 	visiblePanels = value;
 }
 
-export function setUnreadNotificationCount(value) {
-	unreadNotificationCount = value;
+export function setUnacknowledgedAlertCount(value) {
+	unacknowledgedAlertCount = value;
 }
 
-export function resetNotificationCount() {
-	unreadNotificationCount = 0;
+export function resetAlertCount() {
+	unacknowledgedAlertCount = 0;
 }
 
 function updateGridHeader(panelId, path) {
@@ -354,6 +354,10 @@ async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, t
 		const scanResult = await window.electronAPI.scanDirectoryWithComparison(dirPath, false);
 		if (state.scanCancelled || state.scanToken !== token) break;
 		if (!scanResult.success) continue;
+		if (scanResult.alertsCreated) {
+			unacknowledgedAlertCount += scanResult.alertsCreated;
+			updateAlertBadge();
+		}
 
 		const rawEntries = scanResult.entries || [];
 		let entries = rawEntries
@@ -445,6 +449,10 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
 			setScanIndicator(panelId, false);
 		}
 		return;
+	}
+	if (rootScan.alertsCreated) {
+		unacknowledgedAlertCount += rootScan.alertsCreated;
+		updateAlertBadge();
 	}
 
 	const rootRaw = rootScan.entries || [];
@@ -539,6 +547,10 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		const scanResult = await window.electronAPI.scanDirectoryWithComparison(normalizedPath);
 		if (!scanResult.success) {
 			throw new Error(scanResult.error || 'Failed to scan directory');
+		}
+		if (scanResult.alertsCreated) {
+			unacknowledgedAlertCount += scanResult.alertsCreated;
+			updateAlertBadge();
 		}
 
 		const category = await window.electronAPI.getCategoryForDirectory(normalizedPath);
@@ -1272,8 +1284,8 @@ async function calculateChecksumForFile(record, panelId, dirPath) {
 				record.changeState = 'checksumChanged';
 			}
 			if (result.notificationCreated) {
-				unreadNotificationCount++;
-				updateNotificationBadge();
+				unacknowledgedAlertCount++;
+				updateAlertBadge();
 			}
 			record.dateModified = new Date(record.dateModifiedRaw).toLocaleDateString();
 			record.modified = -new Date(record.dateModifiedRaw).getTime();
