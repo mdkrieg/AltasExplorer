@@ -745,6 +745,22 @@ async function initializeGridForPanel(panelId) {
 		contextMenu: [],
 		onClick: function (event) {
 			gridFocusedPanelId = panelId;
+			
+			// Handle notes icon click to open modal
+			if (event.detail.originalEvent && event.detail.originalEvent.target &&
+				event.detail.originalEvent.target.dataset &&
+				event.detail.originalEvent.target.dataset.notesIcon) {
+				event.preventDefault();
+				event.stopPropagation();
+				if (event.detail.recid) {
+					const record = this.records[event.detail.recid - 1];
+					if (record && record.hasNotes) {
+						openNotesModal(record);
+						return;
+					}
+				}
+			}
+			
 			if (panelId === 1 && event.detail.recid) {
 				const record = this.records[event.detail.recid - 1];
 				if (record) {
@@ -810,20 +826,6 @@ async function initializeGridForPanel(panelId) {
 			}
 		},
 		onDblClick: function (event) {
-			if (event.detail.originalEvent && event.detail.originalEvent.target &&
-				event.detail.originalEvent.target.dataset &&
-				event.detail.originalEvent.target.dataset.notesIcon) {
-				event.preventDefault();
-				event.stopPropagation();
-				if (event.detail.recid) {
-					const record = this.records[event.detail.recid - 1];
-					if (record && record.hasNotes) {
-						openNotesModal(record);
-						return;
-					}
-				}
-			}
-
 			const record = this.records[event.detail.recid - 1];
 			if (record && record.isFolder) {
 				navigateToDirectory(record.path, panelId);

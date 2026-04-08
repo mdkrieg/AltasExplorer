@@ -1219,9 +1219,57 @@ ipcMain.handle('render-markdown', async (event, content) => {
     const md = new MarkdownIt({
       html: false, // Disable raw HTML for security
       linkify: true,
-      typographer: true
+      typographer: true,
+      breaks: true // Enable single line breaks to render as <br>
     });
-    return md.render(content);
+
+    // Add custom rule to handle GFM task lists [ ] and [x]
+    md.inline.ruler.push('task_list', (state, silent) => {
+      const pos = state.pos;
+      const max = state.posMax;
+
+      // Match [ ] or [x] at the start of a line or after whitespace
+      if (pos + 3 > max) return false;
+
+      const isStart = pos === 0 || /\s/.test(state.src[pos - 1]);
+      if (!isStart) return false;
+
+      // Check for [ ] or [x]
+      if (state.src[pos] === '[' && (state.src[pos + 1] === ' ' || state.src[pos + 1] === 'x' || state.src[pos + 1] === 'X') && state.src[pos + 2] === ']') {
+        if (silent) return true;
+
+        const token = state.push('task_list', 'span', 0);
+        token.content = state.src[pos + 1] === ' ' ? '☐' : '☑';
+        token.meta = { checked: state.src[pos + 1] !== ' ' };
+
+        state.pos += 3;
+        return true;
+      }
+
+      return false;
+    });
+
+    // Custom renderer for task list items
+    md.renderer.rules.task_list = (tokens, idx) => {
+      const token = tokens[idx];
+      const checked = token.meta?.checked ? 'checked' : '';
+      return `<input type="checkbox" disabled ${checked} class="task-list-checkbox" />`;
+    };
+
+    // Render markdown
+    let html = md.render(content);
+
+    // Post-process HTML to handle TODO: markers with titles
+    // Match TODO: followed by text within inline content
+    html = html.replace(/TODO:\s*([^\<]*)/g, (match, title) => {
+      if (title && title.trim()) {
+        return `<span class="todo-marker">TODO:</span> <span class="todo-title">${title}</span>`;
+      } else {
+        return `<span class="todo-marker">TODO:</span>`;
+      }
+    });
+
+    return html;
   } catch (err) {
     logger.error('Error rendering markdown:', err.message);
     throw err;

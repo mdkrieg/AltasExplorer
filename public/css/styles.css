@@ -1103,6 +1103,35 @@ hr {
   color: #333;
 }
 
+/* Task List Styles */
+.task-list-checkbox {
+  margin-right: 8px;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: #2196F3;
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+}
+
+.task-list-checkbox:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+/* TODO Marker Styles */
+.todo-marker {
+  font-weight: 700;
+  color: #d32f2f;
+  font-size: 0.95em;
+  margin-right: 6px;
+}
+
+.todo-title {
+  font-weight: 500;
+  color: #f57c00;
+}
+
 /* Checksum Calculation Animation */
 @keyframes spin {
   from { transform: rotate(0deg); }
