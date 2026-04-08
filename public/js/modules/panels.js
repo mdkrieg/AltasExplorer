@@ -26,7 +26,8 @@ import {
 	openImageViewerModal,
 	buildCompleteFileState,
 	formatHistoryData,
-	formatFileContent
+	formatFileContent,
+	openTodoModal
 } from '../renderer.js';
 
 export let activePanelId = 1;
@@ -251,7 +252,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			dir_id: null,
 			orphan_id: folder.orphan_id || null,
 			new_dir_id: folder.new_dir_id || null,
-			hasNotes: folder.hasNotes || false
+			hasNotes: folder.hasNotes || false,
+			todo: folder.todoCounts || null
 		});
 	}
 
@@ -285,7 +287,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 				dir_id: file.dir_id || null,
 				orphan_id: null,
 				new_dir_id: null,
-				hasNotes: file.hasNotes || false
+				hasNotes: file.hasNotes || false,
+				todo: file.todoCounts || null
 			});
 			continue;
 		}
@@ -324,7 +327,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			dir_id: file.dir_id || null,
 			orphan_id: file.orphan_id || null,
 			new_dir_id: file.new_dir_id || null,
-			hasNotes: file.hasNotes || false
+			hasNotes: file.hasNotes || false,
+			todo: file.todoCounts || null
 		});
 
 		if (file.attributes) {
@@ -674,6 +678,14 @@ async function initializeGridForPanel(panelId) {
 					? `<img src="assets/icons/note-book-icon.svg" style="width: 16px; height: 16px; object-fit: contain; cursor: pointer; opacity: 0.7;" title="Notes" data-notes-icon="true">`
 					: '';
 			}
+		},
+		{
+			field: 'todo', text: 'TODO', size: '60px', resizable: true, sortable: false, render: (record) => {
+				if (!record.todo || record.todo.total === 0) return '';
+				const { completed, total } = record.todo;
+				const cls = completed === total ? 'todo-count todo-count-complete' : 'todo-count todo-count-partial';
+				return `<span class="${cls}" style="cursor:pointer;" data-todo-cell="true">${completed}/${total}</span>`;
+			}
 		}
 	];
 
@@ -774,6 +786,18 @@ async function initializeGridForPanel(panelId) {
 					openInitialsEditor(record, panelId);
 					event.preventDefault();
 					return;
+				}
+			}
+
+			if (event.detail.recid) {
+				const col = this.columns[event.detail.column];
+				if (col && col.field === 'todo') {
+					const record = this.records[event.detail.recid - 1];
+					if (record && record.todo && record.todo.total > 0) {
+						openTodoModal(record, panelId);
+						event.preventDefault();
+						return;
+					}
 				}
 			}
 
@@ -971,7 +995,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			dir_id: null,
 			orphan_id: folder.orphan_id || null,
 			new_dir_id: folder.new_dir_id || null,
-			hasNotes: folder.hasNotes || false
+			hasNotes: folder.hasNotes || false,
+			todo: folder.todoCounts || null
 		});
 
 		if (folder.attributes) {
@@ -1013,7 +1038,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 				dir_id: file.dir_id || null,
 				orphan_id: null,
 				new_dir_id: null,
-				hasNotes: file.hasNotes || false
+				hasNotes: file.hasNotes || false,
+				todo: file.todoCounts || null
 			});
 			continue;
 		}
@@ -1052,7 +1078,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			dir_id: file.dir_id || null,
 			orphan_id: file.orphan_id || null,
 			new_dir_id: file.new_dir_id || null,
-			hasNotes: file.hasNotes || false
+			hasNotes: file.hasNotes || false,
+			todo: file.todoCounts || null
 		});
 
 		if (file.attributes) {

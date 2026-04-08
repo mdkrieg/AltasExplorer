@@ -18,11 +18,14 @@ Philosophy:
 * Generates audit trail as you browse
 
 ### UP NEXT:
-* Do Search and Filter next, make it so that if I start typing it will start filtering on name automatically
-* CTRL + Enter to do same as double click in grid
-* Notifications:
-  * Option for "Active Monitoring", taking combination of category, tags, and attributes
-  * User can define what files / folders create alerts in a similar way (combo of category, tags, and attributes)
+[ ] Do Search and Filter next, make it so that if I start typing it will start filtering on name automatically
+[x] CTRL + Enter to do same as double click in grid
+[ ] Option for "Active Monitoring", taking combination of category, tags, and attributes
+[ ] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline
+[ ] Update markdown viewer to consider a single line break as a newline - keep double line breaks as a newline with additional line height (new <p> object perhaps?)
+[ ] Alerts:
+  [x] User can define what files / folders create alerts in a similar way (combo of category, tags, and attributes)
+[ ] Add option to attributes for "copyable" which adds a copy button in the grid
 [ ] Add a "pin" to Item Properties that prevents it from updating to the selected item (need good icon, maybe lock?)
 [ ] Fewer alerts. Currently the "All browser settings saved successfully" alert is annoying, things like this should just show some text stating the same, alerts should be reserved for errors only.
 

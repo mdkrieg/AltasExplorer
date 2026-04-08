@@ -117,6 +117,37 @@ export async function initializeMonacoLoader() {
                 return { suggestions };
               }
             });
+
+            // TODO: keyword completion
+            monaco.languages.registerCompletionItemProvider(lang, {
+              triggerCharacters: ['T', 'O', 'D'],
+              provideCompletionItems: (model, position) => {
+                const textUntilPosition = model.getValueInRange({
+                  startLineNumber: position.lineNumber,
+                  startColumn: 1,
+                  endLineNumber: position.lineNumber,
+                  endColumn: position.column
+                });
+                if (!/^TODO?:?$/.test(textUntilPosition)) return { suggestions: [] };
+                const range = {
+                  startLineNumber: position.lineNumber,
+                  endLineNumber: position.lineNumber,
+                  startColumn: 1,
+                  endColumn: position.column
+                };
+                return {
+                  suggestions: [{
+                    label: 'TODO:',
+                    kind: monaco.languages.CompletionItemKind.Keyword,
+                    insertText: 'TODO: ',
+                    filterText: 'TODO:',
+                    sortText: '0',
+                    range,
+                    documentation: 'Insert a TODO checklist block'
+                  }]
+                };
+              }
+            });
           });
 
           resolve();

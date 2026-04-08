@@ -26,12 +26,14 @@ import * as history from './modules/history.js';
 import * as notes from './modules/notes.js';
 import * as alerts from './modules/alerts.js';
 import * as settings from './modules/settings.js';
+import * as todos from './modules/todos.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, hideFileView, toggleFileEditMode } from './modules/notes.js';
 export { generateW2UIContextMenu, showCustomContextMenu } from './modules/contexts.js';
 export { openHistoryModal, formatHistoryData, buildCompleteFileState } from './modules/history.js';
 export { updateAlertBadge } from './modules/alerts.js';
+export { openTodoModal } from './modules/todos.js';
 
 // Global error handler for debugging
 window.addEventListener('error', (event) => {
@@ -197,6 +199,7 @@ async function initialize() {
     });
 
     await notes.initializeMonacoLoader();
+    todos.initTodoModal();
 
     const bgSettings = await window.electronAPI.getSettings();
     window.electronAPI.startBackgroundRefresh(

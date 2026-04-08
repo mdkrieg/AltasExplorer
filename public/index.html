@@ -877,6 +877,28 @@
     </div>
   </div>
 
+  <!-- TODO Modal -->
+  <div id="todo-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; align-items: center; justify-content: center;">
+    <div class="todo-modal-box">
+      <div class="todo-modal-header">
+        <span class="todo-modal-title">TODO</span>
+        <span id="todo-modal-subtitle" class="todo-modal-subtitle"></span>
+        <button id="btn-todo-expand" class="btn-todo-expand" title="Expand">&#10064;</button>
+      </div>
+      <div id="todo-modal-items" class="todo-modal-items"></div>
+      <div class="todo-modal-footer">
+        <div id="todo-collapse-controls" class="todo-footer-left" style="display:none;">
+          <button id="btn-todo-collapse-all" class="btn-todo-collapse">Collapse all</button>
+          <button id="btn-todo-expand-all" class="btn-todo-collapse">Expand all</button>
+        </div>
+        <div class="todo-footer-right">
+          <button id="btn-todo-save" class="btn-todo-save">Save</button>
+          <button id="btn-todo-cancel" class="btn-todo-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- File History Modal -->
   <div id="history-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
     <div style="background: white; border-radius: 8px; width: 90%; height: 85%; max-width: 1200px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15); overflow: hidden;">

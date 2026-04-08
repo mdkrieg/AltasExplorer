@@ -1175,6 +1175,42 @@ ipcMain.handle('validate-notes-header', async (event, line) => {
 });
 
 /**
+ * TODO Parser: Parse ALL TODO blocks from a section's content (returns array with labels)
+ */
+ipcMain.handle('parse-todo-section', async (event, sectionContent) => {
+  try {
+    return notesParser.parseTodoBlocks(sectionContent);
+  } catch (err) {
+    logger.error('Error parsing TODO section:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * TODO Parser: Normalize * bullets to [ ] within the first TODO block
+ */
+ipcMain.handle('normalize-todo-section', async (event, sectionContent) => {
+  try {
+    return notesParser.normalizeTodoBlock(sectionContent);
+  } catch (err) {
+    logger.error('Error normalizing TODO section:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * TODO Parser: Toggle completion state of specified TODO items by index
+ */
+ipcMain.handle('update-todo-items', async (event, { sectionContent, updates }) => {
+  try {
+    return notesParser.updateTodoItemStates(sectionContent, updates);
+  } catch (err) {
+    logger.error('Error updating TODO items:', err.message);
+    throw err;
+  }
+});
+
+/**
  * Markdown: Render markdown to HTML
  */
 ipcMain.handle('render-markdown', async (event, content) => {
@@ -1775,12 +1811,16 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     // Resolve which entries have notes attached (for notes indicator in grid)
     let filesWithNotes = new Set();
     let localNotesContent = '';
+    let localNotesSections = {};
     try {
       const notesFilePath = path.join(normalizedPath, 'notes.txt');
       if (fsSync.existsSync(notesFilePath)) {
         const notesContent = fsSync.readFileSync(notesFilePath, 'utf-8');
-        const headersArray = notesParser.extractAllHeaders(notesContent);
-        localNotesContent = notesContent; // Store for later use with directory-level notes
+        localNotesSections = notesParser.parseNotesFileSections(notesContent);
+
+        localNotesContent = notesContent;
+
+        const headersArray = notesParser.extractAllHeaders(localNotesContent);
         filesWithNotes = new Set(headersArray);
         // Directories get checked later since we have to dive into subdirs for it
       }
@@ -1788,7 +1828,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       logger.warn(`Error reading notes for directory ${normalizedPath}:`, err.message);
     }
 
-    // Add hasNotes field to each entry
+    // Add hasNotes and todoCounts fields to each entry
     let dirNotesFilePath;
     let dirNotesContent;
     let directoryNotes;
@@ -1800,6 +1840,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           if (fsSync.existsSync(dirNotesFilePath)) {
             try {
               dirNotesContent = fsSync.readFileSync(dirNotesFilePath, 'utf-8');
+
+              // (normalization deferred to write-back)
             } catch (err) {
               logger.warn(`Error reading notes for subdirectory ${entry.path}:`, err.message);
               dirNotesContent = '';
@@ -1807,15 +1849,29 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             directoryNotes = notesParser.extractDirectoryNotes(dirNotesContent);
           } else {
             directoryNotes = '';
+            dirNotesContent = '';
           }
         } else {
           // For the current directory's "." entry, use the already-read localNotesContent
           directoryNotes = notesParser.extractDirectoryNotes(localNotesContent);
+          dirNotesContent = localNotesContent;
         }
         entry.hasNotes = !!directoryNotes && directoryNotes.trim().length > 0;
+
+        // Compute todoCounts for the directory (from its __dir__ section)
+        const dirSection = entry.filename === '.'
+          ? (localNotesSections['__dir__'] || directoryNotes)
+          : notesParser.extractDirectoryNotes(dirNotesContent || '');
+        const dirTodoCounts = notesParser.countTodoItems(dirSection);
+        entry.todoCounts = dirTodoCounts.total > 0 ? dirTodoCounts : null;
       } else {
         // For files, check if they have file-specific notes
         entry.hasNotes = filesWithNotes.has(entry.filename);
+
+        // Compute todoCounts for the file (from its named section in localNotesContent)
+        const fileSection = localNotesSections[entry.filename] || '';
+        const fileTodoCounts = notesParser.countTodoItems(fileSection);
+        entry.todoCounts = fileTodoCounts.total > 0 ? fileTodoCounts : null;
       }
     }
 

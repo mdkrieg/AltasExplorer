@@ -144,7 +144,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Notes file operations
   readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
   writeFileContent: (filePath, content) => ipcRenderer.invoke('write-file-content', { filePath, content }),
-  
+
+  // TODO operations
+  parseTodoSection: (sectionContent) => ipcRenderer.invoke('parse-todo-section', sectionContent),
+  normalizeTodoSection: (sectionContent) => ipcRenderer.invoke('normalize-todo-section', sectionContent),
+  updateTodoItems: (sectionContent, updates) => ipcRenderer.invoke('update-todo-items', { sectionContent, updates }),
+
   // Markdown rendering via IPC
   renderMarkdown: (content) => ipcRenderer.invoke('render-markdown', content),
   

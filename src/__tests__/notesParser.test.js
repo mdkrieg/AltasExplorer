@@ -8,6 +8,11 @@ const {
   writeNotesSection,
   isValidFileHeader,
   extractHeaderFilename,
+  parseTodoBlock,
+  parseTodoBlocks,
+  countTodoItems,
+  normalizeTodoBlock,
+  updateTodoItemStates,
   extractAllHeaders,
   extractDirectoryNotes,
   extractFileNotes,
@@ -384,5 +389,504 @@ Notes here`;
     
     // Both should produce identical results
     expect(resultLF).toEqual(resultCRLF);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseTodoBlock
+// ---------------------------------------------------------------------------
+
+describe('notesParser - parseTodoBlock', () => {
+  test('returns null when no TODO: header', () => {
+    expect(parseTodoBlock('just some text\n* not a todo')).toBeNull();
+    expect(parseTodoBlock('')).toBeNull();
+  });
+
+  test('parses simple asterisk list', () => {
+    const content = 'TODO:\n* item 1\n* item 2\n* item 3';
+    const result = parseTodoBlock(content);
+    expect(result).not.toBeNull();
+    expect(result.items).toHaveLength(3);
+    expect(result.items[0]).toMatchObject({ text: 'item 1', level: 0, completed: false });
+    expect(result.items[1]).toMatchObject({ text: 'item 2', level: 0, completed: false });
+    expect(result.items[2]).toMatchObject({ text: 'item 3', level: 0, completed: false });
+  });
+
+  test('parses GFM checkbox bullets', () => {
+    const content = 'TODO:\n[ ] open task\n[x] done task\n[X] also done';
+    const result = parseTodoBlock(content);
+    expect(result.items[0]).toMatchObject({ text: 'open task', completed: false });
+    expect(result.items[1]).toMatchObject({ text: 'done task', completed: true });
+    expect(result.items[2]).toMatchObject({ text: 'also done', completed: true });
+  });
+
+  test('ends block at blank line', () => {
+    const content = 'TODO:\n* item 1\n* item 2\n\nNot in list';
+    const result = parseTodoBlock(content);
+    expect(result.items).toHaveLength(2);
+  });
+
+  test('block extends to end of content when no blank line', () => {
+    const content = 'TODO:\n* item 1\n* item 2';
+    const result = parseTodoBlock(content);
+    expect(result.items).toHaveLength(2);
+  });
+
+  test('multiline item via continuation lines', () => {
+    const content = 'TODO:\n* item that wraps\naround two lines\n* next item';
+    const result = parseTodoBlock(content);
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0].text).toBe('item that wraps around two lines');
+    expect(result.items[1].text).toBe('next item');
+  });
+
+  test('multi-level indent with 2-space indent', () => {
+    const content = 'TODO:\n* top\n  * sub1\n  * sub2\n    * deep';
+    const result = parseTodoBlock(content);
+    expect(result.items[0]).toMatchObject({ text: 'top', level: 0 });
+    expect(result.items[1]).toMatchObject({ text: 'sub1', level: 1 });
+    expect(result.items[2]).toMatchObject({ text: 'sub2', level: 1 });
+    expect(result.items[3]).toMatchObject({ text: 'deep', level: 2 });
+  });
+
+  test('odd number of leading spaces rounds down', () => {
+    const content = 'TODO:\n* level0\n   * level1\n     * level2';
+    const result = parseTodoBlock(content);
+    expect(result.items[0].level).toBe(0);
+    expect(result.items[1].level).toBe(1); // 3 spaces → floor(3/2) = 1
+    expect(result.items[2].level).toBe(2); // 5 spaces → floor(5/2) = 2
+  });
+
+  test('tab indent counts as 2 spaces', () => {
+    const content = 'TODO:\n* top\n\t* sub';
+    const result = parseTodoBlock(content);
+    expect(result.items[0].level).toBe(0);
+    expect(result.items[1].level).toBe(1); // 1 tab = 2 spaces → level 1
+  });
+
+  test('reports correct todoHeaderLine and blockStartLine', () => {
+    const content = 'prefix line\nTODO:\n* item';
+    const result = parseTodoBlock(content);
+    expect(result.todoHeaderLine).toBe(1);
+    expect(result.blockStartLine).toBe(2);
+  });
+
+  test('ignores non-bullet lines before first item', () => {
+    // Only after an item has been started are non-bullet lines treated as continuations
+    const content = 'TODO:\npreamble not a bullet\n* actual item';
+    const result = parseTodoBlock(content);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].text).toBe('actual item');
+  });
+
+  test('empty TODO block returns empty items array', () => {
+    const content = 'TODO:\n\nsome other text';
+    const result = parseTodoBlock(content);
+    expect(result).not.toBeNull();
+    expect(result.items).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countTodoItems
+// ---------------------------------------------------------------------------
+
+describe('notesParser - countTodoItems', () => {
+  test('returns zeros when no TODO block', () => {
+    expect(countTodoItems('no todo here')).toEqual({ total: 0, completed: 0 });
+    expect(countTodoItems('')).toEqual({ total: 0, completed: 0 });
+  });
+
+  test('counts correctly with mixed states', () => {
+    const content = 'TODO:\n[ ] a\n[x] b\n[ ] c\n[x] d';
+    expect(countTodoItems(content)).toEqual({ total: 4, completed: 2 });
+  });
+
+  test('all complete', () => {
+    const content = 'TODO:\n[x] a\n[x] b';
+    expect(countTodoItems(content)).toEqual({ total: 2, completed: 2 });
+  });
+
+  test('none complete', () => {
+    const content = 'TODO:\n* a\n* b\n* c';
+    expect(countTodoItems(content)).toEqual({ total: 3, completed: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeTodoBlock
+// ---------------------------------------------------------------------------
+
+describe('notesParser - normalizeTodoBlock', () => {
+  test('no-op when no TODO block', () => {
+    const content = '* asterisk outside todo';
+    expect(normalizeTodoBlock(content)).toBe(content);
+  });
+
+  test('converts * bullets to [ ] inside TODO block', () => {
+    const content = 'TODO:\n* item 1\n* item 2';
+    const result = normalizeTodoBlock(content);
+    expect(result).toContain('[ ] item 1');
+    expect(result).toContain('[ ] item 2');
+    expect(result).not.toContain('* item');
+  });
+
+  test('leaves [ ] and [x] unchanged', () => {
+    const content = 'TODO:\n[ ] open\n[x] done\n* new';
+    const result = normalizeTodoBlock(content);
+    expect(result).toContain('[ ] open');
+    expect(result).toContain('[x] done');
+    expect(result).toContain('[ ] new');
+    expect(result).not.toContain('* new');
+  });
+
+  test('preserves leading indentation', () => {
+    const content = 'TODO:\n* top\n  * sub';
+    const result = normalizeTodoBlock(content);
+    expect(result).toContain('[ ] top');
+    expect(result).toContain('  [ ] sub');
+  });
+
+  test('does not modify content after blank-line end of block', () => {
+    const content = 'TODO:\n* item\n\n* outside block should not change';
+    const result = normalizeTodoBlock(content);
+    const lines = result.split('\n');
+    // Line after blank should still be '* outside block should not change'
+    expect(lines[3]).toBe('* outside block should not change');
+  });
+
+  test('idempotent: normalizing an already-normalized block is a no-op', () => {
+    const content = 'TODO:\n[ ] item 1\n[ ] item 2\n[x] done';
+    expect(normalizeTodoBlock(content)).toBe(content);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// updateTodoItemStates
+// ---------------------------------------------------------------------------
+
+describe('notesParser - updateTodoItemStates', () => {
+  test('no-op when no TODO block', () => {
+    const content = 'no todo';
+    expect(updateTodoItemStates(content, [{ itemIndex: 0, completed: true }])).toBe(content);
+  });
+
+  test('marks item as completed', () => {
+    const content = 'TODO:\n[ ] item 1\n[ ] item 2';
+    const result = updateTodoItemStates(content, [{ itemIndex: 0, completed: true }]);
+    expect(result).toContain('[x] item 1');
+    expect(result).toContain('[ ] item 2');
+  });
+
+  test('marks item as not completed', () => {
+    const content = 'TODO:\n[x] item 1\n[x] item 2';
+    const result = updateTodoItemStates(content, [{ itemIndex: 1, completed: false }]);
+    expect(result).toContain('[x] item 1');
+    expect(result).toContain('[ ] item 2');
+  });
+
+  test('toggles multiple items in one call', () => {
+    const content = 'TODO:\n[ ] a\n[ ] b\n[ ] c';
+    const result = updateTodoItemStates(content, [
+      { itemIndex: 0, completed: true },
+      { itemIndex: 2, completed: true }
+    ]);
+    expect(result).toContain('[x] a');
+    expect(result).toContain('[ ] b');
+    expect(result).toContain('[x] c');
+  });
+
+  test('converts * bullet to [x] when marking complete', () => {
+    const content = 'TODO:\n* item 1';
+    const result = updateTodoItemStates(content, [{ itemIndex: 0, completed: true }]);
+    expect(result).toContain('[x] item 1');
+  });
+
+  test('ignores out-of-bounds index gracefully', () => {
+    const content = 'TODO:\n[ ] item';
+    expect(() => updateTodoItemStates(content, [{ itemIndex: 99, completed: true }])).not.toThrow();
+    const result = updateTodoItemStates(content, [{ itemIndex: 99, completed: true }]);
+    expect(result).toContain('[ ] item');
+  });
+
+  test('preserves indentation when toggling', () => {
+    const content = 'TODO:\n* top\n  * sub';
+    const result = updateTodoItemStates(content, [{ itemIndex: 1, completed: true }]);
+    expect(result).toContain('  [x] sub');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseTodoBlock — label support
+// ---------------------------------------------------------------------------
+
+describe('notesParser - parseTodoBlock label support', () => {
+  test('returns empty label for bare TODO:', () => {
+    const result = parseTodoBlock('TODO:\n* item');
+    expect(result).not.toBeNull();
+    expect(result.label).toBe('');
+  });
+
+  test('returns label text after TODO:', () => {
+    const result = parseTodoBlock('TODO: Release tasks\n* item');
+    expect(result).not.toBeNull();
+    expect(result.label).toBe('Release tasks');
+  });
+
+  test('trims whitespace from label', () => {
+    const result = parseTodoBlock('TODO:   lots of space   \n* item');
+    expect(result.label).toBe('lots of space');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseTodoBlocks — multiple groups
+// ---------------------------------------------------------------------------
+
+describe('notesParser - parseTodoBlocks', () => {
+  test('returns empty array when no TODO blocks', () => {
+    expect(parseTodoBlocks('')).toEqual([]);
+    expect(parseTodoBlocks('no todo here')).toEqual([]);
+  });
+
+  test('returns single-element array for one TODO block', () => {
+    const content = 'TODO:\n* item 1\n* item 2';
+    const result = parseTodoBlocks(content);
+    expect(result).toHaveLength(1);
+    expect(result[0].label).toBe('');
+    expect(result[0].items).toHaveLength(2);
+  });
+
+  test('returns multiple blocks for multiple TODO: headers', () => {
+    const content = 'TODO: Group A\n* a1\n* a2\n\nTODO: Group B\n* b1';
+    const result = parseTodoBlocks(content);
+    expect(result).toHaveLength(2);
+    expect(result[0].label).toBe('Group A');
+    expect(result[0].items).toHaveLength(2);
+    expect(result[1].label).toBe('Group B');
+    expect(result[1].items).toHaveLength(1);
+    expect(result[1].items[0].text).toBe('b1');
+  });
+
+  test('preserves correct todoHeaderLine for each block', () => {
+    const content = 'TODO:\n* a\n\nTODO:\n* b';
+    const result = parseTodoBlocks(content);
+    expect(result[0].todoHeaderLine).toBe(0);
+    expect(result[1].todoHeaderLine).toBe(3);
+  });
+
+  test('blocks without items have empty items array', () => {
+    const content = 'TODO: Empty\n\nTODO: HasItems\n* x';
+    const result = parseTodoBlocks(content);
+    expect(result).toHaveLength(2);
+    expect(result[0].items).toHaveLength(0);
+    expect(result[1].items).toHaveLength(1);
+  });
+
+  test('adjacent TODO blocks without blank line between them each end when next TODO: appears', () => {
+    // The first block is terminated by the blank line or the second TODO: header
+    // In our impl, the first block's content stops at the blank line
+    const content = 'TODO: A\n* a1\n\nTODO: B\n* b1';
+    const result = parseTodoBlocks(content);
+    expect(result).toHaveLength(2);
+    expect(result[0].items).toHaveLength(1);
+    expect(result[1].items).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countTodoItems — multi-block
+// ---------------------------------------------------------------------------
+
+describe('notesParser - countTodoItems multi-block', () => {
+  test('counts across multiple groups', () => {
+    const content = 'TODO: A\n[ ] a1\n[x] a2\n\nTODO: B\n[ ] b1\n[x] b2\n[x] b3';
+    expect(countTodoItems(content)).toEqual({ total: 5, completed: 3 });
+  });
+
+  test('handles blocks with no items mixed with blocks with items', () => {
+    const content = 'TODO: Empty\n\nTODO: Full\n[ ] x\n[x] y';
+    expect(countTodoItems(content)).toEqual({ total: 2, completed: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeTodoBlock — multi-block
+// ---------------------------------------------------------------------------
+
+describe('notesParser - normalizeTodoBlock multi-block', () => {
+  test('normalizes bullets in all TODO blocks', () => {
+    const content = 'TODO: A\n* a1\n* a2\n\nTODO: B\n* b1';
+    const result = normalizeTodoBlock(content);
+    expect(result).toContain('[ ] a1');
+    expect(result).toContain('[ ] a2');
+    expect(result).toContain('[ ] b1');
+    expect(result).not.toContain('* a1');
+    expect(result).not.toContain('* b1');
+  });
+
+  test('does not modify content between blocks', () => {
+    const content = 'TODO: A\n* a\n\n* not in any block\n\nTODO: B\n* b';
+    const result = normalizeTodoBlock(content);
+    const lines = result.split('\n');
+    // The line "* not in any block" is between two blank lines, not in a TODO block
+    expect(lines[3]).toBe('* not in any block');
+    expect(result).toContain('[ ] a');
+    expect(result).toContain('[ ] b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// updateTodoItemStates — multi-block flat indices
+// ---------------------------------------------------------------------------
+
+describe('notesParser - updateTodoItemStates multi-block', () => {
+  test('flat index 0 addresses first item of first group', () => {
+    const content = 'TODO: A\n[ ] a1\n\nTODO: B\n[ ] b1';
+    const result = updateTodoItemStates(content, [{ itemIndex: 0, completed: true }]);
+    expect(result).toContain('[x] a1');
+    expect(result).toContain('[ ] b1');
+  });
+
+  test('flat index crosses group boundary', () => {
+    // Group A has 2 items (indices 0, 1), Group B has 1 item (index 2)
+    const content = 'TODO: A\n[ ] a1\n[ ] a2\n\nTODO: B\n[ ] b1';
+    const result = updateTodoItemStates(content, [{ itemIndex: 2, completed: true }]);
+    expect(result).toContain('[ ] a1');
+    expect(result).toContain('[ ] a2');
+    expect(result).toContain('[x] b1');
+  });
+
+  test('updates in both groups simultaneously', () => {
+    const content = 'TODO: A\n[ ] a1\n[ ] a2\n\nTODO: B\n[ ] b1';
+    const result = updateTodoItemStates(content, [
+      { itemIndex: 1, completed: true },
+      { itemIndex: 2, completed: true }
+    ]);
+    expect(result).toContain('[ ] a1');
+    expect(result).toContain('[x] a2');
+    expect(result).toContain('[x] b1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseTodoBlocks — COMMENT/REPLY parsing
+// ---------------------------------------------------------------------------
+
+describe('notesParser - parseTodoBlocks — COMMENT/REPLY parsing', () => {
+  test('items with no annotations have empty comments array', () => {
+    const content = 'TODO:\n[ ] item1\n[ ] item2';
+    const [block] = parseTodoBlocks(content);
+    expect(block.items[0].comments).toEqual([]);
+    expect(block.items[1].comments).toEqual([]);
+  });
+
+  test('COMMENT: attaches to preceding item', () => {
+    const content = 'TODO:\n[ ] item1\n  COMMENT: hello';
+    const [block] = parseTodoBlocks(content);
+    expect(block.items[0].comments).toHaveLength(1);
+    expect(block.items[0].comments[0].text).toBe('hello');
+    expect(block.items[0].comments[0].replies).toEqual([]);
+  });
+
+  test('REPLY: attaches to preceding COMMENT', () => {
+    const content = 'TODO:\n[ ] item1\n  COMMENT: hello\n    REPLY: world';
+    const [block] = parseTodoBlocks(content);
+    const comment = block.items[0].comments[0];
+    expect(comment.replies).toHaveLength(1);
+    expect(comment.replies[0].text).toBe('world');
+  });
+
+  test('multiple COMMENTs on one item', () => {
+    const content = 'TODO:\n[ ] item1\n  COMMENT: first\n  COMMENT: second';
+    const [block] = parseTodoBlocks(content);
+    expect(block.items[0].comments).toHaveLength(2);
+    expect(block.items[0].comments[1].text).toBe('second');
+  });
+
+  test('orphan REPLY (no preceding COMMENT) creates synthetic comment with lineStart -1', () => {
+    const content = 'TODO:\n[ ] item1\n    REPLY: orphaned';
+    const [block] = parseTodoBlocks(content);
+    expect(block.items[0].comments).toHaveLength(1);
+    expect(block.items[0].comments[0].lineStart).toBe(-1);
+    expect(block.items[0].comments[0].text).toBe('');
+    expect(block.items[0].comments[0].replies[0].text).toBe('orphaned');
+  });
+
+  test('COMMENT after second item does not attach to first item', () => {
+    const content = 'TODO:\n[ ] item1\n[ ] item2\n  COMMENT: for item2';
+    const [block] = parseTodoBlocks(content);
+    expect(block.items[0].comments).toHaveLength(0);
+    expect(block.items[1].comments).toHaveLength(1);
+    expect(block.items[1].comments[0].text).toBe('for item2');
+  });
+
+  test('blockEndLine extends to include COMMENT/REPLY lines', () => {
+    const content = 'TODO:\n[ ] item1\n  COMMENT: note\n    REPLY: reply';
+    const [block] = parseTodoBlocks(content);
+    // Lines: 0=TODO, 1=item, 2=COMMENT, 3=REPLY
+    expect(block.blockEndLine).toBe(3);
+  });
+
+  test('COMMENT lineStart records correct line number', () => {
+    const content = 'TODO:\n[ ] item1\n  COMMENT: note';
+    const [block] = parseTodoBlocks(content);
+    expect(block.items[0].comments[0].lineStart).toBe(2);
+  });
+
+  test('works across multiple groups', () => {
+    const content = 'TODO: A\n[ ] a1\n  COMMENT: ca\n\nTODO: B\n[ ] b1';
+    const blocks = parseTodoBlocks(content);
+    expect(blocks[0].items[0].comments[0].text).toBe('ca');
+    expect(blocks[1].items[0].comments).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeTodoBlock — COMMENT/REPLY coercion
+// ---------------------------------------------------------------------------
+
+describe('notesParser - normalizeTodoBlock — COMMENT/REPLY coercion', () => {
+  test('COMMENT: coerced to item_indent + 2 spaces', () => {
+    const content = 'TODO:\n[ ] item\nCOMMENT: hello';
+    const result = normalizeTodoBlock(content);
+    // item has 0 indent, so comment should be at 2 spaces
+    expect(result).toContain('  COMMENT: hello');
+  });
+
+  test('REPLY: coerced to item_indent + 4 spaces', () => {
+    const content = 'TODO:\n[ ] item\n  COMMENT: hi\n    REPLY: hey';
+    const result = normalizeTodoBlock(content);
+    expect(result).toContain('    REPLY: hey');
+  });
+
+  test('REPLY already at wrong indent gets coerced', () => {
+    const content = 'TODO:\n[ ] item\n  COMMENT: hi\nREPLY: wrong_indent';
+    const result = normalizeTodoBlock(content);
+    expect(result).toContain('    REPLY: wrong_indent');
+  });
+
+  test('orphan REPLY inserts empty COMMENT: before it', () => {
+    const content = 'TODO:\n[ ] item\n    REPLY: orphan';
+    const result = normalizeTodoBlock(content);
+    const lines = result.split('\n');
+    const commentIdx = lines.findIndex(l => l.trim().startsWith('COMMENT:'));
+    const replyIdx = lines.findIndex(l => l.trim().startsWith('REPLY:'));
+    expect(commentIdx).toBeGreaterThan(-1);
+    expect(replyIdx).toBe(commentIdx + 1);
+  });
+
+  test('* bullet normalized to [ ] inside block containing COMMENT', () => {
+    const content = 'TODO:\n* item\n  COMMENT: note';
+    const result = normalizeTodoBlock(content);
+    expect(result).toContain('[ ] item');
+    expect(result).toContain('  COMMENT: note');
+  });
+
+  test('content outside TODO blocks is untouched', () => {
+    const content = 'Some notes\nCOMMENT: not a todo comment\nTODO:\n[ ] item\n  COMMENT: real';
+    const result = normalizeTodoBlock(content);
+    const lines = result.split('\n');
+    expect(lines[1]).toBe('COMMENT: not a todo comment');
   });
 });
