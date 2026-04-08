@@ -152,6 +152,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Markdown rendering via IPC
   renderMarkdown: (content) => ipcRenderer.invoke('render-markdown', content),
+
+  // EXIF metadata
+  getExifData: (filePath) => ipcRenderer.invoke('get-exif-data', filePath),
   
   // File history operations
   getFileHistory: (inode) => ipcRenderer.invoke('get-file-history', inode),

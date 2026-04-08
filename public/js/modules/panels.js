@@ -2203,7 +2203,7 @@ export async function updateItemPropertiesPage(panelId) {
 
 		if (!panelState[panelId].sectionCollapseState) {
 			panelState[panelId].sectionCollapseState = {
-				preview: false, information: false, attributes: false, notes: false, history: false
+				preview: false, information: false, exif: false, attributes: false, notes: false, history: false
 			};
 		}
 
@@ -2242,6 +2242,75 @@ export async function updateItemPropertiesPage(panelId) {
 		const $infoSection = $panel.find('.item-props-information-section');
 		$infoSection.css('display', 'flex');
 		applyCollapseState('information', $infoSection);
+
+		// EXIF section — dynamically injected for Image files, removed otherwise
+		$panel.find('.item-props-exif-section').remove();
+		if (!stats.isDirectory && stats.fileType === 'Image') {
+			const $exifSection = $(`
+				<div class="item-props-exif-section" style="display: flex; flex-direction: column; gap: 0;">
+					<div class="item-props-section-header" data-section="exif" style="display: flex; align-items: center; gap: 6px; border-top: 1px solid #eee; padding-top: 8px; cursor: pointer;">
+						<button class="btn-section-toggle" data-section="exif">&#9662;</button>
+						<span style="font-weight: bold; font-size: 12px; color: #444; flex: 1;">Image Metadata</span>
+					</div>
+					<div class="item-props-section-body item-props-exif-body" style="padding-top: 6px;">
+						<div class="item-props-exif-rows" style="display: flex; flex-direction: column; gap: 5px; font-size: 12px;">
+							<span style="color: #aaa; font-size: 12px; font-style: italic;">Loading…</span>
+						</div>
+					</div>
+				</div>
+			`);
+			$infoSection.after($exifSection);
+			applyCollapseState('exif', $exifSection);
+
+			// Async populate — fires after the synchronous render completes
+			window.electronAPI.getExifData(stats.path).then(result => {
+				const $rows = $exifSection.find('.item-props-exif-rows').empty();
+				if (!result || !result.success || !result.exif) {
+					$rows.append('<span style="color: #aaa; font-size: 12px; font-style: italic;">No EXIF data available</span>');
+					return;
+				}
+				const exif = result.exif;
+				const EXIF_LABELS = {
+					width:            'Width',
+					height:           'Height',
+					format:           'Format',
+					colorSpace:       'Color Space',
+					channels:         'Channels',
+					density:          'Density',
+					hasIccProfile:    'ICC Profile',
+					orientation:      'Orientation',
+					make:             'Camera Make',
+					model:            'Camera Model',
+					software:         'Software',
+					artist:           'Artist',
+					copyright:        'Copyright',
+					dateTime:         'Date/Time',
+					dateTimeOriginal: 'Date Taken',
+					exposureTime:     'Exposure',
+					fNumber:          'F-Number',
+					iso:              'ISO',
+					focalLength:      'Focal Length',
+					flash:            'Flash',
+					exposureProgram:  'Exposure Program',
+					whiteBalance:     'White Balance',
+					gpsLatitude:      'GPS Latitude',
+					gpsLongitude:     'GPS Longitude',
+					gpsLatRef:        'GPS Lat Ref',
+					gpsLonRef:        'GPS Lon Ref',
+					gpsAltitude:      'GPS Altitude',
+				};
+				for (const [key, label] of Object.entries(EXIF_LABELS)) {
+					if (exif[key] === undefined || exif[key] === null) continue;
+					const safeValue = utils.escapeHtml(String(exif[key]));
+					$rows.append(`<div class="stat-row"><span class="stat-label">${label}</span><span class="stat-value stat-value-wrap">${safeValue}</span></div>`);
+				}
+				if ($rows.children().length === 0) {
+					$rows.append('<span style="color: #aaa; font-size: 12px; font-style: italic;">No EXIF data available</span>');
+				}
+			}).catch(() => {
+				$exifSection.find('.item-props-exif-rows').html('<span style="color: #aaa; font-size: 12px; font-style: italic;">Could not read metadata</span>');
+			});
+		}
 
 		const $stats = $panel.find('.item-props-stats').empty();
 		function statRow(label, value, extraHtml) {

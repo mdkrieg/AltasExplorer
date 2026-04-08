@@ -22,16 +22,15 @@ Philosophy:
 [x] CTRL + Enter to do same as double click in grid
 [ ] Option for "Active Monitoring", taking combination of category, tags, and attributes
 [ ] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline
-[ ] Update markdown viewer to consider a single line break as a newline - keep double line breaks as a newline with additional line height (new <p> object perhaps?)
+[x] Update markdown viewer to consider a single line break as a newline - keep double line breaks as a newline with additional line height (new <p> object perhaps?) - turns out this was a built in option of markdown-it
 [ ] Alerts:
   [x] User can define what files / folders create alerts in a similar way (combo of category, tags, and attributes)
-[ ] Add option to attributes for "copyable" which adds a copy button in the grid
-[ ] Add a "pin" to Item Properties that prevents it from updating to the selected item (need good icon, maybe lock?)
-[ ] Fewer alerts. Currently the "All browser settings saved successfully" alert is annoying, things like this should just show some text stating the same, alerts should be reserved for errors only.
-
-[x] Landing page is an item summary for the item selected in the grid
+[ ] Add option on custom attributes for "copyable" which adds a copy button in the grid
+[ ] Add a "pin" to Item Properties that prevents it from updating to the selected item
+[x] Fewer alerts. Currently the "All browser settings saved successfully" alert is annoying, things like this should just show some text stating the same, alerts should be reserved for errors only.
+[x] Item landing page is an item summary for the item selected in the grid
   [x] Currently locked to panel 1 - make it so it obeys the panel with focus - does nothing if landing page is selected - maybe does if file editor selected?
-[ ] Heighten the grid text wrappers, "g" for example is getting cut off at the bottom
+[x] Heighten the grid text wrappers, "g" for example is getting cut off at the bottom
 [ ] TODOs in notes get aggregated
 [ ] Copy as Path in context menu
 [ ] Fix / figure out what to do with link in markdown (web links open in Electron)
@@ -66,4 +65,7 @@ Philosophy:
 [ ] Integrate Node-RED for "macros" functionality
   [ ] Automatically perform operations on file scan
   [ ] Customize the right click menu
-  [ ] Exposure in Settings menu
+  [ ] Exposure in Settings menu (to configure user's flows)
+
+### Security notes:
+[ ] Do we need to use dompurify (isomorphic-dompurify)? Consider once all the frontend utilities are in place as a sanitization step.

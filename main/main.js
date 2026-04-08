@@ -1276,6 +1276,82 @@ ipcMain.handle('render-markdown', async (event, content) => {
   }
 });
 
+/**
+ * EXIF: Extract image metadata from a file using sharp.
+ * Returns exif fields if found, or null if file has no EXIF / is not an image.
+ */
+ipcMain.handle('get-exif-data', async (event, filePath) => {
+  try {
+    if (!filePath || typeof filePath !== 'string') {
+      return { success: false, exif: null };
+    }
+    if (!fsSync.existsSync(filePath)) {
+      return { success: false, exif: null };
+    }
+
+    const sharp = require('sharp');
+    const meta = await sharp(filePath).metadata();
+    if (!meta) {
+      return { success: true, exif: null };
+    }
+
+    const exif = meta.exif ? require('sharp').metadata : null;
+
+    // sharp exposes the parsed EXIF fields directly on metadata for common tags
+    const result = {};
+
+    if (meta.width)             result.width            = meta.width;
+    if (meta.height)            result.height           = meta.height;
+    if (meta.format)            result.format           = meta.format;
+    if (meta.space)             result.colorSpace       = meta.space;
+    if (meta.channels)          result.channels         = meta.channels;
+    if (meta.density)           result.density          = `${meta.density} PPI`;
+    if (meta.hasProfile)        result.hasIccProfile    = meta.hasProfile ? 'Yes' : 'No';
+    if (meta.orientation)       result.orientation      = meta.orientation;
+
+    // Parse raw EXIF buffer with exif-reader if available, otherwise surface what sharp provides
+    if (meta.exif) {
+      try {
+        const ExifReader = require('exif-reader');
+        const parsed = ExifReader(meta.exif);
+        const image   = parsed.image   || {};
+        const photo   = parsed.Photo   || parsed.exif || {};
+        const gps     = parsed.GPSInfo || parsed.gps  || {};
+
+        if (image.Make)              result.make              = String(image.Make);
+        if (image.Model)             result.model             = String(image.Model);
+        if (image.Software)          result.software          = String(image.Software);
+        if (image.Artist)            result.artist            = String(image.Artist);
+        if (image.Copyright)         result.copyright         = String(image.Copyright);
+        if (image.DateTime)          result.dateTime          = String(image.DateTime);
+        if (photo.DateTimeOriginal)  result.dateTimeOriginal  = String(photo.DateTimeOriginal);
+        if (photo.ExposureTime)      result.exposureTime      = String(photo.ExposureTime);
+        if (photo.FNumber)           result.fNumber           = String(photo.FNumber);
+        if (photo.ISOSpeedRatings)   result.iso               = String(photo.ISOSpeedRatings);
+        if (photo.FocalLength)       result.focalLength       = String(photo.FocalLength);
+        if (photo.Flash !== undefined) result.flash           = String(photo.Flash);
+        if (photo.ExposureProgram !== undefined) result.exposureProgram = String(photo.ExposureProgram);
+        if (photo.WhiteBalance !== undefined)    result.whiteBalance    = String(photo.WhiteBalance);
+        if (gps.GPSLatitude && gps.GPSLongitude) {
+          result.gpsLatitude  = String(gps.GPSLatitude);
+          result.gpsLongitude = String(gps.GPSLongitude);
+          if (gps.GPSLatitudeRef)  result.gpsLatRef  = String(gps.GPSLatitudeRef);
+          if (gps.GPSLongitudeRef) result.gpsLonRef  = String(gps.GPSLongitudeRef);
+          if (gps.GPSAltitude)     result.gpsAltitude = String(gps.GPSAltitude);
+        }
+      } catch (_) {
+        // exif-reader not installed or parse failed — image geometry from sharp is still returned
+      }
+    }
+
+    const hasData = Object.keys(result).length > 0;
+    return { success: true, exif: hasData ? result : null };
+  } catch (err) {
+    logger.error('Error reading EXIF data:', err.message);
+    return { success: false, exif: null };
+  }
+});
+
 // ============================================
 // Background Refresh (backend-driven)
 // ============================================
