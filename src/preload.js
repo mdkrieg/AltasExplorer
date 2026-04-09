@@ -169,6 +169,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveAlertRule: (rule) => ipcRenderer.invoke('save-alert-rule', rule),
   deleteAlertRules: (ids) => ipcRenderer.invoke('delete-alert-rules', { ids }),
   
+  // Custom Actions
+  getCustomActions: () => ipcRenderer.invoke('get-custom-actions'),
+  saveCustomAction: (entry) => ipcRenderer.invoke('save-custom-action', entry),
+  deleteCustomAction: (id) => ipcRenderer.invoke('delete-custom-action', id),
+  verifyCustomAction: (id) => ipcRenderer.invoke('verify-custom-action', id),
+  runCustomAction: (actionId, filePath) => ipcRenderer.invoke('run-custom-action', { actionId, filePath }),
+  pickFile: (options) => ipcRenderer.invoke('pick-file', options || {}),
+
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),
 

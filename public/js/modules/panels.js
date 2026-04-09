@@ -850,14 +850,14 @@ async function initializeGridForPanel(panelId) {
 				}
 			}
 		},
-		onContextMenu: function (event) {
+		onContextMenu: async function (event) {
 			if (event.detail.recid) {
 				event.preventDefault();
 				setActivePanelId(panelId);
 				const selectedRecIds = this.getSelection();
 				const selectedRecords = selectedRecIds.map(recid => this.records[recid - 1]);
 				if (selectedRecords.length === 0) return;
-				const menuItems = generateW2UIContextMenu(selectedRecords, visiblePanels);
+				const menuItems = await generateW2UIContextMenu(selectedRecords, visiblePanels);
 				const origEvent = event.detail.originalEvent;
 				showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId);
 			}

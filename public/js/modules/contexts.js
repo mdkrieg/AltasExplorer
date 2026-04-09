@@ -18,7 +18,7 @@ import {
 let panelContextMenuState = {};
 let globalHandlersInitialized = false;
 
-export function generateW2UIContextMenu(selectedRecords, visiblePanelCount = panels.visiblePanels) {
+export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount = panels.visiblePanels) {
 	const allCategories = getAllCategories();
 	const allTags = getAllTags();
 	const isMultiSelect = selectedRecords.length > 1;
@@ -170,6 +170,28 @@ export function generateW2UIContextMenu(selectedRecords, visiblePanelCount = pan
 		const label = fileCount > 1 ? `Calculate Checksum (${fileCount} files)` : 'Calculate Checksum';
 		contextMenu.push({ id: 'calculate-checksum', text: label, icon: 'fa fa-hashtag' });
 	}
+
+	// Custom Actions
+	try {
+		const allActions = await window.electronAPI.getCustomActions();
+		if (allActions && allActions.length > 0) {
+			const singleRecord = !isMultiSelect ? selectedRecords[0] : null;
+			const filename = singleRecord ? (singleRecord.filenameRaw || singleRecord.filename || '') : '';
+			const matchingActions = allActions.filter(action => {
+				if (!action.filePatterns || action.filePatterns.length === 0) return true;
+				return action.filePatterns.some(pattern => {
+					const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+					return new RegExp('^' + escaped + '$', 'i').test(filename);
+				});
+			});
+			if (matchingActions.length > 0) {
+				addSeparator(contextMenu);
+				matchingActions.forEach(action => {
+					contextMenu.push({ id: `run-custom-action-${action.id}`, text: action.label });
+				});
+			}
+		}
+	} catch (_) { /* custom actions are non-critical */ }
 
 	return contextMenu;
 }
@@ -398,6 +420,38 @@ async function handleContextMenuClick(event, panelId) {
 			}
 		} catch (err) {
 			alert('Error removing tag: ' + err.message);
+		}
+	}
+
+	if (menuItemId.startsWith('run-custom-action-')) {
+		const actionId = menuItemId.replace('run-custom-action-', '');
+		const record = selectedRecords[0];
+		if (!record) return;
+		try {
+			const verify = await window.electronAPI.verifyCustomAction(actionId);
+			const runAction = async () => {
+				const result = await window.electronAPI.runCustomAction(actionId, record.path);
+				if (result && !result.success) {
+					const detail = result.stderr && result.stderr.trim()
+						? result.stderr.trim()
+						: (result.stdout && result.stdout.trim() ? result.stdout.trim() : result.error);
+					w2alert(`<b>Custom action failed</b><br><br><pre style="font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap">${detail}</pre>`, 'Action Failed');
+				}
+			};
+			if (verify && verify.isScriptType && verify.valid === false) {
+				const oldHash = (verify.storedChecksum || '').substring(0, 16) + '…';
+				const newHash = (verify.current || '').substring(0, 16) + '…';
+				w2confirm({
+					msg: `The script file has changed since it was registered.<br><br>Stored: <code>${oldHash}</code><br>Current: <code>${newHash}</code><br><br>Run anyway?`,
+					title: 'Script Modified — Proceed?',
+					width: 480,
+					height: 240
+				}).yes(async () => { await runAction(); });
+			} else {
+				await runAction();
+			}
+		} catch (err) {
+			console.error('Error running custom action:', err);
 		}
 	}
 }

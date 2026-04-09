@@ -14,6 +14,9 @@ const icons = require('../src/icons');
 const checksum = require('../src/checksum');
 const attributes = require('../src/attributes');
 const notesParser = require('../src/notesParser');
+const customActions = require('../src/customActions');
+const { execFile } = require('child_process');
+const { dialog } = require('electron');
 
 let mainWindow;
 
@@ -1349,6 +1352,131 @@ ipcMain.handle('get-exif-data', async (event, filePath) => {
   } catch (err) {
     logger.error('Error reading EXIF data:', err.message);
     return { success: false, exif: null };
+  }
+});
+
+// ============================================
+// Custom Actions
+// ============================================
+
+/**
+ * Custom Actions: Return all configured actions
+ */
+ipcMain.handle('get-custom-actions', () => {
+  try {
+    return customActions.getCustomActions();
+  } catch (err) {
+    logger.error('Error getting custom actions:', err.message);
+    return [];
+  }
+});
+
+/**
+ * Custom Actions: Save (create or update) an action.
+ * For script-type executables, the checksum is (re-)computed automatically.
+ */
+ipcMain.handle('save-custom-action', (event, entry) => {
+  try {
+    const saved = customActions.saveCustomAction(entry);
+    return { success: true, action: saved };
+  } catch (err) {
+    logger.error('Error saving custom action:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Custom Actions: Delete an action by id
+ */
+ipcMain.handle('delete-custom-action', (event, id) => {
+  try {
+    customActions.deleteCustomAction(id);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error deleting custom action:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Custom Actions: Verify the checksum of a script-type action.
+ * Returns { valid, current, isScriptType, storedChecksum, checksumUpdatedAt }
+ */
+ipcMain.handle('verify-custom-action', (event, id) => {
+  try {
+    const actions = customActions.getCustomActions();
+    const action = actions.find(a => a.id === id);
+    if (!action) return { success: false, error: 'Action not found' };
+    const result = customActions.verifyChecksum(action);
+    return { success: true, ...result, storedChecksum: action.checksum, checksumUpdatedAt: action.checksumUpdatedAt };
+  } catch (err) {
+    logger.error('Error verifying custom action:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Custom Actions: Execute an action against a file path.
+ * Uses execFile (no shell) for security. The file path is always the last argument.
+ */
+ipcMain.handle('run-custom-action', async (event, { actionId, filePath }) => {
+  try {
+    const actions = customActions.getCustomActions();
+    const action = actions.find(a => a.id === actionId);
+    if (!action) return { success: false, error: 'Action not found' };
+
+    const executable = action.executable;
+    const scriptArgs = Array.isArray(action.args) ? action.args : [];
+
+    if (!fsSync.existsSync(executable)) {
+      return { success: false, error: `Executable not found: ${executable}` };
+    }
+    if (!fsSync.existsSync(filePath)) {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+
+    logger.info(`[CUSTOM ACTION] "${action.label}" | ${executable} ${[...scriptArgs, filePath].join(' ')}`);
+
+    return new Promise((resolve) => {
+      execFile(
+        executable,
+        [...scriptArgs, filePath],
+        { shell: false, timeout: 60000, maxBuffer: 10 * 1024 * 1024, windowsHide: false, encoding: 'utf8' },
+        (error, stdout, stderr) => {
+          if (error) {
+            const detail = [];
+            if (error.code !== undefined) detail.push(`exit code ${error.code}`);
+            if (stderr && stderr.trim()) detail.push(`stderr: ${stderr.trim()}`);
+            else if (stdout && stdout.trim()) detail.push(`stdout: ${stdout.trim()}`);
+            logger.error(`[CUSTOM ACTION] Failed: ${error.message}${detail.length ? ' | ' + detail.join(' | ') : ''}`);
+            resolve({ success: false, error: error.message, stdout: stdout || '', stderr: stderr || '' });
+          } else {
+            logger.info(`[CUSTOM ACTION] Success: "${action.label}"`);
+            resolve({ success: true, stdout: stdout || '', stderr: stderr || '' });
+          }
+        }
+      );
+    });
+  } catch (err) {
+    logger.error('Error running custom action:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * File picker dialog (used by Custom Actions settings form)
+ */
+ipcMain.handle('pick-file', async (event, { filters, defaultPath } = {}) => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      defaultPath: defaultPath || os.homedir(),
+      filters: filters || [{ name: 'All Files', extensions: ['*'] }],
+      properties: ['openFile']
+    });
+    return result.filePaths[0] || null;
+  } catch (err) {
+    logger.error('Error showing file picker:', err.message);
+    return null;
   }
 });
 
