@@ -310,6 +310,22 @@ let customActionFormState = {
 	editingId: null
 };
 
+const DEFAULT_CUSTOM_ACTION_TIMEOUT_SECONDS = 60;
+
+function normalizeCustomActionTimeout(value) {
+	const numericValue = Number(value);
+	if (!Number.isFinite(numericValue)) return DEFAULT_CUSTOM_ACTION_TIMEOUT_SECONDS;
+
+	const roundedValue = Math.trunc(numericValue);
+	return roundedValue > 0 ? roundedValue : DEFAULT_CUSTOM_ACTION_TIMEOUT_SECONDS;
+}
+
+function updateCustomActionExecutionFields(executionMode) {
+	const normalizedMode = executionMode === 'terminal' ? 'terminal' : 'silent';
+	$('#form-ca-execution-mode').val(normalizedMode);
+	$('#form-ca-timeout-section').toggle(normalizedMode === 'silent');
+}
+
 export function setupHotkeysResizableDivider() {
 	const divider = $('#hotkeys-divider');
 	const formPanel = $('#hotkeys-form-panel');
@@ -1587,6 +1603,8 @@ export async function initializeCustomActionsGrid() {
 		executable: action.executable,
 		args: (action.args || []).join(' '),
 		filePatterns: (action.filePatterns || []).join(' '),
+		executionMode: action.executionMode || 'silent',
+		timeoutSeconds: normalizeCustomActionTimeout(action.timeoutSeconds),
 		checksum: action.checksum || null,
 		checksumUpdatedAt: action.checksumUpdatedAt || null
 	}));
@@ -1625,6 +1643,8 @@ function populateCustomActionsForm(record) {
 	$('#form-ca-executable').val(record.executable);
 	$('#form-ca-args').val(record.args || '');
 	$('#form-ca-patterns').val(record.filePatterns || '');
+	$('#form-ca-timeout').val(normalizeCustomActionTimeout(record.timeoutSeconds));
+	updateCustomActionExecutionFields(record.executionMode);
 	updateChecksumDisplay(record);
 }
 
@@ -1656,6 +1676,8 @@ export function clearCustomActionsForm() {
 	$('#form-ca-executable').val('');
 	$('#form-ca-args').val('');
 	$('#form-ca-patterns').val('');
+	$('#form-ca-timeout').val(DEFAULT_CUSTOM_ACTION_TIMEOUT_SECONDS);
+	updateCustomActionExecutionFields('silent');
 	$('#form-ca-checksum-section').hide();
 	$('#form-ca-checksum-status').text('');
 
@@ -1682,6 +1704,9 @@ export async function initializeCustomActionsForm() {
 	$('#btn-ca-save').off('click.caSave').on('click.caSave', () => saveCustomActionFromForm());
 	$('#btn-ca-clear').off('click.caClear').on('click.caClear', () => clearCustomActionsForm());
 	$('#btn-ca-delete').off('click.caDelete').on('click.caDelete', () => deleteCustomActionFromForm());
+	$('#form-ca-execution-mode').off('change.caMode').on('change.caMode', function () {
+		updateCustomActionExecutionFields($(this).val());
+	});
 }
 
 export async function saveCustomActionFromForm() {
@@ -1689,6 +1714,8 @@ export async function saveCustomActionFromForm() {
 	const executable = $('#form-ca-executable').val().trim();
 	const argsRaw = $('#form-ca-args').val().trim();
 	const patternsRaw = $('#form-ca-patterns').val().trim();
+	const executionMode = $('#form-ca-execution-mode').val() === 'terminal' ? 'terminal' : 'silent';
+	const timeoutSeconds = normalizeCustomActionTimeout($('#form-ca-timeout').val());
 
 	if (!label || !executable) {
 		w2alert('Label and Executable Path are required.');
@@ -1705,7 +1732,15 @@ export async function saveCustomActionFromForm() {
 	const id = customActionFormState.editingId || `ca-${Date.now()}`;
 
 	try {
-		const result = await window.electronAPI.saveCustomAction({ id, label, executable, args: cleanArgs, filePatterns });
+		const result = await window.electronAPI.saveCustomAction({
+			id,
+			label,
+			executable,
+			args: cleanArgs,
+			filePatterns,
+			executionMode,
+			timeoutSeconds
+		});
 		if (!result.success) {
 			w2alert('Error: ' + result.error);
 			return;

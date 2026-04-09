@@ -10,6 +10,11 @@ const terminalSessions = {};
 // Single shared listeners for terminal IPC events (registered once)
 let ipcListenersRegistered = false;
 
+function setTerminalHeader(panelId, title = 'Terminal') {
+	const $panel = $(`#panel-${panelId}`);
+	$panel.find('.terminal-header span').text(title);
+}
+
 function ensureIpcListeners() {
 	if (ipcListenersRegistered) return;
 	ipcListenersRegistered = true;
@@ -38,8 +43,9 @@ function ensureIpcListeners() {
  * Create and attach an xterm.js terminal to a panel.
  * @param {number} panelId - The panel number (2-4)
  * @param {string} cwd - Working directory for the shell
+ * @param {string} title - Header label for the panel terminal
  */
-export async function createTerminalPanel(panelId, cwd) {
+export async function createTerminalPanel(panelId, cwd, title = 'Terminal') {
 	ensureIpcListeners();
 
 	// Destroy any existing session in this panel first
@@ -109,9 +115,12 @@ export async function createTerminalPanel(panelId, cwd) {
 	$panel.find('.panel-grid').hide();
 	$panel.find('.panel-file-view').hide();
 	$panel.find('.panel-terminal-view').show();
+	setTerminalHeader(panelId, title);
 
 	// Focus the terminal
 	term.focus();
+
+	return { panelId, termId: id };
 }
 
 /**
@@ -135,6 +144,7 @@ export async function destroyTerminalPanel(panelId) {
 	delete terminalSessions[panelId];
 
 	const $panel = $(`#panel-${panelId}`);
+	setTerminalHeader(panelId, 'Terminal');
 	$panel.find('.panel-terminal-view').hide();
 	$panel.find('.panel-landing-page').show();
 }
@@ -168,4 +178,12 @@ export function fitTerminal(panelId) {
  */
 export function getTerminalPanelIds() {
 	return Object.keys(terminalSessions).map(Number);
+}
+
+export function getFallbackTerminalPanelId(visiblePanelCount) {
+	const existingTerminalPanelIds = getTerminalPanelIds().sort((left, right) => left - right);
+	const nextPanelId = visiblePanelCount + 1;
+	if (nextPanelId <= 4) return nextPanelId;
+	if (existingTerminalPanelIds.length > 0) return existingTerminalPanelIds[existingTerminalPanelIds.length - 1];
+	return Math.max(2, visiblePanelCount);
 }

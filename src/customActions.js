@@ -22,6 +22,9 @@ const ACTIONS_FILE = path.join(os.homedir(), '.atlasexplorer', 'custom-actions.j
 // Binary executables (.exe, .com) are not checksummed; use OS Authenticode for those.
 const SCRIPT_EXTENSIONS = new Set(['.bat', '.cmd', '.sh', '.py']);
 
+const DEFAULT_TIMEOUT_SECONDS = 60;
+const EXECUTION_MODES = new Set(['silent', 'terminal']);
+
 function isScriptType(executable) {
   return SCRIPT_EXTENSIONS.has(path.extname(executable).toLowerCase());
 }
@@ -35,6 +38,32 @@ function computeChecksum(filePath) {
   }
 }
 
+function normalizeExecutionMode(value) {
+  return EXECUTION_MODES.has(value) ? value : 'silent';
+}
+
+function normalizeTimeoutSeconds(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return DEFAULT_TIMEOUT_SECONDS;
+
+  const roundedValue = Math.trunc(numericValue);
+  return roundedValue > 0 ? roundedValue : DEFAULT_TIMEOUT_SECONDS;
+}
+
+function normalizeAction(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+
+  return {
+    ...entry,
+    args: Array.isArray(entry.args) ? entry.args : [],
+    filePatterns: Array.isArray(entry.filePatterns) ? entry.filePatterns : [],
+    executionMode: normalizeExecutionMode(entry.executionMode),
+    timeoutSeconds: normalizeTimeoutSeconds(entry.timeoutSeconds),
+    checksum: entry.checksum || null,
+    checksumUpdatedAt: entry.checksumUpdatedAt || null
+  };
+}
+
 class CustomActionService {
   /**
    * Return all configured custom actions, or [] if the file does not exist.
@@ -44,7 +73,9 @@ class CustomActionService {
       if (!fs.existsSync(ACTIONS_FILE)) return [];
       const content = fs.readFileSync(ACTIONS_FILE, 'utf8');
       const parsed = JSON.parse(content);
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed)
+        ? parsed.map(normalizeAction).filter(Boolean)
+        : [];
     } catch {
       return [];
     }
@@ -54,11 +85,11 @@ class CustomActionService {
    * Create or update a custom action entry.
    * Automatically (re-)computes the checksum for script-type executables.
    *
-   * @param {object} entry - { id, label, executable, args, filePatterns }
+   * @param {object} entry - { id, label, executable, args, filePatterns, executionMode, timeoutSeconds }
    * @returns {object} The saved entry (with checksum fields populated).
    */
   saveCustomAction(entry) {
-    const { id, label, executable, args, filePatterns } = entry;
+    const { id, label, executable, args, filePatterns, executionMode, timeoutSeconds } = entry;
     if (!id || !label || !executable) {
       throw new Error('id, label, and executable are required');
     }
@@ -76,6 +107,8 @@ class CustomActionService {
       executable,
       args: Array.isArray(args) ? args : [],
       filePatterns: Array.isArray(filePatterns) ? filePatterns : [],
+      executionMode: normalizeExecutionMode(executionMode),
+      timeoutSeconds: normalizeTimeoutSeconds(timeoutSeconds),
       checksum,
       checksumUpdatedAt
     };
@@ -133,6 +166,10 @@ class CustomActionService {
    */
   isScriptType(executable) {
     return isScriptType(executable);
+  }
+
+  getDefaultTimeoutSeconds() {
+    return DEFAULT_TIMEOUT_SECONDS;
   }
 
   _save(actions) {

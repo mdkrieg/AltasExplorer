@@ -19,6 +19,18 @@ import {
 let panelContextMenuState = {};
 let globalHandlersInitialized = false;
 
+async function openActionTerminalPanel(filePath, actionLabel) {
+	let targetPanelId = terminal.getFallbackTerminalPanelId(panels.visiblePanels);
+	if (targetPanelId > panels.visiblePanels) {
+		panels.setVisiblePanels(targetPanelId);
+		$(`#panel-${targetPanelId}`).show();
+		panels.attachPanelEventListeners(targetPanelId);
+		panels.updatePanelLayout();
+	}
+
+	return terminal.createTerminalPanel(targetPanelId, filePath, `Action: ${actionLabel}`);
+}
+
 export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount = panels.visiblePanels) {
 	const allCategories = getAllCategories();
 	const allTags = getAllTags();
@@ -476,8 +488,27 @@ async function handleContextMenuClick(event, panelId) {
 		const record = selectedRecords[0];
 		if (!record) return;
 		try {
+			const allActions = await window.electronAPI.getCustomActions();
+			const action = allActions.find(item => item.id === actionId);
+			if (!action) {
+				w2alert('Custom action not found.');
+				return;
+			}
 			const verify = await window.electronAPI.verifyCustomAction(actionId);
 			const runAction = async () => {
+				if (action.executionMode === 'terminal') {
+					const terminalPanel = await openActionTerminalPanel(record.path, action.label);
+					if (!terminalPanel || !terminalPanel.termId) {
+						w2alert('Unable to open a terminal panel for this action.');
+						return;
+					}
+					const result = await window.electronAPI.runCustomActionInTerminal(actionId, record.path, terminalPanel.termId);
+					if (result && !result.success) {
+						w2alert(`<b>Custom action failed</b><br><br><pre style="font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap">${result.error}</pre>`, 'Action Failed');
+					}
+					return;
+				}
+
 				const result = await window.electronAPI.runCustomAction(actionId, record.path);
 				if (result && !result.success) {
 					const detail = result.stderr && result.stderr.trim()

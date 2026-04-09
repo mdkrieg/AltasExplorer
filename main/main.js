@@ -21,6 +21,43 @@ const { dialog } = require('electron');
 
 let mainWindow;
 
+function getTerminalShell() {
+  return process.platform === 'win32'
+    ? (process.env.COMSPEC || 'cmd.exe')
+    : (process.env.SHELL || '/bin/bash');
+}
+
+function getSafeWorkingDirectory(targetPath) {
+  const fallbackPath = os.homedir();
+  const candidatePath = targetPath && fsSync.existsSync(targetPath)
+    ? (fsSync.statSync(targetPath).isDirectory() ? targetPath : path.dirname(targetPath))
+    : fallbackPath;
+
+  return fsSync.existsSync(candidatePath) ? candidatePath : fallbackPath;
+}
+
+function quoteForCommandShell(value) {
+  const normalized = String(value ?? '');
+  return `"${normalized.replace(/"/g, '""')}"`;
+}
+
+function quoteForPosixShell(value) {
+  const normalized = String(value ?? '');
+  return `'${normalized.replace(/'/g, `'\\''`)}'`;
+}
+
+function quoteForShell(value) {
+  return process.platform === 'win32'
+    ? quoteForCommandShell(value)
+    : quoteForPosixShell(value);
+}
+
+function buildTerminalCommand(action, filePath) {
+  const executable = quoteForShell(action.executable);
+  const args = Array.isArray(action.args) ? action.args.map(quoteForShell) : [];
+  return `${[executable, ...args, quoteForShell(filePath)].join(' ')}\r`;
+}
+
 /**
  * Create the main application window
  */
@@ -1438,11 +1475,22 @@ ipcMain.handle('run-custom-action', async (event, { actionId, filePath }) => {
 
     logger.info(`[CUSTOM ACTION] "${action.label}" | ${executable} ${[...scriptArgs, filePath].join(' ')}`);
 
+    const timeoutSeconds = Number.isFinite(Number(action.timeoutSeconds))
+      ? Math.max(1, Math.trunc(Number(action.timeoutSeconds)))
+      : customActions.getDefaultTimeoutSeconds();
+
     return new Promise((resolve) => {
       execFile(
         executable,
         [...scriptArgs, filePath],
-        { shell: false, timeout: 60000, maxBuffer: 10 * 1024 * 1024, windowsHide: false, encoding: 'utf8' },
+        {
+          shell: false,
+          timeout: timeoutSeconds * 1000,
+          maxBuffer: 10 * 1024 * 1024,
+          windowsHide: false,
+          encoding: 'utf8',
+          cwd: getSafeWorkingDirectory(filePath)
+        },
         (error, stdout, stderr) => {
           if (error) {
             const detail = [];
@@ -1460,6 +1508,44 @@ ipcMain.handle('run-custom-action', async (event, { actionId, filePath }) => {
     });
   } catch (err) {
     logger.error('Error running custom action:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('run-custom-action-in-terminal', async (event, { actionId, filePath, terminalId }) => {
+  try {
+    const actions = customActions.getCustomActions();
+    const action = actions.find(a => a.id === actionId);
+    if (!action) return { success: false, error: 'Action not found' };
+
+    const executable = action.executable;
+    if (!fsSync.existsSync(executable)) {
+      return { success: false, error: `Executable not found: ${executable}` };
+    }
+    if (!fsSync.existsSync(filePath)) {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+
+    const ptyProcess = ptyMap.get(String(terminalId));
+    if (!ptyProcess) {
+      return { success: false, error: 'Terminal session not found' };
+    }
+
+    const workingDirectory = getSafeWorkingDirectory(filePath);
+    const command = buildTerminalCommand(action, filePath);
+
+    logger.info(`[CUSTOM ACTION] Terminal run: "${action.label}" | ${executable} ${[...(action.args || []), filePath].join(' ')}`);
+
+    if (process.platform === 'win32') {
+      ptyProcess.write(`cd /d ${quoteForCommandShell(workingDirectory)}\r`);
+    } else {
+      ptyProcess.write(`cd ${quoteForPosixShell(workingDirectory)}\r`);
+    }
+    ptyProcess.write(command);
+
+    return { success: true };
+  } catch (err) {
+    logger.error('Error running custom action in terminal:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -1490,16 +1576,9 @@ let ptyIdCounter = 0;
 
 ipcMain.handle('terminal-create', (event, cwd) => {
   const id = String(++ptyIdCounter);
-  const shell = process.platform === 'win32'
-    ? (process.env.COMSPEC || 'cmd.exe')
-    : (process.env.SHELL || '/bin/bash');
+  const shell = getTerminalShell();
 
-  let safeCwd = cwd;
-  try {
-    if (!safeCwd || !fsSync.existsSync(safeCwd)) safeCwd = os.homedir();
-  } catch (_) {
-    safeCwd = os.homedir();
-  }
+  const safeCwd = getSafeWorkingDirectory(cwd);
 
   const ptyProcess = pty.spawn(shell, [], {
     name: 'xterm-256color',

@@ -622,6 +622,19 @@
                   <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Apply to File Patterns <span style="font-weight: normal; color: #888;">(space-separated, blank = all files)</span></label>
                   <input type="text" id="form-ca-patterns" placeholder="e.g. *.csv *.txt" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
                 </div>
+                <div style="display: flex; flex-direction: column; gap: 3px;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Execution Mode</label>
+                  <select id="form-ca-execution-mode" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px; background: white;">
+                    <option value="silent">Silent</option>
+                    <option value="terminal">Terminal Panel</option>
+                  </select>
+                  <span style="font-size: 10px; color: #888;">Silent runs use background execution. Terminal runs open inside the built-in xterm panel.</span>
+                </div>
+                <div id="form-ca-timeout-section" style="display: flex; flex-direction: column; gap: 3px;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Silent Timeout <span style="font-weight: normal; color: #888;">(seconds)</span></label>
+                  <input type="number" id="form-ca-timeout" min="1" step="1" value="60" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                  <span style="font-size: 10px; color: #888;">The process is stopped if it runs longer than this in silent mode.</span>
+                </div>
                 <div id="form-ca-checksum-section" style="display: none; flex-direction: column; gap: 3px;">
                   <label style="font-size: 11px; font-weight: bold;">Script Integrity</label>
                   <div id="form-ca-checksum-status" style="font-size: 11px; color: #555; padding: 5px 7px; background: #f5f5f5; border: 1px solid #eee; border-radius: 3px; word-break: break-all;"></div>
