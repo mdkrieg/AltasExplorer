@@ -5,6 +5,7 @@
 
 import * as sidebar from './sidebar.js';
 import * as utils from './utils.js';
+import * as terminal from './terminal.js';
 import { w2grid, w2ui, w2confirm, w2alert } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
@@ -1821,6 +1822,11 @@ export function removePanel(panelId) {
 		return;
 	}
 
+	// Clean up terminal session if present
+	if (terminal.isPanelTerminal(panelId)) {
+		terminal.destroyTerminalPanel(panelId);
+	}
+
 	const stateToSave = panelState[panelId];
 	closedPanelStack.push({
 		currentPath: stateToSave ? (stateToSave.currentPath || '') : '',
@@ -2006,6 +2012,10 @@ export function attachPanelEventListeners(panelId) {
 
 		$panel.find('.btn-panel-remove-overlay').off('click').on('click', function () {
 			removePanel(panelId);
+		});
+
+		$panel.find('.btn-terminal-close').off('click').on('click', async function () {
+			await terminal.destroyTerminalPanel(panelId);
 		});
 
 		$panel.find('.item-props-icon').off('click').on('click', async function () {

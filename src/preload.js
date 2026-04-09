@@ -190,5 +190,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   
   onDirectoryChanged: (callback) => ipcRenderer.on('directory-changed', (event, data) => callback(data)),
-  onAlertCountUpdated: (callback) => ipcRenderer.on('alert-count-updated', (event, data) => callback(data))
+  onAlertCountUpdated: (callback) => ipcRenderer.on('alert-count-updated', (event, data) => callback(data)),
+
+  // Terminal (node-pty)
+  terminalCreate: (cwd) => ipcRenderer.invoke('terminal-create', cwd),
+  terminalSendInput: (id, data) => ipcRenderer.invoke('terminal-input', { id, data }),
+  terminalResize: (id, cols, rows) => ipcRenderer.invoke('terminal-resize', { id, cols, rows }),
+  terminalDestroy: (id) => ipcRenderer.invoke('terminal-destroy', { id }),
+  onTerminalOutput: (callback) => ipcRenderer.on('terminal-output', (event, args) => callback(args)),
+  onTerminalExit: (callback) => ipcRenderer.on('terminal-exit', (event, args) => callback(args))
 });

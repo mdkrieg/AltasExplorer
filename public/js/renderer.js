@@ -27,6 +27,7 @@ import * as notes from './modules/notes.js';
 import * as alerts from './modules/alerts.js';
 import * as settings from './modules/settings.js';
 import * as todos from './modules/todos.js';
+import * as terminal from './modules/terminal.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, hideFileView, toggleFileEditMode } from './modules/notes.js';
@@ -452,6 +453,22 @@ function attachEventListeners() {
           panels.updatePanelLayout();
         }
         break;
+      case 'open_terminal': {
+        event.preventDefault();
+        const cwd = panelState[1].currentPath || '';
+        let termPanelId;
+        if (panels.visiblePanels < 4) {
+          termPanelId = panels.visiblePanels + 1;
+          panels.setVisiblePanels(termPanelId);
+          $(`#panel-${termPanelId}`).show();
+          panels.attachPanelEventListeners(termPanelId);
+          panels.updatePanelLayout();
+        } else {
+          termPanelId = panels.visiblePanels;
+        }
+        await terminal.createTerminalPanel(termPanelId, cwd);
+        break;
+      }
       case 'close_panel':
         event.preventDefault();
         panels.closeActivePanel();

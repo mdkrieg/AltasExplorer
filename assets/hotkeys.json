@@ -20,6 +20,11 @@
       "key": "Ctrl+t",
       "default": "Ctrl+t"
     },
+    "open_terminal": {
+      "label": "Open Terminal Panel",
+      "key": "Ctrl+j",
+      "default": "Ctrl+j"
+    },
     "close_panel": {
       "label": "Close Active Panel",
       "key": "Ctrl+w",

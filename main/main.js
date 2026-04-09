@@ -2,6 +2,7 @@
 const path = require('path');
 const os = require('os');
 const fsSync = require('fs');
+const pty = require('node-pty');
 
 // Import service modules
 const logger = require('../src/logger');
@@ -1478,6 +1479,72 @@ ipcMain.handle('pick-file', async (event, { filters, defaultPath } = {}) => {
     logger.error('Error showing file picker:', err.message);
     return null;
   }
+});
+
+// ============================================
+// Terminal (node-pty)
+// ============================================
+
+const ptyMap = new Map(); // id → IPty
+let ptyIdCounter = 0;
+
+ipcMain.handle('terminal-create', (event, cwd) => {
+  const id = String(++ptyIdCounter);
+  const shell = process.platform === 'win32'
+    ? (process.env.COMSPEC || 'cmd.exe')
+    : (process.env.SHELL || '/bin/bash');
+
+  let safeCwd = cwd;
+  try {
+    if (!safeCwd || !fsSync.existsSync(safeCwd)) safeCwd = os.homedir();
+  } catch (_) {
+    safeCwd = os.homedir();
+  }
+
+  const ptyProcess = pty.spawn(shell, [], {
+    name: 'xterm-256color',
+    cols: 80,
+    rows: 24,
+    cwd: safeCwd,
+    env: process.env
+  });
+
+  ptyProcess.onData(data => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-output', { id, data });
+    }
+  });
+
+  ptyProcess.onExit(() => {
+    ptyMap.delete(id);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-exit', { id });
+    }
+  });
+
+  ptyMap.set(id, ptyProcess);
+  logger.info(`[TERMINAL] Created session ${id} in ${safeCwd}`);
+  return { id };
+});
+
+ipcMain.handle('terminal-input', (event, { id, data }) => {
+  const ptyProcess = ptyMap.get(id);
+  if (ptyProcess) ptyProcess.write(data);
+});
+
+ipcMain.handle('terminal-resize', (event, { id, cols, rows }) => {
+  const ptyProcess = ptyMap.get(id);
+  if (ptyProcess) ptyProcess.resize(cols, rows);
+});
+
+ipcMain.handle('terminal-destroy', (event, { id }) => {
+  const ptyProcess = ptyMap.get(id);
+  if (ptyProcess) {
+    try { ptyProcess.kill(); } catch (_) {}
+    ptyMap.delete(id);
+    logger.info(`[TERMINAL] Destroyed session ${id}`);
+  }
+  return { success: true };
 });
 
 // ============================================

@@ -5,6 +5,7 @@
 
 import * as panels from './panels.js';
 import * as sidebar from './sidebar.js';
+import * as terminal from './terminal.js';
 import {
 	panelState,
 	selectedItemState,
@@ -84,6 +85,27 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 				text: categoryName
 			}))
 		});
+
+		// Open in Terminal submenu
+		const terminalItems = [];
+		const existingTerminalPanelIds = terminal.getTerminalPanelIds();
+		for (const pid of existingTerminalPanelIds) {
+			terminalItems.push({ id: `open-in-terminal-${pid}`, text: `Panel ${pid}` });
+		}
+		const nextTerminalPanel = panels.visiblePanels + 1;
+		if (nextTerminalPanel <= 4) {
+			terminalItems.push({ id: `open-in-terminal-new`, text: `New Terminal (Panel ${nextTerminalPanel})` });
+		} else if (terminalItems.length === 0) {
+			// All 4 panels are busy, offer replacing the last non-panel-1 panel
+			terminalItems.push({ id: `open-in-terminal-new`, text: `New Terminal (replace Panel ${panels.visiblePanels})` });
+		}
+		if (terminalItems.length > 0) {
+			contextMenu.push({
+				id: 'open-in-terminal-label',
+				text: 'Open in Terminal',
+				items: terminalItems
+			});
+		}
 	}
 
 	if (!isMultiSelect && fileCount > 0) {
@@ -203,7 +225,7 @@ async function handleContextMenuClick(event, panelId) {
 
 	console.log('Menu click:', menuItemId, 'Panel:', panelId);
 
-	if (menuItemId.startsWith('open-in-')) {
+	if (menuItemId.startsWith('open-in-') && !menuItemId.startsWith('open-in-terminal-')) {
 		const targetPanel = parseInt(menuItemId.split('-')[2]);
 		const firstRecord = selectedRecords[0];
 		const $panel = $(`#panel-${targetPanel}`);
@@ -240,6 +262,32 @@ async function handleContextMenuClick(event, panelId) {
 			panels.setActivePanelId(targetPanel);
 		} catch (err) {
 			alert('Error opening in panel: ' + err.message);
+		}
+	}
+
+	if (menuItemId.startsWith('open-in-terminal-')) {
+		const firstRecord = selectedRecords[0];
+		if (!firstRecord || !firstRecord.isFolder) return;
+		const dirPath = firstRecord.path;
+
+		if (menuItemId === 'open-in-terminal-new') {
+			// Open a new terminal panel in the next available slot
+			let targetPanelId;
+			if (panels.visiblePanels < 4) {
+				targetPanelId = panels.visiblePanels + 1;
+				panels.setVisiblePanels(targetPanelId);
+				$(`#panel-${targetPanelId}`).show();
+				panels.attachPanelEventListeners(targetPanelId);
+				panels.updatePanelLayout();
+			} else {
+				targetPanelId = panels.visiblePanels;
+			}
+			await terminal.createTerminalPanel(targetPanelId, dirPath);
+		} else {
+			const targetPanelId = parseInt(menuItemId.replace('open-in-terminal-', ''));
+			if (targetPanelId >= 2 && targetPanelId <= 4) {
+				await terminal.createTerminalPanel(targetPanelId, dirPath);
+			}
 		}
 	}
 
