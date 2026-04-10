@@ -80,7 +80,7 @@ export function switchSettingsTab(tabName) {
 	$('.settings-tab-content').hide();
 
 	const $tab = $(`#tab-${tabName}`);
-	if (tabName === 'filetypes' || tabName === 'hotkeys' || tabName === 'customactions') {
+	if (tabName === 'filetypes' || tabName === 'hotkeys') {
 		$tab.css('display', 'flex');
 
 		if (tabName === 'filetypes' && !initializedSettingsTabs.has('filetypes')) {
@@ -89,9 +89,6 @@ export function switchSettingsTab(tabName) {
 		} else if (tabName === 'hotkeys' && !initializedSettingsTabs.has('hotkeys')) {
 			initializedSettingsTabs.add('hotkeys');
 			initializeHotkeysGrid().then(() => initializeHotkeysForm()).then(() => setupHotkeysResizableDivider());
-		} else if (tabName === 'customactions' && !initializedSettingsTabs.has('customactions')) {
-			initializedSettingsTabs.add('customactions');
-			initializeCustomActionsGrid().then(() => initializeCustomActionsForm()).then(() => setupCustomActionsDivider());
 		}
 	} else {
 		$tab.show();
@@ -305,26 +302,6 @@ let fileTypeFormState = {
 	editingPattern: null,
 	selectedIcon: null
 };
-
-let customActionFormState = {
-	editingId: null
-};
-
-const DEFAULT_CUSTOM_ACTION_TIMEOUT_SECONDS = 60;
-
-function normalizeCustomActionTimeout(value) {
-	const numericValue = Number(value);
-	if (!Number.isFinite(numericValue)) return DEFAULT_CUSTOM_ACTION_TIMEOUT_SECONDS;
-
-	const roundedValue = Math.trunc(numericValue);
-	return roundedValue > 0 ? roundedValue : DEFAULT_CUSTOM_ACTION_TIMEOUT_SECONDS;
-}
-
-function updateCustomActionExecutionFields(executionMode) {
-	const normalizedMode = executionMode === 'terminal' ? 'terminal' : 'silent';
-	$('#form-ca-execution-mode').val(normalizedMode);
-	$('#form-ca-timeout-section').toggle(normalizedMode === 'silent');
-}
 
 export function setupHotkeysResizableDivider() {
 	const divider = $('#hotkeys-divider');
@@ -1544,11 +1521,6 @@ function getHotKeyCombo(event) {
 	if (event.metaKey) parts.push('meta');
 
 	let key = event.key;
-	// Normalize Arrow* key names to match the shorthand used in hotkeys.json
-	// (e.g. "ArrowLeft" → "Left", "ArrowUp" → "Up")
-	if (key.startsWith('Arrow')) {
-		key = key.slice(5);
-	}
 	if (key.length === 1) {
 		key = key.toLowerCase();
 	}
@@ -1560,225 +1532,4 @@ function getHotKeyCombo(event) {
 
 	parts.push(key);
 	return parts.join('+');
-}
-// ============================================
-// Custom Actions Tab
-// ============================================
-
-export function setupCustomActionsDivider() {
-	const divider = $('#custom-actions-divider');
-	const formPanel = $('#custom-actions-form-panel');
-	let isResizing = false;
-	let startX = 0;
-	let startWidth = 0;
-
-	divider.off('mousedown.caDivider').on('mousedown.caDivider', function (e) {
-		isResizing = true;
-		startX = e.clientX;
-		startWidth = formPanel.width();
-		$(document).css('user-select', 'none');
-	});
-
-	$(document).mousemove(function (e) {
-		if (!isResizing) return;
-		const newWidth = Math.max(280, startWidth - (e.clientX - startX));
-		formPanel.css('flex', `0 0 ${newWidth}px`);
-	});
-
-	$(document).mouseup(function () {
-		if (isResizing) {
-			isResizing = false;
-			$(document).css('user-select', '');
-		}
-	});
-}
-
-export async function initializeCustomActionsGrid() {
-	const actions = await window.electronAPI.getCustomActions();
-
-	const records = actions.map((action, index) => ({
-		recid: index + 1,
-		id: action.id,
-		label: action.label,
-		executable: action.executable,
-		args: (action.args || []).join(' '),
-		filePatterns: (action.filePatterns || []).join(' '),
-		executionMode: action.executionMode || 'silent',
-		timeoutSeconds: normalizeCustomActionTimeout(action.timeoutSeconds),
-		checksum: action.checksum || null,
-		checksumUpdatedAt: action.checksumUpdatedAt || null
-	}));
-
-	if (w2ui['custom-actions-grid']) {
-		w2ui['custom-actions-grid'].destroy();
-	}
-
-	w2ui['custom-actions-grid'] = new w2grid({
-		name: 'custom-actions-grid',
-		show: { header: false, toolbar: false, footer: false },
-		columns: [
-			{ field: 'label', text: 'Label', size: '40%', resizable: true, sortable: true },
-			{ field: 'executable', text: 'Executable', size: '60%', resizable: true, sortable: true }
-		],
-		records,
-		onClick: function (event) {
-			event.onComplete = function () {
-				const grid = this;
-				const selection = grid.getSelection();
-				if (selection.length > 0) {
-					const record = grid.records.find(row => row.recid === selection[0]);
-					if (record) populateCustomActionsForm(record);
-				}
-			};
-		},
-		onLoad: function (event) { event.preventDefault(); }
-	});
-
-	w2ui['custom-actions-grid'].render('#custom-actions-grid');
-}
-
-function populateCustomActionsForm(record) {
-	customActionFormState.editingId = record.id;
-	$('#form-ca-label').val(record.label);
-	$('#form-ca-executable').val(record.executable);
-	$('#form-ca-args').val(record.args || '');
-	$('#form-ca-patterns').val(record.filePatterns || '');
-	$('#form-ca-timeout').val(normalizeCustomActionTimeout(record.timeoutSeconds));
-	updateCustomActionExecutionFields(record.executionMode);
-	updateChecksumDisplay(record);
-}
-
-function updateChecksumDisplay(record) {
-	const $section = $('#form-ca-checksum-section');
-	const $status = $('#form-ca-checksum-status');
-
-	const ext = (record.executable || '').split('.').pop().toLowerCase();
-	const scriptExts = ['bat', 'cmd', 'sh', 'py'];
-	if (!scriptExts.includes(ext)) {
-		$section.hide();
-		return;
-	}
-
-	$section.css('display', 'flex');
-	if (record.checksum) {
-		const updated = record.checksumUpdatedAt
-			? new Date(record.checksumUpdatedAt).toLocaleString()
-			: 'unknown';
-		$status.text(`SHA-256: ${record.checksum.substring(0, 16)}…  (recorded ${updated})`);
-	} else {
-		$status.text('No checksum recorded — will be computed on Save.');
-	}
-}
-
-export function clearCustomActionsForm() {
-	customActionFormState.editingId = null;
-	$('#form-ca-label').val('');
-	$('#form-ca-executable').val('');
-	$('#form-ca-args').val('');
-	$('#form-ca-patterns').val('');
-	$('#form-ca-timeout').val(DEFAULT_CUSTOM_ACTION_TIMEOUT_SECONDS);
-	updateCustomActionExecutionFields('silent');
-	$('#form-ca-checksum-section').hide();
-	$('#form-ca-checksum-status').text('');
-
-	const grid = w2ui['custom-actions-grid'];
-	if (grid) grid.selectNone();
-}
-
-export async function initializeCustomActionsForm() {
-	clearCustomActionsForm();
-
-	$('#btn-ca-browse').off('click.caBrowse').on('click.caBrowse', async function () {
-		const picked = await window.electronAPI.pickFile({
-			filters: [
-				{ name: 'Executable or Script', extensions: ['exe', 'bat', 'cmd', 'sh', 'py', '*'] }
-			]
-		});
-		if (picked) {
-			$('#form-ca-executable').val(picked);
-			// Refresh checksum display based on new extension
-			updateChecksumDisplay({ executable: picked, checksum: null, checksumUpdatedAt: null });
-		}
-	});
-
-	$('#btn-ca-save').off('click.caSave').on('click.caSave', () => saveCustomActionFromForm());
-	$('#btn-ca-clear').off('click.caClear').on('click.caClear', () => clearCustomActionsForm());
-	$('#btn-ca-delete').off('click.caDelete').on('click.caDelete', () => deleteCustomActionFromForm());
-	$('#form-ca-execution-mode').off('change.caMode').on('change.caMode', function () {
-		updateCustomActionExecutionFields($(this).val());
-	});
-}
-
-export async function saveCustomActionFromForm() {
-	const label = $('#form-ca-label').val().trim();
-	const executable = $('#form-ca-executable').val().trim();
-	const argsRaw = $('#form-ca-args').val().trim();
-	const patternsRaw = $('#form-ca-patterns').val().trim();
-	const executionMode = $('#form-ca-execution-mode').val() === 'terminal' ? 'terminal' : 'silent';
-	const timeoutSeconds = normalizeCustomActionTimeout($('#form-ca-timeout').val());
-
-	if (!label || !executable) {
-		w2alert('Label and Executable Path are required.');
-		return;
-	}
-
-	// Split args by whitespace, filtering empty strings
-	const args = argsRaw ? argsRaw.match(/(?:[^\s"]+|"[^"]*")+/g) || [] : [];
-	// Remove surrounding quotes from quoted args
-	const cleanArgs = args.map(a => a.replace(/^"|"$/g, ''));
-
-	const filePatterns = patternsRaw ? patternsRaw.split(/\s+/).filter(Boolean) : [];
-
-	const id = customActionFormState.editingId || `ca-${Date.now()}`;
-
-	try {
-		const result = await window.electronAPI.saveCustomAction({
-			id,
-			label,
-			executable,
-			args: cleanArgs,
-			filePatterns,
-			executionMode,
-			timeoutSeconds
-		});
-		if (!result.success) {
-			w2alert('Error: ' + result.error);
-			return;
-		}
-		await initializeCustomActionsGrid();
-		// Re-select the saved row and refresh checksum display
-		const saved = result.action;
-		customActionFormState.editingId = saved.id;
-		updateChecksumDisplay(saved);
-	} catch (err) {
-		w2alert('Error saving custom action: ' + err.message);
-	}
-}
-
-export async function deleteCustomActionFromForm() {
-	const id = customActionFormState.editingId;
-	if (!id) {
-		w2alert('No action selected.');
-		return;
-	}
-
-	const label = $('#form-ca-label').val().trim() || id;
-	w2confirm({
-		msg: `Delete custom action "<b>${label}</b>"?`,
-		title: 'Delete Custom Action?',
-		width: 400,
-		height: 170
-	}).yes(async () => {
-		try {
-			const result = await window.electronAPI.deleteCustomAction(id);
-			if (result && result.error) {
-				w2alert('Error: ' + result.error);
-				return;
-			}
-			await initializeCustomActionsGrid();
-			clearCustomActionsForm();
-		} catch (err) {
-			w2alert('Error deleting custom action: ' + err.message);
-		}
-	});
 }
