@@ -88,6 +88,14 @@
                     <div class="item-props-icon" style="flex-shrink: 0;"></div>
                     <span class="item-props-filename" style="flex: 1; font-weight: bold; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
                   </div>
+                  <div class="item-props-labels-section" style="display: flex; flex-direction: column; gap: 0;">
+                    <div class="item-props-labels-header" style="display: flex; align-items: center; gap: 6px; border-top: 1px solid #eee; padding-top: 8px;">
+                      <span style="font-weight: bold; font-size: 12px; color: #444; flex: 1;">Labels</span>
+                    </div>
+                    <div class="item-props-labels-body" style="padding-top: 6px;">
+                      <div class="item-props-labels-content"></div>
+                    </div>
+                  </div>
                   <div class="item-props-preview-section" style="display: none; flex-direction: column; gap: 0;">
                     <div class="item-props-section-header" data-section="preview" style="display: flex; align-items: center; gap: 6px; border-top: 1px solid #eee; padding-top: 8px; cursor: pointer;">
                       <button class="btn-section-toggle" data-section="preview">&#9662;</button>
@@ -191,6 +199,14 @@
                     <div class="item-props-icon" style="flex-shrink: 0;"></div>
                     <span class="item-props-filename" style="flex: 1; font-weight: bold; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
                   </div>
+                  <div class="item-props-labels-section" style="display: flex; flex-direction: column; gap: 0;">
+                    <div class="item-props-labels-header" style="display: flex; align-items: center; gap: 6px; border-top: 1px solid #eee; padding-top: 8px;">
+                      <span style="font-weight: bold; font-size: 12px; color: #444; flex: 1;">Labels</span>
+                    </div>
+                    <div class="item-props-labels-body" style="padding-top: 6px;">
+                      <div class="item-props-labels-content"></div>
+                    </div>
+                  </div>
                   <div class="item-props-preview-section" style="display: none; flex-direction: column; gap: 0;">
                     <div class="item-props-section-header" data-section="preview" style="display: flex; align-items: center; gap: 6px; border-top: 1px solid #eee; padding-top: 8px; cursor: pointer;">
                       <button class="btn-section-toggle" data-section="preview">&#9662;</button>
@@ -293,6 +309,14 @@
                   <div class="item-props-header" style="display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid #eee;">
                     <div class="item-props-icon" style="flex-shrink: 0;"></div>
                     <span class="item-props-filename" style="flex: 1; font-weight: bold; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                  </div>
+                  <div class="item-props-labels-section" style="display: flex; flex-direction: column; gap: 0;">
+                    <div class="item-props-labels-header" style="display: flex; align-items: center; gap: 6px; border-top: 1px solid #eee; padding-top: 8px;">
+                      <span style="font-weight: bold; font-size: 12px; color: #444; flex: 1;">Labels</span>
+                    </div>
+                    <div class="item-props-labels-body" style="padding-top: 6px;">
+                      <div class="item-props-labels-content"></div>
+                    </div>
                   </div>
                   <div class="item-props-preview-section" style="display: none; flex-direction: column; gap: 0;">
                     <div class="item-props-section-header" data-section="preview" style="display: flex; align-items: center; gap: 6px; border-top: 1px solid #eee; padding-top: 8px; cursor: pointer;">
@@ -836,6 +860,42 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Tag Modal -->
+  <div id="item-tag-create-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 8px; width: 420px; max-width: calc(100vw - 40px); display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+      <div style="display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #ddd;">
+        <h2 style="margin: 0; flex: 1; font-size: 20px;">Create Tag</h2>
+        <button id="btn-item-tag-create-close" style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Cancel</button>
+      </div>
+      <div style="padding: 15px 20px; background: white;">
+        <form id="item-tag-create-form" style="display: grid; grid-template-columns: 1fr; gap: 10px; grid-auto-rows: max-content;">
+          <div style="display: flex; flex-direction: column;">
+            <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Name</label>
+            <input type="text" id="item-tag-create-name" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Background Color</label>
+            <input type="color" id="item-tag-create-bgColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;" value="#efe4b0">
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Outline Color</label>
+            <input type="color" id="item-tag-create-textColor" style="padding: 2px; border: 1px solid #ccc; border-radius: 3px; height: 32px;" value="#000000">
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Description</label>
+            <input type="text" id="item-tag-create-description" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+          </div>
+          <div id="item-tag-create-error" style="display: none; color: #c62828; font-size: 11px;"></div>
+        </form>
+      </div>
+      <div style="padding: 10px 20px 20px; display: flex; gap: 8px; justify-content: flex-end; background: white; border-top: 1px solid #eee;">
+        <button id="btn-item-tag-create-submit" style="padding: 8px 14px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Create</button>
+        <button id="btn-item-tag-create-submit-add" style="padding: 8px 14px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Create and Add</button>
+        <button id="btn-item-tag-create-cancel" style="padding: 8px 14px; background: #f0f0f0; border: 1px solid #ccc; color: #333; border-radius: 4px; cursor: pointer; font-size: 12px;">Cancel</button>
       </div>
     </div>
   </div>

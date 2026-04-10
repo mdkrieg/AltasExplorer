@@ -573,6 +573,240 @@ textarea {
   color: #555;
 }
 
+.item-props-label-group {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.item-props-label-group:last-child {
+  margin-bottom: 0;
+}
+
+.item-props-label-group-title {
+  min-width: 110px;
+  flex-shrink: 0;
+  font-weight: 600;
+  color: #555;
+  font-size: 12px;
+  line-height: 28px;
+}
+
+.item-props-label-group-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-props-current-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.item-props-label-empty {
+  color: #999;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.item-props-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.2;
+  max-width: 100%;
+}
+
+.item-props-tag-chip-label {
+  white-space: nowrap;
+}
+
+.btn-item-props-remove-tag {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.item-props-tag-editor {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.item-props-tag-input-shell {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.03);
+}
+
+.item-props-tag-input-shell.is-selected {
+  border-color: #2196F3;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.16);
+}
+
+.item-props-tag-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  background: transparent;
+  color: #333;
+}
+
+.item-props-tag-suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+  z-index: 20;
+}
+
+.item-props-tag-suggestion {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.item-props-tag-suggestion.is-selected {
+  background: #e9f3ff;
+}
+
+.item-props-tag-suggestion.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.item-props-tag-suggestion-more {
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
+}
+
+.btn-item-props-tag-action {
+  min-width: 74px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 6px;
+  background: #2196F3;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.btn-item-props-tag-action:disabled {
+  background: #c8d7e6;
+  cursor: not-allowed;
+}
+
+.item-props-category-picker {
+  position: relative;
+  max-width: 100%;
+}
+
+.item-props-category-trigger,
+.item-props-category-readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.item-props-category-trigger {
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  color: #333;
+}
+
+.item-props-category-trigger.is-open {
+  border-color: #2196F3;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.16);
+}
+
+.item-props-category-readonly {
+  border: 1px solid #eee;
+  background: #fafafa;
+  color: #333;
+}
+
+.item-props-category-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.item-props-category-note {
+  color: #999;
+  font-size: 11px;
+}
+
+.item-props-category-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+  z-index: 20;
+}
+
+.item-props-category-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #333;
+}
+
+.item-props-category-option:hover,
+.item-props-category-option.is-selected {
+  background: #e9f3ff;
+}
+
 .tag-pill {
   display: inline-block;
   padding: 2px 8px;

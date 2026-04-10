@@ -51,6 +51,72 @@ export let panelDividerState = {
 	minPanelWidth: 200,
 	minPanelHeight: 100,
 };
+const labelIconCache = new Map();
+const INITIAL_LABEL_SUGGESTION_COUNT = 4;
+const LABEL_SUGGESTION_INCREMENT = 3;
+let createTagModalState = {
+	panelId: null
+};
+
+function createDefaultLabelsUiState() {
+	return {
+		inputValue: '',
+		visibleSuggestionCount: INITIAL_LABEL_SUGGESTION_COUNT,
+		selectedSuggestionIndex: -1,
+		isInputFocused: false,
+		isSuggestionOpen: false,
+		isCategoryMenuOpen: false
+	};
+}
+
+function ensureLabelsUiState(panelId) {
+	if (!panelState[panelId].labelsUiState) {
+		panelState[panelId].labelsUiState = createDefaultLabelsUiState();
+	}
+	return panelState[panelId].labelsUiState;
+}
+
+function resetLabelsUiState(panelId) {
+	if (!panelState[panelId]) return;
+	panelState[panelId].labelsUiState = createDefaultLabelsUiState();
+}
+
+function resetAllLabelsUiState() {
+	for (let panelId = 2; panelId <= 4; panelId++) {
+		resetLabelsUiState(panelId);
+	}
+}
+
+function updateSelectedItemFromRecord(record, panelId) {
+	const nextPath = record ? record.path : null;
+	const nextFilename = record ? (record.filenameRaw || record.filename) : null;
+	const changed = selectedItemState.path !== nextPath || selectedItemState.panelId !== panelId;
+
+	Object.assign(selectedItemState, {
+		path: nextPath,
+		filename: nextFilename,
+		isDirectory: record ? (record.isFolder || false) : false,
+		inode: record ? (record.inode || null) : null,
+		dir_id: record ? (record.dir_id || null) : null,
+		record: record || null,
+		panelId
+	});
+
+	setActivePanelId(panelId);
+	for (let pid = 2; pid <= 4; pid++) {
+		if (panelState[pid]) {
+			panelState[pid].attrEditMode = false;
+			panelState[pid].notesEditMode = false;
+		}
+	}
+
+	if (changed) {
+		resetAllLabelsUiState();
+		hideCreateTagModal();
+	}
+
+	refreshItemPropertiesInAllPanels();
+}
 
 export function setVisiblePanels(value) {
 	visiblePanels = value;
@@ -198,6 +264,522 @@ export function renderTagBadges(tagsJson, tagDefs) {
 		return `<span class="tag-badge" style="background:${bg};color:${fg}">${name}</span>`;
 	});
 	return `<div class="tag-badge-container">${badges.join('')}</div>`;
+}
+
+function hexToRgbValue(hex) {
+	if (!hex) return 'rgb(0, 0, 0)';
+	if (hex.startsWith('rgb')) return hex;
+	const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+	if (!result) return 'rgb(0, 0, 0)';
+	return `rgb(${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)})`;
+}
+
+function getTagDefinitionMap() {
+	return Object.fromEntries(allTags.map(tag => [tag.name, tag]));
+}
+
+function getCanonicalTagDefinition(name) {
+	const normalizedName = String(name || '').trim().toLowerCase();
+	if (!normalizedName) return null;
+	return allTags.find(tag => tag.name.toLowerCase() === normalizedName) || null;
+}
+
+function isAssignedTag(assignedTagNames, tagName) {
+	return assignedTagNames.some(name => String(name).toLowerCase() === String(tagName).toLowerCase());
+}
+
+function sortTagsForSuggestions(query) {
+	const normalizedQuery = String(query || '').trim().toLowerCase();
+	return [...allTags].sort((left, right) => {
+		const leftName = left.name.toLowerCase();
+		const rightName = right.name.toLowerCase();
+		const leftRank = normalizedQuery
+			? (leftName === normalizedQuery ? 0 : leftName.startsWith(normalizedQuery) ? 1 : leftName.includes(normalizedQuery) ? 2 : 3)
+			: 3;
+		const rightRank = normalizedQuery
+			? (rightName === normalizedQuery ? 0 : rightName.startsWith(normalizedQuery) ? 1 : rightName.includes(normalizedQuery) ? 2 : 3)
+			: 3;
+		if (leftRank !== rightRank) return leftRank - rightRank;
+		return left.name.localeCompare(right.name);
+	});
+}
+
+function getTagSuggestions(uiState, assignedTagNames) {
+	const normalizedQuery = String(uiState.inputValue || '').trim().toLowerCase();
+	const matchingTags = sortTagsForSuggestions(normalizedQuery).filter(tag => {
+		if (!normalizedQuery) return true;
+		return tag.name.toLowerCase().includes(normalizedQuery);
+	});
+
+	if (matchingTags.length <= uiState.visibleSuggestionCount) {
+		return matchingTags.map(tag => ({
+			kind: 'tag',
+			tag,
+			disabled: isAssignedTag(assignedTagNames, tag.name)
+		}));
+	}
+
+	const visibleTags = matchingTags.slice(0, Math.max(uiState.visibleSuggestionCount - 1, 0));
+	const hiddenCount = matchingTags.length - visibleTags.length;
+	return [
+		...visibleTags.map(tag => ({
+			kind: 'tag',
+			tag,
+			disabled: isAssignedTag(assignedTagNames, tag.name)
+		})),
+		{
+			kind: 'more',
+			hiddenCount
+		}
+	];
+}
+
+function getTagAction(uiState, assignedTagNames) {
+	const inputValue = String(uiState.inputValue || '').trim();
+	if (!inputValue) {
+		return { label: 'Add', kind: 'add', disabled: true };
+	}
+
+	const existingTag = getCanonicalTagDefinition(inputValue);
+	if (existingTag) {
+		return {
+			label: 'Add',
+			kind: 'add',
+			tagName: existingTag.name,
+			disabled: isAssignedTag(assignedTagNames, existingTag.name)
+		};
+	}
+
+	return {
+		label: 'Create',
+		kind: 'create',
+		tagName: inputValue,
+		disabled: false
+	};
+}
+
+async function getCategoryIconUrl(category, initials = null) {
+	if (!category) return '';
+	const cacheKey = `${category.name || ''}:${category.bgColor}:${category.textColor}:${initials || ''}`;
+	if (labelIconCache.has(cacheKey)) {
+		return labelIconCache.get(cacheKey);
+	}
+	const iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, initials || null);
+	labelIconCache.set(cacheKey, iconUrl);
+	return iconUrl;
+}
+
+function getCategoryDefinitionByName(name) {
+	if (!name) return allCategories.Default || Object.values(allCategories)[0] || null;
+	if (allCategories[name]) return allCategories[name];
+	return Object.values(allCategories).find(category => category.name === name) || allCategories.Default || null;
+}
+
+function renderTagChip(tagName, definition) {
+	const safeName = utils.escapeHtml(tagName);
+	const encodedName = encodeURIComponent(tagName);
+	const background = definition ? definition.bgColor : '#777';
+	const textColor = definition ? definition.textColor : '#fff';
+	return `
+		<span class="item-props-tag-chip" style="background:${background};color:${textColor}">
+			<span class="item-props-tag-chip-label">${safeName}</span>
+			<button class="btn-item-props-remove-tag" data-tag-name="${encodedName}" title="Remove tag">&times;</button>
+		</span>
+	`;
+}
+
+async function renderLabelsSection(panelId, stats, options = {}) {
+	const $panel = $(`#panel-${panelId}`);
+	const $container = $panel.find('.item-props-labels-content');
+	if ($container.length === 0) return;
+
+	const uiState = ensureLabelsUiState(panelId);
+	const assignedTagNames = Array.isArray(stats.tags) ? stats.tags : [];
+	const tagDefs = getTagDefinitionMap();
+	const suggestions = getTagSuggestions(uiState, assignedTagNames);
+	if (uiState.selectedSuggestionIndex >= suggestions.length) {
+		uiState.selectedSuggestionIndex = suggestions.length - 1;
+	}
+	if (!uiState.isSuggestionOpen || suggestions.length === 0) {
+		uiState.selectedSuggestionIndex = -1;
+	}
+
+	const currentCategory = getCategoryDefinitionByName(stats.categoryName) || {
+		name: stats.categoryName || 'Default',
+		bgColor: 'rgb(175, 175, 175)',
+		textColor: 'rgb(51, 51, 51)'
+	};
+	const currentIcon = await getCategoryIconUrl(currentCategory, stats.isDirectory ? (selectedItemState.record?.initials || null) : null);
+	const sortedCategories = Object.values(allCategories).sort((left, right) => left.name.localeCompare(right.name));
+	const categoryEntries = await Promise.all(sortedCategories.map(async category => ({
+		category,
+		iconUrl: await getCategoryIconUrl(category)
+	})));
+	const tagAction = getTagAction(uiState, assignedTagNames);
+
+	const currentTagsHtml = assignedTagNames.length > 0
+		? assignedTagNames.map(tagName => renderTagChip(tagName, tagDefs[tagName])).join('')
+		: '<span class="item-props-label-empty">No tags assigned</span>';
+
+	const suggestionsHtml = uiState.isSuggestionOpen && suggestions.length > 0
+		? `
+			<div class="item-props-tag-suggestions">
+				${suggestions.map((item, index) => {
+					const selectedClass = uiState.selectedSuggestionIndex === index ? ' is-selected' : '';
+					if (item.kind === 'more') {
+						return `<div class="item-props-tag-suggestion item-props-tag-suggestion-more${selectedClass}" data-kind="more" data-index="${index}">(+${item.hiddenCount} more)</div>`;
+					}
+					const disabledClass = item.disabled ? ' is-disabled' : '';
+					const tagName = utils.escapeHtml(item.tag.name);
+					return `
+						<div class="item-props-tag-suggestion${selectedClass}${disabledClass}" data-kind="tag" data-index="${index}" data-tag-name="${tagName}">
+							<span class="tag-badge" style="background:${item.tag.bgColor};color:${item.tag.textColor}">${tagName}</span>
+						</div>
+					`;
+				}).join('')}
+			</div>
+		`
+		: '';
+
+	const categoryControlHtml = stats.isDirectory
+		? `
+			<div class="item-props-category-picker">
+				<button class="item-props-category-trigger${uiState.isCategoryMenuOpen ? ' is-open' : ''}" type="button">
+					<img src="${currentIcon}" alt="" class="item-props-category-icon">
+					<span>${utils.escapeHtml(currentCategory.name)}</span>
+				</button>
+				${uiState.isCategoryMenuOpen ? `
+					<div class="item-props-category-menu">
+						${categoryEntries.map(({ category, iconUrl }) => `
+							<div class="item-props-category-option${category.name === currentCategory.name ? ' is-selected' : ''}" data-category-name="${encodeURIComponent(category.name)}">
+								<img src="${iconUrl}" alt="" class="item-props-category-icon">
+								<span>${utils.escapeHtml(category.name)}</span>
+							</div>
+						`).join('')}
+					</div>
+				` : ''}
+			</div>
+		`
+		: `
+			<div class="item-props-category-readonly">
+				<img src="${currentIcon}" alt="" class="item-props-category-icon">
+				<span>${utils.escapeHtml(currentCategory.name)}</span>
+				<span class="item-props-category-note">From parent directory</span>
+			</div>
+		`;
+
+	$container.html(`
+		<div class="item-props-label-group">
+			<div class="item-props-label-group-title">Tags</div>
+			<div class="item-props-label-group-value">
+				<div class="item-props-current-tags">${currentTagsHtml}</div>
+				<div class="item-props-tag-editor">
+					<div class="item-props-tag-input-shell${uiState.isInputFocused && uiState.selectedSuggestionIndex === -1 ? ' is-selected' : ''}">
+						<input class="item-props-tag-input" type="text" value="${utils.escapeHtml(uiState.inputValue)}" placeholder="Add or create a tag">
+						${suggestionsHtml}
+					</div>
+					<button class="btn-item-props-tag-action" type="button" ${tagAction.disabled ? 'disabled' : ''}>${tagAction.label}</button>
+				</div>
+			</div>
+		</div>
+		<div class="item-props-label-group">
+			<div class="item-props-label-group-title">Category</div>
+			<div class="item-props-label-group-value">
+				${categoryControlHtml}
+			</div>
+		</div>
+	`);
+
+	if (options.restoreFocus) {
+		const input = $panel.find('.item-props-tag-input').get(0);
+		if (input) {
+			input.focus();
+			const valueLength = input.value.length;
+			input.setSelectionRange(valueLength, valueLength);
+		}
+	}
+}
+
+async function rerenderLabelsSection(panelId, options = {}) {
+	const stats = panelState[panelId].currentItemStats;
+	if (!stats) return;
+	await renderLabelsSection(panelId, stats, options);
+}
+
+function getSelectedGridRecord() {
+	const sourcePanelId = selectedItemState.panelId;
+	if (!sourcePanelId) return { grid: null, record: null };
+	return {
+		grid: panelState[sourcePanelId]?.w2uiGrid || null,
+		record: selectedItemState.record || null
+	};
+}
+
+function syncSelectedRecordTags(tagNames) {
+	const { grid, record } = getSelectedGridRecord();
+	if (!record) return;
+	const tagDefs = getTagDefinitionMap();
+	record.tagsRaw = tagNames.length > 0 ? JSON.stringify(tagNames) : null;
+	record.tags = renderTagBadges(record.tagsRaw, tagDefs);
+	if (grid && record.recid) {
+		grid.refreshRow(record.recid);
+	}
+}
+
+async function refreshAllVisiblePropertyPanels() {
+	for (let panelId = 2; panelId <= 4; panelId++) {
+		if ($(`#panel-${panelId}`).is(':visible') && getPanelViewType(panelId) === 'properties') {
+			await updateItemPropertiesPage(panelId);
+		}
+	}
+}
+
+async function addTagToCurrentItem(panelId, tagName) {
+	const tagDefinition = getCanonicalTagDefinition(tagName);
+	if (!tagDefinition || !selectedItemState.path) return;
+	const assignedTagNames = Array.isArray(panelState[panelId].currentItemStats?.tags)
+		? panelState[panelId].currentItemStats.tags
+		: [];
+	if (isAssignedTag(assignedTagNames, tagDefinition.name)) return;
+
+	const result = await window.electronAPI.addTagToItem({
+		path: selectedItemState.path,
+		tagName: tagDefinition.name,
+		isDirectory: selectedItemState.isDirectory,
+		inode: selectedItemState.inode,
+		dir_id: selectedItemState.dir_id
+	});
+	if (!result || result.success === false) {
+		throw new Error(result?.error || 'Unable to add tag');
+	}
+
+	const nextTags = [...assignedTagNames, tagDefinition.name];
+	panelState[panelId].currentItemStats.tags = nextTags;
+	const uiState = ensureLabelsUiState(panelId);
+	uiState.inputValue = '';
+	uiState.visibleSuggestionCount = INITIAL_LABEL_SUGGESTION_COUNT;
+	uiState.selectedSuggestionIndex = -1;
+	uiState.isSuggestionOpen = false;
+	syncSelectedRecordTags(nextTags);
+	await refreshAllVisiblePropertyPanels();
+}
+
+async function runPrimaryTagAction(panelId) {
+	const uiState = ensureLabelsUiState(panelId);
+	const assignedTagNames = Array.isArray(panelState[panelId].currentItemStats?.tags)
+		? panelState[panelId].currentItemStats.tags
+		: [];
+	const action = getTagAction(uiState, assignedTagNames);
+	if (action.disabled) return;
+	if (action.kind === 'add') {
+		await addTagToCurrentItem(panelId, action.tagName);
+		return;
+	}
+	uiState.isSuggestionOpen = false;
+	uiState.isInputFocused = false;
+	uiState.selectedSuggestionIndex = -1;
+	await openCreateTagModal(panelId, action.tagName);
+}
+
+async function activateTagSuggestion(panelId, suggestionIndex) {
+	const uiState = ensureLabelsUiState(panelId);
+	const assignedTagNames = Array.isArray(panelState[panelId].currentItemStats?.tags)
+		? panelState[panelId].currentItemStats.tags
+		: [];
+	const suggestions = getTagSuggestions(uiState, assignedTagNames);
+	const item = suggestions[suggestionIndex];
+	if (!item) return;
+
+	if (item.kind === 'more') {
+		uiState.visibleSuggestionCount += LABEL_SUGGESTION_INCREMENT;
+		uiState.isSuggestionOpen = true;
+		uiState.selectedSuggestionIndex = Math.min(suggestionIndex, getTagSuggestions(uiState, assignedTagNames).length - 1);
+		await rerenderLabelsSection(panelId, { restoreFocus: true });
+		return;
+	}
+
+	if (item.disabled) return;
+	await addTagToCurrentItem(panelId, item.tag.name);
+}
+
+async function removeTagFromCurrentItem(panelId, tagName) {
+	if (!selectedItemState.path) return;
+	const result = await window.electronAPI.removeTagFromItem({
+		path: selectedItemState.path,
+		tagName,
+		isDirectory: selectedItemState.isDirectory,
+		inode: selectedItemState.inode,
+		dir_id: selectedItemState.dir_id
+	});
+	if (!result || result.success === false) {
+		throw new Error(result?.error || 'Unable to remove tag');
+	}
+
+	const currentTags = Array.isArray(panelState[panelId].currentItemStats?.tags)
+		? panelState[panelId].currentItemStats.tags
+		: [];
+	const nextTags = currentTags.filter(name => name !== tagName);
+	panelState[panelId].currentItemStats.tags = nextTags;
+	syncSelectedRecordTags(nextTags);
+	await refreshAllVisiblePropertyPanels();
+}
+
+async function updateSelectedDirectoryCategory(categoryName) {
+	const { grid, record } = getSelectedGridRecord();
+	if (!record) return;
+	record.type = categoryName;
+	const category = getCategoryDefinitionByName(categoryName);
+	if (record.isFolder && category) {
+		const iconUrl = await getCategoryIconUrl(category, record.initials || null);
+		const className = getRowClassName(record.changeState);
+		record.icon = className
+			? `<div class="${className}"><img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials"></div>`
+			: `<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`;
+	}
+	if (grid && record.recid) {
+		grid.refreshRow(record.recid);
+	}
+}
+
+async function assignCategoryFromLabels(panelId, categoryName) {
+	if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+	const result = await window.electronAPI.assignCategoryToDirectory(selectedItemState.path, categoryName);
+	if (!result || result.success === false) {
+		throw new Error(result?.error || 'Unable to assign category');
+	}
+	const uiState = ensureLabelsUiState(panelId);
+	uiState.isCategoryMenuOpen = false;
+	if (panelState[panelId].currentItemStats) {
+		panelState[panelId].currentItemStats.categoryName = categoryName;
+	}
+	await updateSelectedDirectoryCategory(categoryName);
+	await refreshAllVisiblePropertyPanels();
+}
+
+function showCreateTagError(message) {
+	const $error = $('#item-tag-create-error');
+	if (!message) {
+		$error.hide().text('');
+		return;
+	}
+	$error.text(message).show();
+}
+
+async function submitCreateTagModal(shouldAdd) {
+	const panelId = createTagModalState.panelId;
+	if (!panelId) return;
+	const name = ($('#item-tag-create-name').val() || '').trim();
+	const bgColor = $('#item-tag-create-bgColor').val();
+	const textColor = $('#item-tag-create-textColor').val();
+	const description = ($('#item-tag-create-description').val() || '').trim();
+
+	if (!name) {
+		showCreateTagError('Please enter a tag name.');
+		return;
+	}
+	if (getCanonicalTagDefinition(name)) {
+		showCreateTagError('That tag already exists.');
+		return;
+	}
+
+	try {
+		await window.electronAPI.saveTag({
+			name,
+			bgColor: hexToRgbValue(bgColor),
+			textColor: hexToRgbValue(textColor),
+			description
+		});
+		await loadTagsList();
+		hideCreateTagModal();
+		if (shouldAdd) {
+			await addTagToCurrentItem(panelId, name);
+		} else {
+			await refreshAllVisiblePropertyPanels();
+		}
+	} catch (err) {
+		showCreateTagError(err.message || 'Unable to create tag.');
+	}
+}
+
+async function openCreateTagModal(panelId, initialName) {
+	createTagModalState.panelId = panelId;
+	$('#item-tag-create-name').val(initialName || '');
+	$('#item-tag-create-bgColor').val('#efe4b0');
+	$('#item-tag-create-textColor').val('#000000');
+	$('#item-tag-create-description').val('');
+	showCreateTagError('');
+	$('#item-tag-create-modal').show();
+
+	$('#btn-item-tag-create-close, #btn-item-tag-create-cancel')
+		.off('click.itemTagCreate')
+		.on('click.itemTagCreate', function () {
+			hideCreateTagModal();
+		});
+
+	$('#btn-item-tag-create-submit')
+		.off('click.itemTagCreate')
+		.on('click.itemTagCreate', async function () {
+			await submitCreateTagModal(false);
+		});
+
+	$('#btn-item-tag-create-submit-add')
+		.off('click.itemTagCreate')
+		.on('click.itemTagCreate', async function () {
+			await submitCreateTagModal(true);
+		});
+
+	$('#item-tag-create-modal')
+		.off('click.itemTagCreateOverlay')
+		.on('click.itemTagCreateOverlay', function (event) {
+			if (event.target === this) {
+				hideCreateTagModal();
+			}
+		});
+
+	$('#item-tag-create-form input')
+		.off('keydown.itemTagCreate')
+		.on('keydown.itemTagCreate', async function (event) {
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				await submitCreateTagModal(false);
+			}
+		});
+
+	setTimeout(() => {
+		const input = document.getElementById('item-tag-create-name');
+		if (input) {
+			input.focus();
+			input.select();
+		}
+	}, 0);
+}
+
+export function hideCreateTagModal() {
+	createTagModalState.panelId = null;
+	showCreateTagError('');
+	$('#item-tag-create-modal').hide();
+}
+
+export function handleTransientEscape() {
+	if ($('#item-tag-create-modal').is(':visible')) {
+		hideCreateTagModal();
+		return true;
+	}
+
+	let handled = false;
+	for (let panelId = 2; panelId <= 4; panelId++) {
+		const uiState = panelState[panelId]?.labelsUiState;
+		if (!uiState) continue;
+		if (uiState.isCategoryMenuOpen || uiState.isSuggestionOpen) {
+			uiState.isCategoryMenuOpen = false;
+			uiState.isSuggestionOpen = false;
+			uiState.isInputFocused = false;
+			uiState.selectedSuggestionIndex = -1;
+			rerenderLabelsSection(panelId);
+			handled = true;
+		}
+	}
+	return handled;
 }
 
 async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagDefs = {}) {
@@ -778,22 +1360,7 @@ async function initializeGridForPanel(panelId) {
 			if (event.detail.recid) {
 				const record = this.records[event.detail.recid - 1];
 				if (record && getPanelViewType(panelId) !== 'properties') {
-					Object.assign(selectedItemState, {
-						path: record.path,
-						filename: record.filenameRaw || record.filename,
-						isDirectory: record.isFolder || false,
-						inode: record.inode || null,
-						dir_id: record.dir_id || null,
-						record
-					});
-					setActivePanelId(panelId);
-					for (let pid = 2; pid <= 4; pid++) {
-						if (panelState[pid]) {
-							panelState[pid].attrEditMode = false;
-							panelState[pid].notesEditMode = false;
-						}
-					}
-					refreshItemPropertiesInAllPanels();
+					updateSelectedItemFromRecord(record, panelId);
 				}
 			}
 
@@ -1868,8 +2435,14 @@ function clearPanelState(panelId) {
 		checksumCancelled: false,
 		showDateCreated: false,
 		hasBeenViewed: false,
+		attrEditMode: false,
+		notesEditMode: false,
+		notesMonacoEditor: null,
+		notesFilePath: null,
 		sectionCollapseState: null,
-		currentItemOpenWith: null
+		currentItemOpenWith: null,
+		labelsUiState: null,
+		currentItemStats: null
 	};
 
 	window.electronAPI.unregisterWatchedPath(panelId);
@@ -2046,6 +2619,165 @@ export function attachPanelEventListeners(panelId) {
 			if (val) navigator.clipboard.writeText(val).catch(() => { });
 		});
 
+		$panel.find('.item-properties-content').off('mousedown.labelDismiss').on('mousedown.labelDismiss', function (event) {
+			const uiState = ensureLabelsUiState(panelId);
+			let shouldRerender = false;
+			if (!$(event.target).closest('.item-props-tag-editor').length && uiState.isSuggestionOpen) {
+				uiState.isSuggestionOpen = false;
+				uiState.isInputFocused = false;
+				uiState.selectedSuggestionIndex = -1;
+				shouldRerender = true;
+			}
+			if (!$(event.target).closest('.item-props-category-picker').length && uiState.isCategoryMenuOpen) {
+				uiState.isCategoryMenuOpen = false;
+				shouldRerender = true;
+			}
+			if (shouldRerender) {
+				rerenderLabelsSection(panelId);
+			}
+		});
+
+		$panel.find('.item-properties-content').off('input.labelTags').on('input.labelTags', '.item-props-tag-input', async function () {
+			const uiState = ensureLabelsUiState(panelId);
+			uiState.inputValue = $(this).val();
+			uiState.visibleSuggestionCount = INITIAL_LABEL_SUGGESTION_COUNT;
+			uiState.selectedSuggestionIndex = -1;
+			uiState.isInputFocused = true;
+			uiState.isSuggestionOpen = true;
+			uiState.isCategoryMenuOpen = false;
+			await rerenderLabelsSection(panelId, { restoreFocus: true });
+		});
+
+		$panel.find('.item-properties-content').off('focus.labelTags').on('focus.labelTags', '.item-props-tag-input', async function () {
+			const uiState = ensureLabelsUiState(panelId);
+			const currentValue = $(this).val();
+			if (
+				uiState.isInputFocused &&
+				uiState.isSuggestionOpen &&
+				uiState.selectedSuggestionIndex === -1 &&
+				uiState.inputValue === currentValue &&
+				!uiState.isCategoryMenuOpen
+			) {
+				return;
+			}
+			uiState.inputValue = $(this).val();
+			uiState.isInputFocused = true;
+			uiState.isSuggestionOpen = true;
+			uiState.isCategoryMenuOpen = false;
+			uiState.selectedSuggestionIndex = -1;
+			await rerenderLabelsSection(panelId, { restoreFocus: true });
+		});
+
+		$panel.find('.item-properties-content').off('blur.labelTags').on('blur.labelTags', '.item-props-tag-input', function () {
+			setTimeout(() => {
+				const uiState = ensureLabelsUiState(panelId);
+				const editorHasFocus = $panel.find('.item-props-tag-editor').find(document.activeElement).length > 0;
+				if (!editorHasFocus) {
+					uiState.isInputFocused = false;
+					uiState.isSuggestionOpen = false;
+					uiState.selectedSuggestionIndex = -1;
+					rerenderLabelsSection(panelId);
+				}
+			}, 0);
+		});
+
+		$panel.find('.item-properties-content').off('keydown.labelTags').on('keydown.labelTags', '.item-props-tag-input', async function (event) {
+			const uiState = ensureLabelsUiState(panelId);
+			const assignedTagNames = Array.isArray(panelState[panelId].currentItemStats?.tags)
+				? panelState[panelId].currentItemStats.tags
+				: [];
+			const suggestions = getTagSuggestions(uiState, assignedTagNames);
+
+			if (event.key === 'ArrowDown') {
+				event.preventDefault();
+				uiState.isSuggestionOpen = true;
+				uiState.selectedSuggestionIndex = Math.min(uiState.selectedSuggestionIndex + 1, suggestions.length - 1);
+				await rerenderLabelsSection(panelId, { restoreFocus: true });
+				return;
+			}
+
+			if (event.key === 'ArrowUp') {
+				event.preventDefault();
+				uiState.selectedSuggestionIndex = Math.max(uiState.selectedSuggestionIndex - 1, -1);
+				uiState.isSuggestionOpen = true;
+				await rerenderLabelsSection(panelId, { restoreFocus: true });
+				return;
+			}
+
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				try {
+					if (uiState.selectedSuggestionIndex >= 0) {
+						await activateTagSuggestion(panelId, uiState.selectedSuggestionIndex);
+						return;
+					}
+					await runPrimaryTagAction(panelId);
+				} catch (err) {
+					w2alert('Error updating tags: ' + err.message);
+				}
+				return;
+			}
+
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				uiState.isSuggestionOpen = false;
+				uiState.selectedSuggestionIndex = -1;
+				await rerenderLabelsSection(panelId, { restoreFocus: true });
+			}
+		});
+
+		$panel.find('.item-properties-content').off('mousedown.labelTagAction').on('mousedown.labelTagAction', '.btn-item-props-tag-action', async function (event) {
+			event.preventDefault();
+			try {
+				await runPrimaryTagAction(panelId);
+			} catch (err) {
+				w2alert('Error updating tags: ' + err.message);
+			}
+		});
+
+		$panel.find('.item-properties-content').off('mousedown.labelSuggestion').on('mousedown.labelSuggestion', '.item-props-tag-suggestion', async function (event) {
+			event.preventDefault();
+			const index = Number($(this).attr('data-index'));
+			if (Number.isNaN(index)) return;
+			try {
+				await activateTagSuggestion(panelId, index);
+			} catch (err) {
+				w2alert('Error updating tags: ' + err.message);
+			}
+		});
+
+		$panel.find('.item-properties-content').off('click.removeTag').on('click.removeTag', '.btn-item-props-remove-tag', async function (event) {
+			event.preventDefault();
+			event.stopPropagation();
+			const tagName = decodeURIComponent($(this).attr('data-tag-name') || '');
+			if (!tagName) return;
+			try {
+				await removeTagFromCurrentItem(panelId, tagName);
+			} catch (err) {
+				w2alert('Error removing tag: ' + err.message);
+			}
+		});
+
+		$panel.find('.item-properties-content').off('mousedown.categoryToggle').on('mousedown.categoryToggle', '.item-props-category-trigger', async function (event) {
+			event.preventDefault();
+			const uiState = ensureLabelsUiState(panelId);
+			uiState.isCategoryMenuOpen = !uiState.isCategoryMenuOpen;
+			uiState.isSuggestionOpen = false;
+			uiState.selectedSuggestionIndex = -1;
+			await rerenderLabelsSection(panelId);
+		});
+
+		$panel.find('.item-properties-content').off('mousedown.categoryOption').on('mousedown.categoryOption', '.item-props-category-option', async function (event) {
+			event.preventDefault();
+			const categoryName = decodeURIComponent($(this).attr('data-category-name') || '');
+			if (!categoryName) return;
+			try {
+				await assignCategoryFromLabels(panelId, categoryName);
+			} catch (err) {
+				w2alert('Error assigning category: ' + err.message);
+			}
+		});
+
 		$panel.find('.btn-attrs-edit').off('click').on('click', function () {
 			panelState[panelId].attrEditMode = true;
 			updateItemPropertiesPage(panelId);
@@ -2195,6 +2927,7 @@ export async function updateItemPropertiesPage(panelId) {
 	const $content = $panel.find('.item-properties-content');
 
 	if (!selectedItemState.path) {
+		panelState[panelId].currentItemStats = null;
 		$content.hide();
 		$placeholder.show();
 		return;
@@ -2203,6 +2936,7 @@ export async function updateItemPropertiesPage(panelId) {
 	try {
 		const stats = await window.electronAPI.getItemStats(selectedItemState.path);
 		if (!stats) {
+			panelState[panelId].currentItemStats = null;
 			$content.hide();
 			$placeholder.show();
 			return;
@@ -2210,6 +2944,7 @@ export async function updateItemPropertiesPage(panelId) {
 
 		panelState[panelId].itemInode = stats.inode;
 		panelState[panelId].itemDirId = stats.dir_id;
+		panelState[panelId].currentItemStats = stats;
 
 		if (!panelState[panelId].sectionCollapseState) {
 			panelState[panelId].sectionCollapseState = {
@@ -2236,6 +2971,7 @@ export async function updateItemPropertiesPage(panelId) {
 			$icon.removeClass('clickable');
 		}
 		$panel.find('.item-props-filename').text(stats.filename || selectedItemState.filename || '');
+		await renderLabelsSection(panelId, stats);
 
 		const $previewSection = $panel.find('.item-props-preview-section');
 		if (!stats.isDirectory && stats.fileType === 'Image') {
@@ -2347,13 +3083,6 @@ export async function updateItemPropertiesPage(panelId) {
 				: '<span style="color:#999;">Not calculated</span>';
 			const calcBtn = `<button class="btn-checksum-calc" data-panel="${panelId}">Calculate Now</button>`;
 			$stats.append(`<div class="stat-row"><span class="stat-label">Checksum</span>${checksumDisplay}${calcBtn}</div>`);
-		}
-		if (stats.tags && stats.tags.length > 0) {
-			const tagHtml = stats.tags.map(tag => `<span class="tag-pill">${tag}</span>`).join('');
-			$stats.append(statRow('Tags', tagHtml));
-		}
-		if (stats.categoryName) {
-			$stats.append(statRow('Category', stats.categoryName));
 		}
 
 		const $attrSection = $panel.find('.item-props-attributes-section');
@@ -2487,6 +3216,7 @@ export async function updateItemPropertiesPage(panelId) {
 		$content.css('display', 'flex').show();
 	} catch (err) {
 		console.error('Error updating item properties:', err);
+		panelState[panelId].currentItemStats = null;
 		$content.hide();
 		$placeholder.show();
 	}
@@ -2523,21 +3253,7 @@ export function gridNavigate(direction, isShift, targetPanelId) {
 
 		const record = grid.records.find(r => r.recid === newRecid);
 		if (record && getPanelViewType(panelId) !== 'properties') {
-			Object.assign(selectedItemState, {
-				path: record.path,
-				filename: record.filenameRaw || record.filename,
-				isDirectory: record.isFolder || false,
-				inode: record.inode || null,
-				dir_id: record.dir_id || null,
-				record
-			});
-			for (let pid = 2; pid <= 4; pid++) {
-				if (panelState[pid]) {
-					panelState[pid].attrEditMode = false;
-					panelState[pid].notesEditMode = false;
-				}
-			}
-			refreshItemPropertiesInAllPanels();
+			updateSelectedItemFromRecord(record, panelId);
 		}
 	} else {
 		let anchorIndex = selectionAnchorRecids[panelId] !== undefined && selectionAnchorRecids[panelId] !== null

@@ -20,7 +20,13 @@ Philosophy:
 ### UP NEXT:
 [ ] Do Search and Filter next, make it so that if I start typing it will start filtering on name automatically
 [x] CTRL + Enter to do same as double click in grid
-[ ] Option for "Active Monitoring", taking combination of category, tags, and attributes
+[ ] Option for "Active Monitoring", taking combination of category, tags, and attributes, prompt WIP (do auto tagging first):
+```
+Can we add functionality to the Alerts. A tab for "Active Monitoring" which can create rules similar to the Alert rules, but instead of defining alert events, lets the user define the following:
+* An interval of time to scan (selectable basis of seconds, minutes, hours, or days - with days as the default)
+* A recursive depth to scan
+* Option to compute checksums on files based on what tags they adorn (also include <any> option which does all files regardless of tagging)
+```
 [ ] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline
 [x] Update markdown viewer to consider a single line break as a newline - keep double line breaks as a newline with additional line height (new <p> object perhaps?) - turns out this was a built in option of markdown-it
 [ ] Alerts:
@@ -34,7 +40,7 @@ Philosophy:
 [ ] TODOs in notes get aggregated
 [ ] Copy as Path in context menu
 [ ] Fix / figure out what to do with link in markdown (web links open in Electron)
-[ ] Context menu cancel with click off (left click)
+[x] Context menu cancel with click off (left click)
 [ ] Collapsible Sidebar - all the stuff hides, should just show icons
 [ ] Dragon Dropping
 [ ] Make New Folder + Make New File
@@ -46,6 +52,20 @@ Philosophy:
 
 ### TODO:
 [ ] Category inheritance (Set rules like "all subdirs get X category" on category definition)
+```
+Can we add an option for categories to auto-assign their subdirs to a particular category?
+* By default this would be None and the subdirs would only get a category if manually assigned.
+* The auto-assign category can be set to anything including Default
+* Default category cannot have an auto-assignment configured
+* If the auto-assign category is set to itself then it will (naturally) recursively assign the same category all the way up the tree
+* Similarly, if the auto-assigned category has an auto-assign category of its own then that auto-assignment resolves as well
+
+...
+
+* When manually assigning a category, the user has the option to "force" the assignment and this prevents any auto-assignment whatsoever.
+* When 
+* If the "force" is manually removed, the category 
+```
 [x] Tags in notes (and monaco autocomplete)
 [ ] Passively (no browse required) Watched directories - configurable by category??
 [ ] Filetype profiles (icon and editability)

@@ -652,24 +652,22 @@ export function showCustomContextMenu(items, x, y, panelId) {
 		if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
 	});
 
-	setTimeout(() => {
-		const onOutside = (event) => {
-			if (!event.target.closest?.('#custom-ctx-menu') && !event.target.closest?.('.custom-ctx-submenu')) {
-				hideCustomContextMenu();
-				document.removeEventListener('mousedown', onOutside);
-				document.removeEventListener('keydown', onEsc);
-			}
-		};
-		const onEsc = (event) => {
-			if (event.key === 'Escape') {
-				hideCustomContextMenu();
-				document.removeEventListener('mousedown', onOutside);
-				document.removeEventListener('keydown', onEsc);
-			}
-		};
-		document.addEventListener('mousedown', onOutside);
-		document.addEventListener('keydown', onEsc);
-	}, 0);
+	const onOutside = (event) => {
+		if (!event.target.closest?.('#custom-ctx-menu') && !event.target.closest?.('.custom-ctx-submenu')) {
+			hideCustomContextMenu();
+			document.removeEventListener('click', onOutside);
+			document.removeEventListener('keydown', onEsc);
+		}
+	};
+	const onEsc = (event) => {
+		if (event.key === 'Escape') {
+			hideCustomContextMenu();
+			document.removeEventListener('click', onOutside);
+			document.removeEventListener('keydown', onEsc);
+		}
+	};
+	document.addEventListener('click', onOutside);
+	document.addEventListener('keydown', onEsc);
 }
 
 export function initializeGlobalContextMenuHandlers() {

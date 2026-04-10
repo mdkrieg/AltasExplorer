@@ -47,10 +47,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 export let panelState = {
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null }
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null }
 };
 
 export let selectedItemState = {
@@ -59,7 +59,8 @@ export let selectedItemState = {
   isDirectory: false,
   inode: null,
   dir_id: null,
-  record: null
+  record: null,
+  panelId: null
 };
 
 export let activePanelId = 1;
@@ -366,6 +367,10 @@ function attachEventListeners() {
 
   // Keyboard shortcuts - detect hotkey and dispatch to appropriate handler
   $(document).keydown(async function (event) {
+    if (event.key === 'Escape' && panels.handleTransientEscape()) {
+      return;
+    }
+
     // Escape key: close image viewer modal if open
     if (event.key === 'Escape' && $('#image-viewer-modal').is(':visible')) {
       $('#image-viewer-modal').hide();
