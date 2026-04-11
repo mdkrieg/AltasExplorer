@@ -234,11 +234,12 @@ ipcMain.handle('get-parent-directory-metadata', (event, dirPath) => {
     // Get parent tags from files dot-entry (same source as '.' and child dirs)
     const parentDirPath = path.dirname(dirPath);
     const parentTags = dbMetadata ? db.getTagsForDirectory(parentDirPath) : null;
+    const parentResolution = categories.getCategoryResolutionForDirectory(parentDirPath);
 
     // Merge filesystem and database metadata
     const result = {
       ...fsMetadata,
-      category: dbMetadata?.category || 'Default',
+      category: parentResolution.categoryName,
       tags: parentTags,
       initials: dbMetadata?.initials || null,
       description: dbMetadata?.description || null,
@@ -467,17 +468,17 @@ ipcMain.handle('get-categories-list', () => {
  */
 ipcMain.handle('save-category', (event, categoryData) => {
   try {
-    const { name, bgColor, textColor, description, patterns, enableChecksum, attributes: attrs } = categoryData;
+    const { name, bgColor, textColor, description, patterns, enableChecksum, attributes: attrs, autoAssignCategory } = categoryData;
     
     // Check if category exists
     const existing = categories.getCategory(name);
     
     if (existing) {
       // Update existing
-      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || []);
+      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory);
     } else {
       // Create new
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || []);
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory);
     }
   } catch (err) {
     logger.error('Error saving category:', err.message);
@@ -490,16 +491,16 @@ ipcMain.handle('save-category', (event, categoryData) => {
  */
 ipcMain.handle('update-category', (event, categoryData) => {
   try {
-    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, attributes: attrs } = categoryData;
+    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, attributes: attrs, autoAssignCategory } = categoryData;
     const updateName = name || oldName;
     
     // If name changed, delete old and create new
     if (oldName && name && oldName !== name) {
       categories.deleteCategory(oldName);
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || []);
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory);
     } else {
       // Just update
-      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || []);
+      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || [], autoAssignCategory);
     }
   } catch (err) {
     logger.error('Error updating category:', err.message);
@@ -510,9 +511,9 @@ ipcMain.handle('update-category', (event, categoryData) => {
 /**
  * Directory Assignments: Assign category to directory
  */
-ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName }) => {
+ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName, force = true }) => {
   try {
-    categories.setCategoryForDirectory(dirPath, categoryName);
+    categories.setCategoryForDirectory(dirPath, categoryName, force);
     // Record the category change in file_history via the directory's dot-file
     try {
       const dirEntry = db.getDirectory(dirPath);
@@ -535,12 +536,12 @@ ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName }
 /**
  * Directory Assignments: Assign category to multiple directories (bulk operation)
  */
-ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryName }) => {
+ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryName, force = true }) => {
   try {
     const results = [];
     for (const dirPath of dirPaths) {
       try {
-        categories.setCategoryForDirectory(dirPath, categoryName);
+        categories.setCategoryForDirectory(dirPath, categoryName, force);
         // Record the category change in file_history via the directory's dot-file
         try {
           const dirEntry = db.getDirectory(dirPath);
@@ -571,7 +572,7 @@ ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryNam
  */
 ipcMain.handle('get-directory-assignment', (event, dirPath) => {
   try {
-    return categories.getCategoryFromDatabase(dirPath);
+    return categories.getCategoryAssignmentForDirectory(dirPath);
   } catch (err) {
     logger.error('Error getting assignment:', err.message);
     return null;
@@ -583,7 +584,7 @@ ipcMain.handle('get-directory-assignment', (event, dirPath) => {
  */
 ipcMain.handle('remove-directory-assignment', (event, dirPath) => {
   try {
-    categories.setCategoryForDirectory(dirPath, 'Default');
+    categories.clearCategoryForDirectory(dirPath);
     return { success: true };
   } catch (err) {
     logger.error('Error removing assignment:', err.message);
@@ -798,7 +799,8 @@ ipcMain.handle('get-item-stats', (event, { itemPath }) => {
     let tagsJson = null;
     let attrsJson = {};
     // Always resolve category regardless of whether the directory is in the DB
-    let category = categories.getCategoryForDirectory(dirname);
+    const categoryResolution = categories.getCategoryResolutionForDirectory(dirname);
+    const category = categoryResolution.category;
 
     if (dirEntry) {
       if (isDir) {
@@ -870,6 +872,13 @@ ipcMain.handle('get-item-stats', (event, { itemPath }) => {
       ftIcon,
       openWith,
       categoryName: category ? category.name : 'Default',
+      effectiveCategoryName: categoryResolution.categoryName,
+      explicitCategoryName: categoryResolution.explicitCategoryName,
+      isForcedCategory: categoryResolution.isForced,
+      isAutoAssignedCategory: categoryResolution.isAutoAssigned,
+      inheritedFromPath: categoryResolution.inheritedFromPath,
+      inheritedFromCategoryName: categoryResolution.inheritedFromCategoryName,
+      canForceCategory: isDir,
       categoryAttributes: categoryAttributeDefs
     };
   } catch (err) {
@@ -2338,7 +2347,9 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
         const filename = path.basename(filePath);
         const fileRecord = db.getFileByInode(inode, dirId);
         const dirRecord = db.getDirById(dirId);
-        const categoryName = dirRecord ? dirRecord.category : 'Default';
+        const categoryName = dirRecord
+          ? categories.getCategoryResolutionForDirectory(dirRecord.dirname).categoryName
+          : 'Default';
         if (fileRecord) {
           const historyResult = db.insertFileHistory(inode, dirId, fileRecord.id, {
             checksumValue: result.value,

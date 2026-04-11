@@ -68,10 +68,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteCategory: (name) => ipcRenderer.invoke('delete-category', name),
   
   // Directory assignments
-  assignCategoryToDirectory: (dirPath, categoryName) =>
-    ipcRenderer.invoke('assign-category-to-directory', { dirPath, categoryName }),
-  assignCategoryToDirectories: (dirPaths, categoryName) =>
-    ipcRenderer.invoke('assign-category-to-directories', { dirPaths, categoryName }),
+  assignCategoryToDirectory: (dirPath, categoryName, force = true) =>
+    ipcRenderer.invoke('assign-category-to-directory', { dirPath, categoryName, force }),
+  assignCategoryToDirectories: (dirPaths, categoryName, force = true) =>
+    ipcRenderer.invoke('assign-category-to-directories', { dirPaths, categoryName, force }),
   getDirectoryAssignment: (dirPath) =>
     ipcRenderer.invoke('get-directory-assignment', dirPath),
   removeDirectoryAssignment: (dirPath) =>

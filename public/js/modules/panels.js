@@ -375,6 +375,22 @@ function getCategoryDefinitionByName(name) {
 	return Object.values(allCategories).find(category => category.name === name) || allCategories.Default || null;
 }
 
+function getDirectoryCategoryDetailText(stats) {
+	if (stats.isForcedCategory) {
+		return 'Forced manual assignment';
+	}
+
+	if (stats.isAutoAssignedCategory && stats.inheritedFromCategoryName) {
+		return `Auto-assigned from ${stats.inheritedFromCategoryName}`;
+	}
+
+	if (stats.categoryName && stats.categoryName !== 'Default') {
+		return 'Resolved automatically';
+	}
+
+	return 'No forced category';
+}
+
 function renderTagChip(tagName, definition) {
 	const safeName = utils.escapeHtml(tagName);
 	const encodedName = encodeURIComponent(tagName);
@@ -409,6 +425,8 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 		bgColor: 'rgb(175, 175, 175)',
 		textColor: 'rgb(51, 51, 51)'
 	};
+	const isForcedCategory = Boolean(stats.isForcedCategory);
+	const showCategoryMenu = stats.isDirectory && isForcedCategory && uiState.isCategoryMenuOpen;
 	const currentIcon = await getCategoryIconUrl(currentCategory, stats.isDirectory ? (selectedItemState.record?.initials || null) : null);
 	const sortedCategories = Object.values(allCategories).sort((left, right) => left.name.localeCompare(right.name));
 	const categoryEntries = await Promise.all(sortedCategories.map(async category => ({
@@ -443,22 +461,29 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 
 	const categoryControlHtml = stats.isDirectory
 		? `
-			<div class="item-props-category-picker">
-				<button class="item-props-category-trigger${uiState.isCategoryMenuOpen ? ' is-open' : ''}" type="button">
-					<img src="${currentIcon}" alt="" class="item-props-category-icon">
-					<span>${utils.escapeHtml(currentCategory.name)}</span>
-				</button>
-				${uiState.isCategoryMenuOpen ? `
-					<div class="item-props-category-menu">
+			<div class="item-props-category-with-force">
+				<div class="item-props-category-picker">
+					<button class="item-props-category-trigger${showCategoryMenu ? ' is-open' : ''}" type="button" ${isForcedCategory ? '' : 'disabled'}>
+						<img src="${currentIcon}" alt="" class="item-props-category-icon">
+						<span>${utils.escapeHtml(currentCategory.name)}</span>
+					</button>
+					${showCategoryMenu ? `
+						<div class="item-props-category-menu">
 						${categoryEntries.map(({ category, iconUrl }) => `
 							<div class="item-props-category-option${category.name === currentCategory.name ? ' is-selected' : ''}" data-category-name="${encodeURIComponent(category.name)}">
 								<img src="${iconUrl}" alt="" class="item-props-category-icon">
 								<span>${utils.escapeHtml(category.name)}</span>
 							</div>
 						`).join('')}
-					</div>
+						</div>
 				` : ''}
+				</div>
+				<label class="item-props-category-force">
+					<input class="item-props-category-force-toggle" type="checkbox" ${isForcedCategory ? 'checked' : ''} ${stats.canForceCategory === false ? 'disabled' : ''}>
+					<span>Force</span>
+				</label>
 			</div>
+			<div class="item-props-category-detail">${utils.escapeHtml(getDirectoryCategoryDetailText(stats))}</div>
 		`
 		: `
 			<div class="item-props-category-readonly">
@@ -641,19 +666,34 @@ async function updateSelectedDirectoryCategory(categoryName) {
 	}
 }
 
-async function assignCategoryFromLabels(panelId, categoryName) {
+async function refreshCategoryAfterLabelsUpdate(panelId) {
+	await refreshAllVisiblePropertyPanels();
+	const refreshedStats = panelState[panelId].currentItemStats;
+	if (refreshedStats) {
+		await updateSelectedDirectoryCategory(refreshedStats.categoryName);
+	}
+}
+
+async function assignCategoryFromLabels(panelId, categoryName, force = true) {
 	if (!selectedItemState.isDirectory || !selectedItemState.path) return;
-	const result = await window.electronAPI.assignCategoryToDirectory(selectedItemState.path, categoryName);
+	const result = await window.electronAPI.assignCategoryToDirectory(selectedItemState.path, categoryName, force);
 	if (!result || result.success === false) {
 		throw new Error(result?.error || 'Unable to assign category');
 	}
 	const uiState = ensureLabelsUiState(panelId);
 	uiState.isCategoryMenuOpen = false;
-	if (panelState[panelId].currentItemStats) {
-		panelState[panelId].currentItemStats.categoryName = categoryName;
+	await refreshCategoryAfterLabelsUpdate(panelId);
+}
+
+async function clearForcedCategoryFromLabels(panelId) {
+	if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+	const result = await window.electronAPI.removeDirectoryAssignment(selectedItemState.path);
+	if (!result || result.success === false) {
+		throw new Error(result?.error || 'Unable to clear category assignment');
 	}
-	await updateSelectedDirectoryCategory(categoryName);
-	await refreshAllVisiblePropertyPanels();
+	const uiState = ensureLabelsUiState(panelId);
+	uiState.isCategoryMenuOpen = false;
+	await refreshCategoryAfterLabelsUpdate(panelId);
 }
 
 function showCreateTagError(message) {
@@ -2223,15 +2263,7 @@ function startBadgeDragSidebar(e) {
 	$(document).on('mousemove.badgeDragSidebar', function (moveEvent) {
 		const deltaX = moveEvent.pageX - startX;
 		const newWidth = startSidebarWidth + deltaX;
-		const minWidth = 150;
-		const maxWidth = window.innerWidth - 300;
-		const constrainedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
-		w2layoutInstance.set('left', { size: constrainedWidth });
-		w2layoutInstance.resize();
-		for (let panelId = 1; panelId <= 4; panelId++) {
-			const grid = panelState[panelId].w2uiGrid;
-			if (grid) grid.resize();
-		}
+		sidebar.applySidebarDragWidth(newWidth);
 	});
 	$(document).on('mouseup.badgeDragSidebar', function () {
 		$(document).off('mousemove.badgeDragSidebar mouseup.badgeDragSidebar');
@@ -2290,9 +2322,7 @@ function startBadgeDragBoth(e, dragMode) {
 			if (currentLayout === 3) positionHorizontalDivider();
 		} else if (dragMode === 'sidebar-and-horizontal') {
 			const newSidebarWidth = startSidebarWidth + deltaX;
-			const constrainedSidebarWidth = Math.max(150, Math.min(window.innerWidth - 300, newSidebarWidth));
-			w2layoutInstance.set('left', { size: constrainedSidebarWidth });
-			w2layoutInstance.resize();
+			sidebar.applySidebarDragWidth(newSidebarWidth);
 		}
 
 		const newHPixels = startHorizontalPixels + deltaY;
@@ -2772,9 +2802,23 @@ export function attachPanelEventListeners(panelId) {
 			const categoryName = decodeURIComponent($(this).attr('data-category-name') || '');
 			if (!categoryName) return;
 			try {
-				await assignCategoryFromLabels(panelId, categoryName);
+				await assignCategoryFromLabels(panelId, categoryName, true);
 			} catch (err) {
 				w2alert('Error assigning category: ' + err.message);
+			}
+		});
+
+		$panel.find('.item-properties-content').off('change.categoryForce').on('change.categoryForce', '.item-props-category-force-toggle', async function () {
+			const shouldForce = $(this).is(':checked');
+			try {
+				if (shouldForce) {
+					const currentCategoryName = panelState[panelId].currentItemStats?.categoryName || 'Default';
+					await assignCategoryFromLabels(panelId, currentCategoryName, true);
+				} else {
+					await clearForcedCategoryFromLabels(panelId);
+				}
+			} catch (err) {
+				w2alert('Error updating category force: ' + err.message);
 			}
 		});
 

@@ -51,21 +51,7 @@ Can we add functionality to the Alerts. A tab for "Active Monitoring" which can 
 
 
 ### TODO:
-[ ] Category inheritance (Set rules like "all subdirs get X category" on category definition)
-```
-Can we add an option for categories to auto-assign their subdirs to a particular category?
-* By default this would be None and the subdirs would only get a category if manually assigned.
-* The auto-assign category can be set to anything including Default
-* Default category cannot have an auto-assignment configured
-* If the auto-assign category is set to itself then it will (naturally) recursively assign the same category all the way up the tree
-* Similarly, if the auto-assigned category has an auto-assign category of its own then that auto-assignment resolves as well
-
-...
-
-* When manually assigning a category, the user has the option to "force" the assignment and this prevents any auto-assignment whatsoever.
-* When 
-* If the "force" is manually removed, the category 
-```
+[x] Category inheritance (Set rules like "all subdirs get X category" on category definition)
 [x] Tags in notes (and monaco autocomplete)
 [ ] Passively (no browse required) Watched directories - configurable by category??
 [ ] Filetype profiles (icon and editability)

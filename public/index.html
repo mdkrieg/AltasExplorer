@@ -732,6 +732,13 @@
                   <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Description</label>
                   <input type="text" id="form-cat-description" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
                 </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Auto-Assign Subdirs</label>
+                  <select id="form-cat-autoAssignCategory" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                    <option value="">None</option>
+                  </select>
+                  <span id="form-cat-autoAssignHelp" style="font-size: 10px; color: #888; margin-top: 2px;">Apply one category automatically to immediate subdirectories of folders in this category.</span>
+                </div>
                 <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
                   <input type="checkbox" id="form-cat-enableChecksum" style="cursor: pointer;">
                   <label for="form-cat-enableChecksum" style="font-size: 11px; font-weight: bold; cursor: pointer; margin: 0;">Enable Checksum Tracking</label>

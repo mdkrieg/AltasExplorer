@@ -307,12 +307,12 @@ async function handleContextMenuClick(event, panelId) {
 		const categoryName = menuItemId.replace('set-category-', '');
 		try {
 			if (isMultiSelect) {
-				const result = await window.electronAPI.assignCategoryToDirectories(selectedPaths, categoryName);
+				const result = await window.electronAPI.assignCategoryToDirectories(selectedPaths, categoryName, true);
 				if (!result.success) {
 					alert('Error assigning category: ' + result.error);
 				}
 			} else {
-				await window.electronAPI.assignCategoryToDirectory(selectedPaths[0], categoryName);
+				await window.electronAPI.assignCategoryToDirectory(selectedPaths[0], categoryName, true);
 			}
 
 			const state = panelState[activePanelId];

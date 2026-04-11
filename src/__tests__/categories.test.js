@@ -14,12 +14,33 @@
 
 jest.mock('fs');
 jest.mock('../logger');
+jest.mock('../db', () => ({
+  setCategoryForDirectory: jest.fn(),
+  getCategoryForDirectory: jest.fn(),
+  getDirectoryCategoryAssignment: jest.fn(),
+  clearCategoryForDirectory: jest.fn()
+}));
 
 // We need to mock path.join since the service uses it to build file paths
 // But we don't want to mock the entire 'path' module (we want real path logic)
 // So we'll mock it selectively when needed
 const fs = require('fs');
+const path = require('path');
+const db = require('../db');
 const CategoryService = require('../categories');
+
+function createCategoryDefinition(name, autoAssignCategory = null) {
+  return {
+    name,
+    bgColor: 'rgb(100, 100, 100)',
+    textColor: 'rgb(255, 255, 255)',
+    patterns: [],
+    description: '',
+    enableChecksum: false,
+    attributes: [],
+    autoAssignCategory
+  };
+}
 
 /**
  * TEST SUITE 1: ensureDirectories()
@@ -377,5 +398,81 @@ describe('CategoryService - getCategory()', () => {
     const category = CategoryService.getCategory('Nonexistent');
 
     expect(category).toBeNull();
+  });
+});
+
+describe('CategoryService - auto-assign categories', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should persist autoAssignCategory when creating a category', () => {
+    fs.writeFileSync.mockImplementation(() => {});
+
+    const category = CategoryService.createCategory(
+      'Project',
+      'rgb(100, 150, 200)',
+      'rgb(255, 255, 255)',
+      [],
+      'Project folders',
+      false,
+      [],
+      'Default'
+    );
+
+    expect(category.autoAssignCategory).toBe('Default');
+    const fileContent = JSON.parse(fs.writeFileSync.mock.calls[0][1]);
+    expect(fileContent.autoAssignCategory).toBe('Default');
+  });
+
+  it('should inherit the parent auto-assign category for subdirectories', () => {
+    const loadCategoriesSpy = jest.spyOn(CategoryService, 'loadCategories').mockReturnValue({
+      Default: createCategoryDefinition('Default'),
+      Project: createCategoryDefinition('Project', 'Archive'),
+      Archive: createCategoryDefinition('Archive')
+    });
+
+    db.getDirectoryCategoryAssignment.mockImplementation(dirPath => {
+      if (dirPath === path.resolve('C:\\root')) {
+        return { category: 'Project', isForced: true };
+      }
+      return null;
+    });
+
+    const resolution = CategoryService.getCategoryResolutionForDirectory('C:\\root\\child');
+
+    expect(resolution.categoryName).toBe('Archive');
+    expect(resolution.explicitCategoryName).toBe('Default');
+    expect(resolution.isForced).toBe(false);
+    expect(resolution.isAutoAssigned).toBe(true);
+    expect(resolution.inheritedFromPath).toBe(path.resolve('C:\\root'));
+    expect(resolution.inheritedFromCategoryName).toBe('Project');
+
+    loadCategoriesSpy.mockRestore();
+  });
+
+  it('should resolve chained auto-assign categories across generations', () => {
+    const loadCategoriesSpy = jest.spyOn(CategoryService, 'loadCategories').mockReturnValue({
+      Default: createCategoryDefinition('Default'),
+      Project: createCategoryDefinition('Project', 'Archive'),
+      Archive: createCategoryDefinition('Archive', 'Review'),
+      Review: createCategoryDefinition('Review')
+    });
+
+    db.getDirectoryCategoryAssignment.mockImplementation(dirPath => {
+      if (dirPath === path.resolve('C:\\root')) {
+        return { category: 'Project', isForced: true };
+      }
+      return null;
+    });
+
+    const childResolution = CategoryService.getCategoryResolutionForDirectory('C:\\root\\child');
+    const grandchildResolution = CategoryService.getCategoryResolutionForDirectory('C:\\root\\child\\grandchild');
+
+    expect(childResolution.categoryName).toBe('Archive');
+    expect(grandchildResolution.categoryName).toBe('Review');
+    expect(grandchildResolution.inheritedFromCategoryName).toBe('Archive');
+
+    loadCategoriesSpy.mockRestore();
   });
 });

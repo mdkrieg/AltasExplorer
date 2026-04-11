@@ -54,10 +54,47 @@ class CategoryService {
         textColor: 'rgb(0, 0, 0)',
         patterns: [],
         description: '',
-        enableChecksum: false
+        enableChecksum: false,
+        attributes: [],
+        autoAssignCategory: null
       };
       fs.writeFileSync(defaultCategoryPath, JSON.stringify(defaultCategory, null, 2));
     }
+  }
+
+  normalizeAutoAssignCategory(autoAssignCategory) {
+    if (autoAssignCategory === undefined || autoAssignCategory === null) {
+      return null;
+    }
+
+    const normalizedValue = String(autoAssignCategory).trim();
+    if (!normalizedValue || normalizedValue.toLowerCase() === 'none') {
+      return null;
+    }
+
+    return normalizedValue;
+  }
+
+  validateAutoAssignCategory(name, autoAssignCategory, existingCategories = null) {
+    const normalizedTarget = this.normalizeAutoAssignCategory(autoAssignCategory);
+    if (!normalizedTarget) {
+      return null;
+    }
+
+    if (name === 'Default') {
+      throw new Error('Default category cannot auto-assign subdirectories');
+    }
+
+    const categories = existingCategories || this.loadCategories();
+    const validCategoryNames = new Set(Object.keys(categories));
+    validCategoryNames.add(name);
+    validCategoryNames.add('Default');
+
+    if (!validCategoryNames.has(normalizedTarget)) {
+      throw new Error(`Auto-assign category "${normalizedTarget}" does not exist`);
+    }
+
+    return normalizedTarget;
   }
 
   /**
@@ -118,6 +155,10 @@ class CategoryService {
           if (!category.attributes) {
             category.attributes = [];
           }
+          category.autoAssignCategory = this.normalizeAutoAssignCategory(category.autoAssignCategory);
+          if (category.name === 'Default') {
+            category.autoAssignCategory = null;
+          }
           categories[category.name] = category;
         }
       }
@@ -139,10 +180,12 @@ class CategoryService {
   /**
    * Create a new category
    */
-  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = []) {
+  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = [], autoAssignCategory = null) {
     if (name === 'Default') {
       throw new Error('Cannot create a category named "Default" - it already exists');
     }
+
+    const normalizedAutoAssignCategory = this.validateAutoAssignCategory(name, autoAssignCategory);
 
     const category = {
       name,
@@ -151,7 +194,8 @@ class CategoryService {
       patterns,
       description,
       enableChecksum,
-      attributes
+      attributes,
+      autoAssignCategory: normalizedAutoAssignCategory
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
@@ -163,11 +207,14 @@ class CategoryService {
   /**
    * Update an existing category
    */
-  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null) {
+  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null, autoAssignCategory = undefined) {
     // Get existing category to preserve fields if not specified
     const existingCategory = this.getCategory(name);
     const checksumSetting = enableChecksum !== null ? enableChecksum : (existingCategory?.enableChecksum || false);
     const attributesSetting = attributes !== null ? attributes : (existingCategory?.attributes || []);
+    const autoAssignSetting = autoAssignCategory !== undefined
+      ? this.validateAutoAssignCategory(name, autoAssignCategory)
+      : this.validateAutoAssignCategory(name, existingCategory?.autoAssignCategory || null);
 
     const category = {
       name,
@@ -176,7 +223,8 @@ class CategoryService {
       patterns,
       description,
       enableChecksum: checksumSetting,
-      attributes: attributesSetting
+      attributes: attributesSetting,
+      autoAssignCategory: autoAssignSetting
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
@@ -313,8 +361,15 @@ class CategoryService {
   /**
    * Set category assignment for a directory in the database
    */
-  setCategoryForDirectory(dirPath, categoryName) {
-    db.setCategoryForDirectory(dirPath, categoryName);
+  setCategoryForDirectory(dirPath, categoryName, isForced = true) {
+    db.setCategoryForDirectory(dirPath, categoryName, isForced);
+  }
+
+  /**
+   * Clear explicit category assignment for a directory in the database
+   */
+  clearCategoryForDirectory(dirPath) {
+    db.clearCategoryForDirectory(dirPath);
   }
 
   /**
@@ -322,6 +377,13 @@ class CategoryService {
    */
   getCategoryFromDatabase(dirPath) {
     return db.getCategoryForDirectory(dirPath);
+  }
+
+  /**
+   * Get explicit category assignment metadata for a directory from the database
+   */
+  getCategoryAssignmentForDirectory(dirPath) {
+    return db.getDirectoryCategoryAssignment(dirPath);
   }
 
   /**
@@ -341,17 +403,8 @@ class CategoryService {
    * Get the applicable category for a directory
    * Priority: 1) Per-directory assignment (from database), 2) Pattern matching, 3) Default
    */
-  getCategoryForDirectory(dirPath) {
-    const categories = this.loadCategories();
-
-    // 1. Check per-directory assignment in database
-    const assignment = this.getCategoryFromDatabase(dirPath);
-    if (assignment && categories[assignment]) {
-      return categories[assignment];
-    }
-
-    // 2. Check pattern-based assignments
-    for (const [categoryName, category] of Object.entries(categories)) {
+  getPatternMatchedCategory(dirPath, categories) {
+    for (const category of Object.values(categories)) {
       if (category.patterns && Array.isArray(category.patterns)) {
         for (const pattern of category.patterns) {
           if (this.matchesPattern(dirPath, pattern)) {
@@ -361,8 +414,94 @@ class CategoryService {
       }
     }
 
-    // 3. Fall back to Default
-    return categories['Default'] || this.createDefaultCategory();
+    return null;
+  }
+
+  getCategoryResolutionForDirectory(dirPath) {
+    const categories = this.loadCategories();
+    const defaultCategory = categories.Default || this.createDefaultCategory();
+    const resolutionCache = new Map();
+
+    const resolveForPath = (currentPath) => {
+      const normalizedPath = path.resolve(currentPath);
+      if (resolutionCache.has(normalizedPath)) {
+        return resolutionCache.get(normalizedPath);
+      }
+
+      const assignment = this.getCategoryAssignmentForDirectory(normalizedPath);
+      const explicitCategoryName = assignment?.category || defaultCategory.name;
+      const explicitCategory = categories[explicitCategoryName] || null;
+
+      if (assignment?.isForced && explicitCategory) {
+        const forcedResolution = {
+          category: explicitCategory,
+          categoryName: explicitCategory.name,
+          explicitCategoryName,
+          isForced: true,
+          isAutoAssigned: false,
+          inheritedFromPath: null,
+          inheritedFromCategoryName: null
+        };
+        resolutionCache.set(normalizedPath, forcedResolution);
+        return forcedResolution;
+      }
+
+      const parentPath = path.dirname(normalizedPath);
+      if (parentPath !== normalizedPath) {
+        const parentResolution = resolveForPath(parentPath);
+        const inheritedCategoryName = this.normalizeAutoAssignCategory(parentResolution.category?.autoAssignCategory);
+        if (inheritedCategoryName && categories[inheritedCategoryName]) {
+          const inheritedResolution = {
+            category: categories[inheritedCategoryName],
+            categoryName: inheritedCategoryName,
+            explicitCategoryName,
+            isForced: false,
+            isAutoAssigned: true,
+            inheritedFromPath: parentPath,
+            inheritedFromCategoryName: parentResolution.category.name
+          };
+          resolutionCache.set(normalizedPath, inheritedResolution);
+          return inheritedResolution;
+        }
+      }
+
+      const patternCategory = this.getPatternMatchedCategory(normalizedPath, categories);
+      if (patternCategory) {
+        const patternResolution = {
+          category: patternCategory,
+          categoryName: patternCategory.name,
+          explicitCategoryName,
+          isForced: false,
+          isAutoAssigned: false,
+          inheritedFromPath: null,
+          inheritedFromCategoryName: null
+        };
+        resolutionCache.set(normalizedPath, patternResolution);
+        return patternResolution;
+      }
+
+      const defaultResolution = {
+        category: defaultCategory,
+        categoryName: defaultCategory.name,
+        explicitCategoryName,
+        isForced: false,
+        isAutoAssigned: false,
+        inheritedFromPath: null,
+        inheritedFromCategoryName: null
+      };
+      resolutionCache.set(normalizedPath, defaultResolution);
+      return defaultResolution;
+    };
+
+    return resolveForPath(dirPath);
+  }
+
+  /**
+   * Get the applicable category for a directory
+   * Priority: 1) Forced per-directory assignment, 2) Parent auto-assign, 3) Pattern matching, 4) Default
+   */
+  getCategoryForDirectory(dirPath) {
+    return this.getCategoryResolutionForDirectory(dirPath).category;
   }
 
   /**
@@ -373,7 +512,11 @@ class CategoryService {
       name: 'Default',
       bgColor: 'rgb(239, 228, 176)',
       textColor: 'rgb(0, 0, 0)',
-      patterns: []
+      patterns: [],
+      description: '',
+      enableChecksum: false,
+      attributes: [],
+      autoAssignCategory: null
     };
   }
 }

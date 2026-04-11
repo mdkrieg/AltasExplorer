@@ -24,6 +24,50 @@ let categoryFormState = {
 	editingName: null
 };
 
+function getCategoryFormCategoryNames() {
+	const categoryNames = new Set();
+	const grid = w2ui['categories-grid'];
+	if (grid) {
+		grid.records.forEach(record => {
+			if (record.categoryName) {
+				categoryNames.add(record.categoryName);
+			}
+		});
+	}
+
+	const currentName = ($('#form-cat-name').val() || '').trim();
+	if (currentName) {
+		categoryNames.add(currentName);
+	}
+
+	return Array.from(categoryNames).sort((left, right) => left.localeCompare(right));
+}
+
+function syncCategoryAutoAssignField(selectedValue = '') {
+	const $select = $('#form-cat-autoAssignCategory');
+	const $help = $('#form-cat-autoAssignHelp');
+	const currentName = ($('#form-cat-name').val() || '').trim();
+	const normalizedSelectedValue = selectedValue || '';
+	const categoryNames = getCategoryFormCategoryNames();
+
+	$select.empty();
+	$select.append($('<option></option>').val('').text('None'));
+	categoryNames.forEach(categoryName => {
+		$select.append($('<option></option>').val(categoryName).text(categoryName));
+	});
+
+	if (currentName === 'Default') {
+		$select.val('');
+		$select.prop('disabled', true);
+		$help.text('Default category cannot auto-assign subdirectories.');
+		return;
+	}
+
+	$select.prop('disabled', false);
+	$select.val(categoryNames.includes(normalizedSelectedValue) ? normalizedSelectedValue : '');
+	$help.text('Apply one category automatically to immediate subdirectories of folders in this category.');
+}
+
 let tagFormState = {
 	editingName: null
 };
@@ -437,6 +481,7 @@ async function initializeCategoriesGrid() {
 		textColor: category.textColor,
 		categoryName: category.name,
 		enableChecksum: category.enableChecksum || false,
+		autoAssignCategory: category.autoAssignCategory || '',
 		iconUrl: null,
 		attributes: category.attributes || []
 	}));
@@ -509,6 +554,11 @@ async function initializeCategoriesForm() {
 	} catch (err) {
 		console.error('Error loading attributes for category form:', err);
 	}
+
+	$('#form-cat-name').off('input.categoryAutoAssign').on('input.categoryAutoAssign', function () {
+		syncCategoryAutoAssignField($('#form-cat-autoAssignCategory').val() || '');
+	});
+
 	clearCategoryForm();
 }
 
@@ -519,6 +569,7 @@ function populateCategoryForm(record) {
 	$('#form-cat-textColor').val(rgbToHex(record.textColor));
 	$('#form-cat-description').val(record.description || '');
 	$('#form-cat-enableChecksum').prop('checked', record.enableChecksum || false);
+	syncCategoryAutoAssignField(record.autoAssignCategory || '');
 	const selectedAttrs = record.attributes || [];
 	$('#form-cat-attributes').find('input[type="checkbox"]').each(function () {
 		$(this).prop('checked', selectedAttrs.includes($(this).val()));
@@ -532,6 +583,7 @@ export function clearCategoryForm() {
 	$('#form-cat-textColor').val('#000000');
 	$('#form-cat-description').val('');
 	$('#form-cat-enableChecksum').prop('checked', false);
+	syncCategoryAutoAssignField('');
 	$('#form-cat-attributes').find('input[type="checkbox"]').prop('checked', false);
 
 	const grid = w2ui['categories-grid'];
@@ -560,6 +612,7 @@ async function updateGridAfterCategorySave(updatedCategory, isNew = false, oldNa
 				textColor: updatedCategory.textColor,
 				categoryName: updatedCategory.name,
 				enableChecksum: updatedCategory.enableChecksum || false,
+				autoAssignCategory: updatedCategory.autoAssignCategory || '',
 				iconUrl,
 				attributes: updatedCategory.attributes || []
 			});
@@ -573,6 +626,7 @@ async function updateGridAfterCategorySave(updatedCategory, isNew = false, oldNa
 				record.textColor = updatedCategory.textColor;
 				record.categoryName = updatedCategory.name;
 				record.enableChecksum = updatedCategory.enableChecksum || false;
+				record.autoAssignCategory = updatedCategory.autoAssignCategory || '';
 				record.iconUrl = iconUrl;
 				record.attributes = updatedCategory.attributes || [];
 				grid.refreshRow(record.recid);
@@ -606,6 +660,7 @@ export async function saveCategoryFromForm() {
 			bgColor: hexToRgb(bgColorHex),
 			textColor: hexToRgb(textColorHex),
 			description,
+			autoAssignCategory: $('#form-cat-autoAssignCategory').val() || null,
 			enableChecksum: $('#form-cat-enableChecksum').prop('checked'),
 			attributes: selectedAttributes
 		};

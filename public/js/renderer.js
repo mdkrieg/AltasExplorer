@@ -69,6 +69,7 @@ let allTags = [];
 export let fileEditMode = false;
 let hotkeyRegistry = {};
 export const MISSING_DIRECTORY_LABEL = '(DIRECTORY DOES NOT EXIST)';
+const SIDEBAR_COLLAPSED_WIDTH = 50;
 
 export let sidebarState = {
   expandedPaths: new Set(),
@@ -123,9 +124,9 @@ async function initialize() {
       panels: [
         {
           type: 'left',
-          size: parseInt(localStorage.getItem('sidebarWidth') || '250'),
+          size: parseInt(localStorage.getItem('sidebarExpandedWidth') || localStorage.getItem('sidebarWidth') || '250'),
           resizable: true,
-          minSize: 150,
+          minSize: SIDEBAR_COLLAPSED_WIDTH,
           maxSize: 500,
           style: 'border-right: 1px solid #ddd;'
         },
@@ -155,13 +156,14 @@ async function initialize() {
 
     w2layoutInstance.on('resize', function () {
       const leftPanel = this.get('left');
-      if (leftPanel && leftPanel.size) {
-        localStorage.setItem('sidebarWidth', leftPanel.size);
+      if (leftPanel) {
+        sidebar.handleSidebarLayoutResize(leftPanel.size);
       }
     });
 
     await panels.initializeAllGrids();
     await sidebar.initializeSidebar();
+    sidebar.handleSidebarLayoutResize(w2layoutInstance.get('left').size);
 
     const settings = await window.electronAPI.getSettings();
     console.log('Settings loaded:', settings);

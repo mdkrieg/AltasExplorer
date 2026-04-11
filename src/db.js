@@ -30,6 +30,7 @@ class DatabaseService {
         inode TEXT NOT NULL,
         dirname TEXT NOT NULL UNIQUE,
         category TEXT DEFAULT 'Default',
+        category_force INTEGER NOT NULL DEFAULT 0,
         description VARCHAR(256),
         initials VARCHAR(8),
         tags TEXT
@@ -112,6 +113,13 @@ class DatabaseService {
 
     this.db.exec(schema);
 
+    const dirCols = this.db.prepare('PRAGMA table_info(dirs)').all();
+    const hasCategoryForceCol = dirCols.some(col => col.name === 'category_force');
+    if (!hasCategoryForceCol) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN category_force INTEGER NOT NULL DEFAULT 0');
+      this.db.exec("UPDATE dirs SET category_force = CASE WHEN category IS NOT NULL AND category != 'Default' THEN 1 ELSE 0 END");
+    }
+
     // Runtime migration for existing databases created before files.mode existed
     const fileCols = this.db.prepare('PRAGMA table_info(files)').all();
     const hasModeCol = fileCols.some(col => col.name === 'mode');
@@ -128,25 +136,26 @@ class DatabaseService {
   /**
    * Upsert a directory entry
    */
-  upsertDirectory(dirname, inode, category = 'Default', description = null, initials = null, tags = null) {
+  upsertDirectory(dirname, inode, category = 'Default', description = null, initials = null, tags = null, categoryForce = 0) {
     const stmt = this.db.prepare(`
-      INSERT INTO dirs (dirname, inode, category, description, initials, tags)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO dirs (dirname, inode, category, category_force, description, initials, tags)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(dirname) DO UPDATE SET
         inode = excluded.inode,
-        category = excluded.category,
+        category = CASE WHEN dirs.category_force = 1 THEN dirs.category ELSE excluded.category END,
+        category_force = CASE WHEN dirs.category_force = 1 THEN dirs.category_force ELSE excluded.category_force END,
         description = excluded.description,
         initials = excluded.initials,
         tags = excluded.tags
     `);
 
-    return stmt.run(dirname, inode, category, description, initials, tags);
+    return stmt.run(dirname, inode, category, categoryForce, description, initials, tags);
   }
 
   /**
    * Get or create a directory, returning its id
    */
-  getOrCreateDirectory(dirname, inode, category = 'Default', description = null, initials = null) {
+  getOrCreateDirectory(dirname, inode, category = 'Default', description = null, initials = null, categoryForce = 0) {
     // First, try to get existing directory
     const getStmt = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?');
     const existing = getStmt.get(dirname);
@@ -156,7 +165,7 @@ class DatabaseService {
     }
 
     // Create new directory
-    this.upsertDirectory(dirname, inode, category, description, initials);
+    this.upsertDirectory(dirname, inode, category, description, initials, null, categoryForce);
     
     // Return the id of the newly created directory
     const result = getStmt.get(dirname);
@@ -363,9 +372,33 @@ class DatabaseService {
   /**
    * Set category for a directory
    */
-  setCategoryForDirectory(dirname, category) {
-    const stmt = this.db.prepare('UPDATE dirs SET category = ? WHERE dirname = ?');
-    return stmt.run(category, dirname);
+  setCategoryForDirectory(dirname, category, isForced = true) {
+    const stmt = this.db.prepare('UPDATE dirs SET category = ?, category_force = ? WHERE dirname = ?');
+    return stmt.run(category, isForced ? 1 : 0, dirname);
+  }
+
+  /**
+   * Clear explicit category assignment for a directory
+   */
+  clearCategoryForDirectory(dirname) {
+    const stmt = this.db.prepare("UPDATE dirs SET category = 'Default', category_force = 0 WHERE dirname = ?");
+    return stmt.run(dirname);
+  }
+
+  /**
+   * Get explicit category assignment metadata for a directory
+   */
+  getDirectoryCategoryAssignment(dirname) {
+    const stmt = this.db.prepare('SELECT category, category_force FROM dirs WHERE dirname = ?');
+    const result = stmt.get(dirname);
+    if (!result) {
+      return null;
+    }
+
+    return {
+      category: result.category || 'Default',
+      isForced: Boolean(result.category_force)
+    };
   }
 
   /**

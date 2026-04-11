@@ -5,7 +5,8 @@
  *
  * Exports consumed by renderer.js:
  *   initializeSidebar, updateSidebarSelection, addToFavorites,
- *   refreshFavoritesSidebar, toggleSidebarCollapse
+ *   refreshFavoritesSidebar, toggleSidebarCollapse, handleSidebarLayoutResize,
+ *   applySidebarDragWidth
  */
 
 import { w2sidebar } from './vendor/w2ui.es6.min.js';
@@ -24,7 +25,9 @@ let favoritesContextMenuTarget = null;
 let favIconMap = {};
 let favEditMode = false;
 let sidebarCollapsed = false;
-let sidebarExpandedWidth = parseInt(localStorage.getItem('sidebarWidth') || '250');
+const SIDEBAR_COLLAPSED_WIDTH = 50;
+const SIDEBAR_EXPANDED_MIN_WIDTH = 150;
+let sidebarExpandedWidth = parseInt(localStorage.getItem('sidebarExpandedWidth') || localStorage.getItem('sidebarWidth') || '250');
 
 // ── Private helpers ────────────────────────────────────────────────────────
 function showInputPrompt(label, defaultValue = '') {
@@ -32,6 +35,100 @@ function showInputPrompt(label, defaultValue = '') {
 }
 function showConfirmPrompt(msg) {
   return Promise.resolve(window.confirm(msg));
+}
+
+function getSidebarMaxWidth() {
+  return window.innerWidth - 300;
+}
+
+function resizeSidebarGrids() {
+  for (let panelId = 1; panelId <= 4; panelId++) {
+    const grid = panelState[panelId].w2uiGrid;
+    if (grid) grid.resize();
+  }
+}
+
+function syncSidebarCollapsedUi() {
+  const $sidebar = $('#sidebar-content');
+
+  if (sidebarCollapsed) {
+    if (favEditMode) {
+      void exitFavoritesEditMode();
+    }
+    $sidebar.addClass('sidebar-collapsed');
+    $('#btn-sidebar-collapse').html('&#10095;').attr('title', 'Expand sidebar');
+  } else {
+    $sidebar.removeClass('sidebar-collapsed');
+    $('#btn-sidebar-collapse').html('&#10094;').attr('title', 'Collapse sidebar');
+  }
+}
+
+function resolveSidebarWidth(rawWidth) {
+  const clampedWidth = Math.max(SIDEBAR_COLLAPSED_WIDTH, Math.min(getSidebarMaxWidth(), rawWidth));
+
+  if (sidebarCollapsed) {
+    if (clampedWidth >= SIDEBAR_EXPANDED_MIN_WIDTH) {
+      return {
+        collapsed: false,
+        width: clampedWidth
+      };
+    }
+
+    return {
+      collapsed: true,
+      width: SIDEBAR_COLLAPSED_WIDTH
+    };
+  }
+
+  if (clampedWidth <= SIDEBAR_COLLAPSED_WIDTH) {
+    return {
+      collapsed: true,
+      width: SIDEBAR_COLLAPSED_WIDTH
+    };
+  }
+
+  if (clampedWidth < SIDEBAR_EXPANDED_MIN_WIDTH) {
+    return {
+      collapsed: false,
+      width: SIDEBAR_EXPANDED_MIN_WIDTH
+    };
+  }
+
+  return {
+    collapsed: false,
+    width: clampedWidth
+  };
+}
+
+function setSidebarWidth(width, collapsed) {
+  const currentWidth = w2layoutInstance.get('left').size;
+  sidebarCollapsed = collapsed;
+
+  if (!collapsed) {
+    sidebarExpandedWidth = width;
+    localStorage.setItem('sidebarWidth', width);
+    localStorage.setItem('sidebarExpandedWidth', width);
+  }
+
+  syncSidebarCollapsedUi();
+
+  if (currentWidth !== width) {
+    w2layoutInstance.set('left', { size: width });
+    w2layoutInstance.resize();
+  }
+
+  resizeSidebarGrids();
+}
+
+export function applySidebarDragWidth(rawWidth) {
+  const resolved = resolveSidebarWidth(rawWidth);
+  setSidebarWidth(resolved.width, resolved.collapsed);
+  return resolved.width;
+}
+
+export function handleSidebarLayoutResize(rawWidth) {
+  const resolved = resolveSidebarWidth(rawWidth);
+  setSidebarWidth(resolved.width, resolved.collapsed);
 }
 
 // ── Sidebar tree functions ─────────────────────────────────────────────────
@@ -278,7 +375,7 @@ async function initializeFavoritesSidebar() {
     w2uiFavoritesSidebar = new w2sidebar({
       box: '#w2ui-favorites',
       name: 'favorites-sidebar',
-      topHTML: `<div class="favorites-header"><span class="favorites-label">FAVORITES</span><button id="btn-favorites-edit" class="btn-favorites-edit" title="Edit favorites">&#9998;</button></div>`,
+      topHTML: `<div class="favorites-header"><span class="favorites-label favorites-label-full">FAVORITES</span><span class="favorites-label favorites-label-short">FAV</span><button id="btn-favorites-edit" class="btn-favorites-edit" title="Edit favorites">&#9998;</button></div>`,
       reorder: true,
       nodes: nodes,
       onClick: async (event) => {
@@ -1239,24 +1336,9 @@ async function applyFavDeleteGroup(groupNodeId, itemActions) {
 // ── Sidebar collapse ───────────────────────────────────────────────────────
 
 export function toggleSidebarCollapse() {
-  const $sidebar = $('#sidebar-content');
-  sidebarCollapsed = !sidebarCollapsed;
-
   if (sidebarCollapsed) {
-    sidebarExpandedWidth = w2layoutInstance.get('left').size;
-    localStorage.setItem('sidebarWidth', sidebarExpandedWidth);
-    $sidebar.addClass('sidebar-collapsed');
-    $('#btn-sidebar-collapse').html('&#10095;').attr('title', 'Expand sidebar');
-    w2layoutInstance.set('left', { size: 44 });
+    applySidebarDragWidth(sidebarExpandedWidth);
   } else {
-    $sidebar.removeClass('sidebar-collapsed');
-    $('#btn-sidebar-collapse').html('&#10094;').attr('title', 'Collapse sidebar');
-    w2layoutInstance.set('left', { size: sidebarExpandedWidth });
-  }
-
-  w2layoutInstance.resize();
-  for (let panelId = 1; panelId <= 4; panelId++) {
-    const grid = panelState[panelId].w2uiGrid;
-    if (grid) grid.resize();
+    setSidebarWidth(SIDEBAR_COLLAPSED_WIDTH, true);
   }
 }
