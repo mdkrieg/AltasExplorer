@@ -14,6 +14,32 @@ let notesModalEditor = null;
 let notesModalEditMode = false;
 let notesModalContext = null;
 
+function syncRecordHasNotes(record, hasNotes) {
+  if (!record || !record.path) {
+    return;
+  }
+
+  record.hasNotes = hasNotes;
+
+  for (const state of Object.values(panelState)) {
+    const grid = state.w2uiGrid;
+    if (!grid || !Array.isArray(grid.records)) {
+      continue;
+    }
+
+    const gridRecord = grid.records.find(candidate =>
+      candidate.path === record.path && candidate.isFolder === record.isFolder
+    );
+
+    if (!gridRecord) {
+      continue;
+    }
+
+    gridRecord.hasNotes = hasNotes;
+    grid.refreshRow(gridRecord.recid);
+  }
+}
+
 export function getLanguageForFormat(format) {
   switch (format) {
     case 'PlainText':
@@ -457,6 +483,7 @@ export async function toggleNotesEditMode() {
     newContent
   });
   await window.electronAPI.writeFileContent(notesFilePath, updatedContent);
+  syncRecordHasNotes(notesModalContext.record, newContent.trim().length > 0);
 
   const tagMatches = [...newContent.matchAll(/@#(\w+)/g)];
   if (tagMatches.length > 0 && notesModalContext.record) {

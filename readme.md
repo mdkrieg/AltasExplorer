@@ -43,7 +43,8 @@ Philosophy:
 [ ] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline
 * Would it be possible to have a global hotkey (fires even without focus) that opens an always-on-top popup which offers a list of every path of all currently open directories and all favorites?
 [ ] LOCAL FAVORITES - instead of links, the user can populate local favorites. I'm thinking this should be in notes.txt - possibly without any special directive but anything that is a valid path gets shown in the sidebar when the user is browsing that dir.
-[ ] Notes column change - when there are no notes for a file or dir the notes column offers a "+" icon that opens a notes modal already in edit mode
+[x] Notes column change - when there are no notes for a file or dir the notes column offers a "+" icon that opens a notes modal already in edit mode.
+[x] Tags column - add "+" icon to quickly add new tags to the item
 [ ] Add a Select All button on the Alerts Summary (to help with the Acknowledge feature)
 [x] Update markdown viewer to consider a single line break as a newline - keep double line breaks as a newline with additional line height (new <p> object perhaps?) - turns out this was a built in option of markdown-it
 [x] Alerts:
@@ -67,8 +68,8 @@ Philosophy:
 [ ] Passively (no browse required) Watched directories - configurable by category??
 [ ] Filetype profiles (icon and editability)
 [ ] Autotagging
-[ ] Auto Backups
-[ ] Diffing
+[ ] One-click Backups
+[ ] Diffing between files
 [ ] Icons for context menu
 [ ] Photo / Media mode - thumbnails and preview pane
 [x] exif data

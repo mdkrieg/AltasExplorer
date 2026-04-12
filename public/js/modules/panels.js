@@ -55,7 +55,15 @@ const labelIconCache = new Map();
 const INITIAL_LABEL_SUGGESTION_COUNT = 4;
 const LABEL_SUGGESTION_INCREMENT = 3;
 let createTagModalState = {
-	panelId: null
+	panelId: null,
+	addHandler: null,
+	afterCreate: null
+};
+let tagConfigModalState = {
+	record: null,
+	panelId: null,
+	tags: [],
+	uiState: createDefaultLabelsUiState()
 };
 
 function createDefaultLabelsUiState() {
@@ -113,6 +121,7 @@ function updateSelectedItemFromRecord(record, panelId) {
 	if (changed) {
 		resetAllLabelsUiState();
 		hideCreateTagModal();
+		hideTagConfigModal();
 	}
 
 	refreshItemPropertiesInAllPanels();
@@ -253,10 +262,8 @@ function setScanIndicator(panelId, scanning) {
 }
 
 export function renderTagBadges(tagsJson, tagDefs) {
-	if (!tagsJson) return '';
-	let names;
-	try { names = JSON.parse(tagsJson); } catch { return ''; }
-	if (!Array.isArray(names) || names.length === 0) return '';
+	const names = parseTagNames(tagsJson);
+	if (names.length === 0) return '';
 	const badges = names.map(name => {
 		const def = tagDefs[name];
 		const bg = def ? def.bgColor : '#888';
@@ -264,6 +271,17 @@ export function renderTagBadges(tagsJson, tagDefs) {
 		return `<span class="tag-badge" style="background:${bg};color:${fg}">${name}</span>`;
 	});
 	return `<div class="tag-badge-container">${badges.join('')}</div>`;
+}
+
+function parseTagNames(tagsJson) {
+	if (!tagsJson) return [];
+	if (Array.isArray(tagsJson)) return tagsJson.filter(Boolean);
+	try {
+		const names = JSON.parse(tagsJson);
+		return Array.isArray(names) ? names.filter(Boolean) : [];
+	} catch {
+		return [];
+	}
 }
 
 function hexToRgbValue(hex) {
@@ -334,7 +352,8 @@ function getTagSuggestions(uiState, assignedTagNames) {
 	];
 }
 
-function getTagAction(uiState, assignedTagNames) {
+function getTagAction(uiState, assignedTagNames, options = {}) {
+	const allowCreate = options.allowCreate !== false;
 	const inputValue = String(uiState.inputValue || '').trim();
 	if (!inputValue) {
 		return { label: 'Add', kind: 'add', disabled: true };
@@ -347,6 +366,15 @@ function getTagAction(uiState, assignedTagNames) {
 			kind: 'add',
 			tagName: existingTag.name,
 			disabled: isAssignedTag(assignedTagNames, existingTag.name)
+		};
+	}
+
+	if (!allowCreate) {
+		return {
+			label: 'Add',
+			kind: 'add',
+			tagName: inputValue,
+			disabled: true
 		};
 	}
 
@@ -404,14 +432,7 @@ function renderTagChip(tagName, definition) {
 	`;
 }
 
-async function renderLabelsSection(panelId, stats, options = {}) {
-	const $panel = $(`#panel-${panelId}`);
-	const $container = $panel.find('.item-props-labels-content');
-	if ($container.length === 0) return;
-
-	const uiState = ensureLabelsUiState(panelId);
-	const assignedTagNames = Array.isArray(stats.tags) ? stats.tags : [];
-	const tagDefs = getTagDefinitionMap();
+function syncTagUiState(uiState, assignedTagNames) {
 	const suggestions = getTagSuggestions(uiState, assignedTagNames);
 	if (uiState.selectedSuggestionIndex >= suggestions.length) {
 		uiState.selectedSuggestionIndex = suggestions.length - 1;
@@ -419,22 +440,17 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 	if (!uiState.isSuggestionOpen || suggestions.length === 0) {
 		uiState.selectedSuggestionIndex = -1;
 	}
+	return suggestions;
+}
 
-	const currentCategory = getCategoryDefinitionByName(stats.categoryName) || {
-		name: stats.categoryName || 'Default',
-		bgColor: 'rgb(175, 175, 175)',
-		textColor: 'rgb(51, 51, 51)'
-	};
-	const isForcedCategory = Boolean(stats.isForcedCategory);
-	const showCategoryMenu = stats.isDirectory && isForcedCategory && uiState.isCategoryMenuOpen;
-	const currentIcon = await getCategoryIconUrl(currentCategory, stats.isDirectory ? (selectedItemState.record?.initials || null) : null);
-	const sortedCategories = Object.values(allCategories).sort((left, right) => left.name.localeCompare(right.name));
-	const categoryEntries = await Promise.all(sortedCategories.map(async category => ({
-		category,
-		iconUrl: await getCategoryIconUrl(category)
-	})));
-	const tagAction = getTagAction(uiState, assignedTagNames);
-
+function renderTagEditorMarkup(uiState, assignedTagNames, options = {}) {
+	const tagDefs = getTagDefinitionMap();
+	const suggestions = syncTagUiState(uiState, assignedTagNames);
+	const tagAction = getTagAction(uiState, assignedTagNames, options);
+	const inputPlaceholder = options.placeholder || 'Add or create a tag';
+	const helperText = options.helperText
+		? `<div class="item-props-tag-helper">${utils.escapeHtml(options.helperText)}</div>`
+		: '';
 	const currentTagsHtml = assignedTagNames.length > 0
 		? assignedTagNames.map(tagName => renderTagChip(tagName, tagDefs[tagName])).join('')
 		: '<span class="item-props-label-empty">No tags assigned</span>';
@@ -459,6 +475,41 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 		`
 		: '';
 
+	return `
+		<div class="item-props-current-tags">${currentTagsHtml}</div>
+		${helperText}
+		<div class="item-props-tag-editor">
+			<div class="item-props-tag-input-shell${uiState.isInputFocused && uiState.selectedSuggestionIndex === -1 ? ' is-selected' : ''}">
+				<input class="item-props-tag-input" type="text" value="${utils.escapeHtml(uiState.inputValue)}" placeholder="${utils.escapeHtml(inputPlaceholder)}">
+				${suggestionsHtml}
+			</div>
+			<button class="btn-item-props-tag-action" type="button" ${tagAction.disabled ? 'disabled' : ''}>${tagAction.label}</button>
+		</div>
+	`;
+}
+
+async function renderLabelsSection(panelId, stats, options = {}) {
+	const $panel = $(`#panel-${panelId}`);
+	const $container = $panel.find('.item-props-labels-content');
+	if ($container.length === 0) return;
+
+	const uiState = ensureLabelsUiState(panelId);
+	const assignedTagNames = Array.isArray(stats.tags) ? stats.tags : [];
+	const tagEditorHtml = renderTagEditorMarkup(uiState, assignedTagNames);
+
+	const currentCategory = getCategoryDefinitionByName(stats.categoryName) || {
+		name: stats.categoryName || 'Default',
+		bgColor: 'rgb(175, 175, 175)',
+		textColor: 'rgb(51, 51, 51)'
+	};
+	const isForcedCategory = Boolean(stats.isForcedCategory);
+	const showCategoryMenu = stats.isDirectory && isForcedCategory && uiState.isCategoryMenuOpen;
+	const currentIcon = await getCategoryIconUrl(currentCategory, stats.isDirectory ? (selectedItemState.record?.initials || null) : null);
+	const sortedCategories = Object.values(allCategories).sort((left, right) => left.name.localeCompare(right.name));
+	const categoryEntries = await Promise.all(sortedCategories.map(async category => ({
+		category,
+		iconUrl: await getCategoryIconUrl(category)
+	})));
 	const categoryControlHtml = stats.isDirectory
 		? `
 			<div class="item-props-category-with-force">
@@ -497,14 +548,7 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 		<div class="item-props-label-group">
 			<div class="item-props-label-group-title">Tags</div>
 			<div class="item-props-label-group-value">
-				<div class="item-props-current-tags">${currentTagsHtml}</div>
-				<div class="item-props-tag-editor">
-					<div class="item-props-tag-input-shell${uiState.isInputFocused && uiState.selectedSuggestionIndex === -1 ? ' is-selected' : ''}">
-						<input class="item-props-tag-input" type="text" value="${utils.escapeHtml(uiState.inputValue)}" placeholder="Add or create a tag">
-						${suggestionsHtml}
-					</div>
-					<button class="btn-item-props-tag-action" type="button" ${tagAction.disabled ? 'disabled' : ''}>${tagAction.label}</button>
-				</div>
+				${tagEditorHtml}
 			</div>
 		</div>
 		<div class="item-props-label-group">
@@ -540,15 +584,33 @@ function getSelectedGridRecord() {
 	};
 }
 
-function syncSelectedRecordTags(tagNames) {
-	const { grid, record } = getSelectedGridRecord();
-	if (!record) return;
+function syncRecordTags(record, tagNames) {
+	if (!record || !record.path) return;
 	const tagDefs = getTagDefinitionMap();
-	record.tagsRaw = tagNames.length > 0 ? JSON.stringify(tagNames) : null;
-	record.tags = renderTagBadges(record.tagsRaw, tagDefs);
-	if (grid && record.recid) {
-		grid.refreshRow(record.recid);
+	const tagsRaw = tagNames.length > 0 ? JSON.stringify(tagNames) : null;
+	record.tagsRaw = tagsRaw;
+	record.tags = renderTagBadges(tagsRaw, tagDefs);
+
+	if (selectedItemState.record && selectedItemState.record.path === record.path && selectedItemState.record.isFolder === record.isFolder) {
+		selectedItemState.record.tagsRaw = tagsRaw;
+		selectedItemState.record.tags = record.tags;
 	}
+
+	for (const state of Object.values(panelState)) {
+		const grid = state.w2uiGrid;
+		if (!grid || !Array.isArray(grid.records)) continue;
+		const gridRecord = grid.records.find(candidate => candidate.path === record.path && candidate.isFolder === record.isFolder);
+		if (!gridRecord) continue;
+		gridRecord.tagsRaw = tagsRaw;
+		gridRecord.tags = renderTagBadges(tagsRaw, tagDefs);
+		grid.refreshRow(gridRecord.recid);
+	}
+}
+
+function syncSelectedRecordTags(tagNames) {
+	const { record } = getSelectedGridRecord();
+	if (!record) return;
+	syncRecordTags(record, tagNames);
 }
 
 async function refreshAllVisiblePropertyPanels() {
@@ -587,6 +649,265 @@ async function addTagToCurrentItem(panelId, tagName) {
 	uiState.isSuggestionOpen = false;
 	syncSelectedRecordTags(nextTags);
 	await refreshAllVisiblePropertyPanels();
+}
+
+function getTagConfigTargetLabel() {
+	const record = tagConfigModalState.record;
+	if (!record) return 'Item';
+	const title = record.filenameRaw || record.filename || 'Item';
+	return record.isFolder ? `${title} (directory)` : title;
+}
+
+async function renderTagConfigModal(options = {}) {
+	if (!tagConfigModalState.record) return;
+	$('#item-tags-modal-title').text(`Tags — ${getTagConfigTargetLabel()}`);
+	$('#item-tags-modal-content').html(renderTagEditorMarkup(tagConfigModalState.uiState, tagConfigModalState.tags, {
+		allowCreate: false,
+		placeholder: 'Add existing tag',
+		helperText: 'Assign existing tags here. Create new tags from Item Properties or Label Manager.'
+	}));
+	if (options.restoreFocus) {
+		const input = $('#item-tags-modal-content').find('.item-props-tag-input').get(0);
+		if (input) {
+			input.focus();
+			const valueLength = input.value.length;
+			input.setSelectionRange(valueLength, valueLength);
+		}
+	}
+}
+
+async function rerenderTagConfigModal(options = {}) {
+	if (!tagConfigModalState.record) return;
+	await renderTagConfigModal(options);
+}
+
+async function addTagToTagModalItem(tagName) {
+	const record = tagConfigModalState.record;
+	const tagDefinition = getCanonicalTagDefinition(tagName);
+	if (!record || !tagDefinition) return;
+	if (isAssignedTag(tagConfigModalState.tags, tagDefinition.name)) return;
+
+	const result = await window.electronAPI.addTagToItem({
+		path: record.path,
+		tagName: tagDefinition.name,
+		isDirectory: record.isFolder,
+		inode: record.inode,
+		dir_id: record.dir_id
+	});
+	if (!result || result.success === false) {
+		throw new Error(result?.error || 'Unable to add tag');
+	}
+
+	tagConfigModalState.tags = [...tagConfigModalState.tags, tagDefinition.name];
+	tagConfigModalState.uiState.inputValue = '';
+	tagConfigModalState.uiState.visibleSuggestionCount = INITIAL_LABEL_SUGGESTION_COUNT;
+	tagConfigModalState.uiState.selectedSuggestionIndex = -1;
+	tagConfigModalState.uiState.isSuggestionOpen = false;
+	syncRecordTags(record, tagConfigModalState.tags);
+	if (selectedItemState.path === record.path) {
+		await refreshAllVisiblePropertyPanels();
+	}
+	await rerenderTagConfigModal({ restoreFocus: true });
+}
+
+async function removeTagFromTagModalItem(tagName) {
+	const record = tagConfigModalState.record;
+	if (!record) return;
+	const result = await window.electronAPI.removeTagFromItem({
+		path: record.path,
+		tagName,
+		isDirectory: record.isFolder,
+		inode: record.inode,
+		dir_id: record.dir_id
+	});
+	if (!result || result.success === false) {
+		throw new Error(result?.error || 'Unable to remove tag');
+	}
+
+	tagConfigModalState.tags = tagConfigModalState.tags.filter(name => name !== tagName);
+	syncRecordTags(record, tagConfigModalState.tags);
+	if (selectedItemState.path === record.path) {
+		await refreshAllVisiblePropertyPanels();
+	}
+	await rerenderTagConfigModal();
+}
+
+async function runPrimaryTagActionForTagModal() {
+	const action = getTagAction(tagConfigModalState.uiState, tagConfigModalState.tags, { allowCreate: false });
+	if (action.disabled) return;
+	await addTagToTagModalItem(action.tagName);
+}
+
+async function activateTagSuggestionForTagModal(suggestionIndex) {
+	const suggestions = getTagSuggestions(tagConfigModalState.uiState, tagConfigModalState.tags);
+	const item = suggestions[suggestionIndex];
+	if (!item) return;
+
+	if (item.kind === 'more') {
+		tagConfigModalState.uiState.visibleSuggestionCount += LABEL_SUGGESTION_INCREMENT;
+		tagConfigModalState.uiState.isSuggestionOpen = true;
+		tagConfigModalState.uiState.selectedSuggestionIndex = Math.min(suggestionIndex, getTagSuggestions(tagConfigModalState.uiState, tagConfigModalState.tags).length - 1);
+		await rerenderTagConfigModal({ restoreFocus: true });
+		return;
+	}
+
+	if (item.disabled) return;
+	await addTagToTagModalItem(item.tag.name);
+}
+
+export async function openTagConfigModal(record, panelId) {
+	if (!record) return;
+	tagConfigModalState.record = record;
+	tagConfigModalState.panelId = panelId;
+	tagConfigModalState.tags = parseTagNames(record.tagsRaw);
+	tagConfigModalState.uiState = createDefaultLabelsUiState();
+
+	$('#item-tags-modal').css('display', 'flex');
+	await renderTagConfigModal({ restoreFocus: true });
+
+	$('#btn-item-tags-close')
+		.off('click.itemTagsModal')
+		.on('click.itemTagsModal', function () {
+			hideTagConfigModal();
+		});
+
+	$('#item-tags-modal')
+		.off('mousedown.itemTagsOverlay')
+		.on('mousedown.itemTagsOverlay', function (event) {
+			if (event.target === this) {
+				hideTagConfigModal();
+			}
+		});
+
+	const $content = $('#item-tags-modal-content');
+	$content.off('mousedown.tagDismiss').on('mousedown.tagDismiss', function (event) {
+		if (!$(event.target).closest('.item-props-tag-editor').length && tagConfigModalState.uiState.isSuggestionOpen) {
+			tagConfigModalState.uiState.isSuggestionOpen = false;
+			tagConfigModalState.uiState.isInputFocused = false;
+			tagConfigModalState.uiState.selectedSuggestionIndex = -1;
+			rerenderTagConfigModal();
+		}
+	});
+
+	$content.off('input.tagEditor').on('input.tagEditor', '.item-props-tag-input', async function () {
+		tagConfigModalState.uiState.inputValue = $(this).val();
+		tagConfigModalState.uiState.visibleSuggestionCount = INITIAL_LABEL_SUGGESTION_COUNT;
+		tagConfigModalState.uiState.selectedSuggestionIndex = -1;
+		tagConfigModalState.uiState.isInputFocused = true;
+		tagConfigModalState.uiState.isSuggestionOpen = true;
+		await rerenderTagConfigModal({ restoreFocus: true });
+	});
+
+	$content.off('focus.tagEditor').on('focus.tagEditor', '.item-props-tag-input', async function () {
+		const currentValue = $(this).val();
+		if (
+			tagConfigModalState.uiState.isInputFocused &&
+			tagConfigModalState.uiState.isSuggestionOpen &&
+			tagConfigModalState.uiState.selectedSuggestionIndex === -1 &&
+			tagConfigModalState.uiState.inputValue === currentValue
+		) {
+			return;
+		}
+		tagConfigModalState.uiState.inputValue = currentValue;
+		tagConfigModalState.uiState.isInputFocused = true;
+		tagConfigModalState.uiState.isSuggestionOpen = true;
+		tagConfigModalState.uiState.selectedSuggestionIndex = -1;
+		await rerenderTagConfigModal({ restoreFocus: true });
+	});
+
+	$content.off('blur.tagEditor').on('blur.tagEditor', '.item-props-tag-input', function () {
+		setTimeout(() => {
+			const editorHasFocus = $('#item-tags-modal-content').find('.item-props-tag-editor').find(document.activeElement).length > 0;
+			if (!editorHasFocus) {
+				tagConfigModalState.uiState.isInputFocused = false;
+				tagConfigModalState.uiState.isSuggestionOpen = false;
+				tagConfigModalState.uiState.selectedSuggestionIndex = -1;
+				rerenderTagConfigModal();
+			}
+		}, 0);
+	});
+
+	$content.off('keydown.tagEditor').on('keydown.tagEditor', '.item-props-tag-input', async function (event) {
+		const suggestions = getTagSuggestions(tagConfigModalState.uiState, tagConfigModalState.tags);
+
+		if (event.key === 'ArrowDown') {
+			event.preventDefault();
+			tagConfigModalState.uiState.isSuggestionOpen = true;
+			tagConfigModalState.uiState.selectedSuggestionIndex = Math.min(tagConfigModalState.uiState.selectedSuggestionIndex + 1, suggestions.length - 1);
+			await rerenderTagConfigModal({ restoreFocus: true });
+			return;
+		}
+
+		if (event.key === 'ArrowUp') {
+			event.preventDefault();
+			tagConfigModalState.uiState.selectedSuggestionIndex = Math.max(tagConfigModalState.uiState.selectedSuggestionIndex - 1, -1);
+			tagConfigModalState.uiState.isSuggestionOpen = true;
+			await rerenderTagConfigModal({ restoreFocus: true });
+			return;
+		}
+
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			try {
+				if (tagConfigModalState.uiState.selectedSuggestionIndex >= 0) {
+					await activateTagSuggestionForTagModal(tagConfigModalState.uiState.selectedSuggestionIndex);
+					return;
+				}
+				await runPrimaryTagActionForTagModal();
+			} catch (err) {
+				w2alert('Error updating tags: ' + err.message);
+			}
+			return;
+		}
+
+		if (event.key === 'Escape') {
+			event.preventDefault();
+			tagConfigModalState.uiState.isSuggestionOpen = false;
+			tagConfigModalState.uiState.selectedSuggestionIndex = -1;
+			await rerenderTagConfigModal({ restoreFocus: true });
+		}
+	});
+
+	$content.off('mousedown.tagAction').on('mousedown.tagAction', '.btn-item-props-tag-action', async function (event) {
+		event.preventDefault();
+		try {
+			await runPrimaryTagActionForTagModal();
+		} catch (err) {
+			w2alert('Error updating tags: ' + err.message);
+		}
+	});
+
+	$content.off('mousedown.tagSuggestion').on('mousedown.tagSuggestion', '.item-props-tag-suggestion', async function (event) {
+		event.preventDefault();
+		const index = Number($(this).attr('data-index'));
+		if (Number.isNaN(index)) return;
+		try {
+			await activateTagSuggestionForTagModal(index);
+		} catch (err) {
+			w2alert('Error updating tags: ' + err.message);
+		}
+	});
+
+	$content.off('click.removeTag').on('click.removeTag', '.btn-item-props-remove-tag', async function (event) {
+		event.preventDefault();
+		event.stopPropagation();
+		const tagName = decodeURIComponent($(this).attr('data-tag-name') || '');
+		if (!tagName) return;
+		try {
+			await removeTagFromTagModalItem(tagName);
+		} catch (err) {
+			w2alert('Error removing tag: ' + err.message);
+		}
+	});
+}
+
+export function hideTagConfigModal() {
+	tagConfigModalState.record = null;
+	tagConfigModalState.panelId = null;
+	tagConfigModalState.tags = [];
+	tagConfigModalState.uiState = createDefaultLabelsUiState();
+	$('#item-tags-modal').hide();
+	$('#item-tags-modal-content').empty();
 }
 
 async function runPrimaryTagAction(panelId) {
@@ -707,7 +1028,8 @@ function showCreateTagError(message) {
 
 async function submitCreateTagModal(shouldAdd) {
 	const panelId = createTagModalState.panelId;
-	if (!panelId) return;
+	const addHandler = createTagModalState.addHandler;
+	const afterCreate = createTagModalState.afterCreate;
 	const name = ($('#item-tag-create-name').val() || '').trim();
 	const bgColor = $('#item-tag-create-bgColor').val();
 	const textColor = $('#item-tag-create-textColor').val();
@@ -732,17 +1054,27 @@ async function submitCreateTagModal(shouldAdd) {
 		await loadTagsList();
 		hideCreateTagModal();
 		if (shouldAdd) {
-			await addTagToCurrentItem(panelId, name);
+			if (typeof addHandler === 'function') {
+				await addHandler(name);
+			} else if (panelId) {
+				await addTagToCurrentItem(panelId, name);
+			}
 		} else {
-			await refreshAllVisiblePropertyPanels();
+			if (typeof afterCreate === 'function') {
+				await afterCreate();
+			} else {
+				await refreshAllVisiblePropertyPanels();
+			}
 		}
 	} catch (err) {
 		showCreateTagError(err.message || 'Unable to create tag.');
 	}
 }
 
-async function openCreateTagModal(panelId, initialName) {
+async function openCreateTagModal(panelId, initialName, options = {}) {
 	createTagModalState.panelId = panelId;
+	createTagModalState.addHandler = options.addHandler || null;
+	createTagModalState.afterCreate = options.afterCreate || null;
 	$('#item-tag-create-name').val(initialName || '');
 	$('#item-tag-create-bgColor').val('#efe4b0');
 	$('#item-tag-create-textColor').val('#000000');
@@ -796,6 +1128,8 @@ async function openCreateTagModal(panelId, initialName) {
 
 export function hideCreateTagModal() {
 	createTagModalState.panelId = null;
+	createTagModalState.addHandler = null;
+	createTagModalState.afterCreate = null;
 	showCreateTagError('');
 	$('#item-tag-create-modal').hide();
 }
@@ -803,6 +1137,11 @@ export function hideCreateTagModal() {
 export function handleTransientEscape() {
 	if ($('#item-tag-create-modal').is(':visible')) {
 		hideCreateTagModal();
+		return true;
+	}
+
+	if ($('#item-tags-modal').is(':visible')) {
+		hideTagConfigModal();
 		return true;
 	}
 
@@ -1294,12 +1633,16 @@ async function initializeGridForPanel(panelId) {
 		{ field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
 		{ field: 'perms', text: 'Perms', size: '48px', resizable: true, sortable: true },
 		{ field: 'checksum', text: 'Checksum', size: '70px', resizable: true, sortable: false },
-		{ field: 'tags', text: 'Tags', size: '160px', resizable: true, sortable: false },
+		{
+			field: 'tags', text: 'Tags', size: '190px', resizable: true, sortable: false, render: (record) => {
+				return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true">+</button></div>`;
+			}
+		},
 		{
 			field: 'notes', text: 'Notes', size: '32px', resizable: false, sortable: false, render: (record) => {
 				return record.hasNotes
-					? `<img src="assets/icons/note-book-icon.svg" style="width: 16px; height: 16px; object-fit: contain; cursor: pointer; opacity: 0.7;" title="Notes" data-notes-icon="true">`
-					: '';
+					? `<img src="assets/icons/note-book-icon.svg" class="notes-cell-icon notes-cell-icon-image" title="Notes" data-notes-icon="true">`
+					: '<span class="notes-cell-icon notes-cell-icon-add" title="Add notes" data-notes-icon="true">+</span>';
 			}
 		},
 		{
@@ -1368,6 +1711,20 @@ async function initializeGridForPanel(panelId) {
 		contextMenu: [],
 		onClick: function (event) {
 			gridFocusedPanelId = panelId;
+			const originalTarget = event.detail.originalEvent?.target;
+
+			if (originalTarget && originalTarget.closest && originalTarget.closest('[data-tag-config-trigger="true"]')) {
+				event.preventDefault();
+				event.stopPropagation();
+				if (event.detail.recid) {
+					const record = this.records[event.detail.recid - 1];
+					if (record) {
+						updateSelectedItemFromRecord(record, panelId);
+						openTagConfigModal(record, panelId);
+						return;
+					}
+				}
+			}
 			
 			// Handle notes icon click to open modal
 			if (event.detail.originalEvent && event.detail.originalEvent.target &&
@@ -1377,7 +1734,7 @@ async function initializeGridForPanel(panelId) {
 				event.stopPropagation();
 				if (event.detail.recid) {
 					const record = this.records[event.detail.recid - 1];
-					if (record && record.hasNotes) {
+					if (record) {
 						openNotesModal(record);
 						return;
 					}

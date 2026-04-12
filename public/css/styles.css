@@ -606,6 +606,12 @@ textarea {
   margin-bottom: 8px;
 }
 
+.item-props-tag-helper {
+  margin-bottom: 8px;
+  color: #777;
+  font-size: 11px;
+}
+
 .item-props-label-empty {
   color: #999;
   font-size: 12px;
@@ -708,6 +714,53 @@ textarea {
   font-size: 11px;
   font-weight: 600;
   color: #555;
+}
+
+#item-tags-modal {
+  z-index: 1001;
+}
+
+.item-tags-modal-box {
+  background: white;
+  border-radius: 8px;
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 60px);
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.item-tags-modal-header,
+.item-tags-modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: #fff;
+}
+
+.item-tags-modal-header {
+  border-bottom: 1px solid #ddd;
+}
+
+.item-tags-modal-footer {
+  justify-content: flex-end;
+  border-top: 1px solid #eee;
+}
+
+.item-tags-modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  background: #fff;
+}
+
+.item-tags-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .btn-item-props-tag-action {
@@ -1226,6 +1279,75 @@ hr {
     /* text-overflow: ellipsis; */
     text-overflow: clip;
     line-height: 1.4; /* lower case g gets clipped at 1.2*/
+}
+
+.notes-cell-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.notes-cell-icon-image {
+  object-fit: contain;
+  opacity: 0.7;
+}
+
+.notes-cell-icon-add {
+  border: 1px solid #b9c2cc;
+  border-radius: 50%;
+  color: #5c6670;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.notes-cell-icon-add:hover {
+  background: #eef6ff;
+  border-color: #2196f3;
+  color: #1976d2;
+}
+
+.grid-tags-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.grid-tags-cell .tag-badge-container {
+  flex: 1;
+  min-width: 0;
+}
+
+.grid-tags-empty {
+  flex: 1;
+  min-width: 0;
+}
+
+.grid-tags-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #b9c2cc;
+  border-radius: 50%;
+  background: #fff;
+  color: #5c6670;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.grid-tags-add-btn:hover {
+  background: #eef6ff;
+  border-color: #2196f3;
+  color: #1976d2;
 }
 
 /* Settings Button Styles */
