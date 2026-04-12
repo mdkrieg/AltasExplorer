@@ -1,27 +1,30 @@
 /**
- * Alerts module.
- * Owns the alert badge, the Alerts modal, and all three tabs:
- *   Summary      – grid of unacknowledged alerts with acknowledge action
- *   History      – grid of acknowledged alerts
- *   Configuration – alert rule management (grid + right-panel editor)
+ * Alerts and Monitoring module.
+ * Owns the alert badge plus the Alerts and Monitoring modal tabs:
+ *   Summary           - unacknowledged alerts
+ *   History           - acknowledged alerts
+ *   Alerts            - alert rule management
+ *   Active Monitoring - monitoring rule management
+ *   Settings          - monitoring scheduler settings
  */
 
 import * as panels from './panels.js';
 import { w2ui, w2grid } from './vendor/w2ui.es6.min.js';
 
-// ─────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────
-
 const EVENT_LABELS = {
-  fileAdded:    'File Added',
-  fileRemoved:  'File Removed',
-  fileRenamed:  'File Renamed',
+  fileAdded: 'File Added',
+  fileRemoved: 'File Removed',
+  fileRenamed: 'File Renamed',
   fileModified: 'File Modified',
-  fileChanged:  'File Changed',
+  fileChanged: 'File Changed',
 };
 
 const ALL_EVENT_TYPES = Object.keys(EVENT_LABELS);
+const MONITORING_INTERVAL_UNITS = ['seconds', 'minutes', 'hours', 'days'];
+
+let activeTab = 'summary';
+let editingAlertRule = null;
+let editingMonitoringRule = null;
 
 function formatEventType(type) {
   return EVENT_LABELS[type] || type;
@@ -32,7 +35,6 @@ function formatTs(ms) {
   return new Date(ms).toLocaleString();
 }
 
-/** Render a compact summary cell: "ANY" or "N (item1, item2...)" */
 function summariseList(jsonOrAny, sep = ', ') {
   if (!jsonOrAny || jsonOrAny === 'ANY') return 'ANY';
   try {
@@ -45,35 +47,293 @@ function summariseList(jsonOrAny, sep = ', ') {
   }
 }
 
-/** Summarise events: e.g. "3 (File Added, File Modified, File Changed)" */
 function summariseEvents(jsonStr) {
   if (!jsonStr) return '—';
   try {
     const arr = JSON.parse(jsonStr);
     if (!arr || arr.length === 0) return '—';
-    const labels = arr.map(e => EVENT_LABELS[e] || e);
+    const labels = arr.map(eventType => EVENT_LABELS[eventType] || eventType);
     return `<span title="${labels.join(', ')}">${labels.length === 1 ? labels[0] : labels.length}</span>`;
   } catch {
     return jsonStr;
   }
 }
 
-/** Summarise attributes */
 function summariseAttributes(jsonOrAny) {
   if (!jsonOrAny || jsonOrAny === 'ANY') return 'ANY';
   try {
     const arr = JSON.parse(jsonOrAny);
     if (!arr || arr.length === 0) return 'ANY';
-    const tipLines = arr.map(a => `${a.name} = ${a.value}`).join('\n');
+    const tipLines = arr.map(attr => `${attr.name} = ${attr.value}`).join('\n');
     return `<span title="${tipLines}">${arr.length}</span>`;
   } catch {
     return jsonOrAny;
   }
 }
 
-// ─────────────────────────────────────────────
-// Badge
-// ─────────────────────────────────────────────
+function summariseInterval(rule) {
+  return `${Number(rule.interval_value) || 1} ${rule.interval_unit || 'days'}`;
+}
+
+function parseListOrAny(json) {
+  if (!json || json === 'ANY') return 'ANY';
+  try { return JSON.parse(json); } catch { return 'ANY'; }
+}
+
+function parseAttrsOrAny(json) {
+  if (!json || json === 'ANY') return 'ANY';
+  try { return JSON.parse(json); } catch { return 'ANY'; }
+}
+
+function parseEventList(json) {
+  if (!json) return [];
+  try { return JSON.parse(json) || []; } catch { return []; }
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function destroyGrids() {
+  ['alerts-summary-grid', 'alerts-history-grid', 'alerts-rules-grid', 'monitoring-rules-grid'].forEach(name => {
+    if (w2ui[name]) w2ui[name].destroy();
+  });
+}
+
+async function loadRuleDependencies() {
+  let allCategories = {};
+  let allTags = [];
+  let allAttributes = [];
+
+  try {
+    allCategories = await window.electronAPI.loadCategories() || {};
+  } catch {}
+
+  try {
+    allTags = await window.electronAPI.getTagsList() || [];
+  } catch {}
+
+  try {
+    allAttributes = await window.electronAPI.getAttributesList() || [];
+  } catch {}
+
+  return { allCategories, allTags, allAttributes };
+}
+
+function getAvailableAttributes(selectedCatNames, allCategories, allAttributes) {
+  if (!selectedCatNames || selectedCatNames.length === 0) {
+    return allAttributes.map(attr => attr.name);
+  }
+
+  const attrSet = new Set();
+  selectedCatNames.forEach(catName => {
+    const category = allCategories[catName];
+    if (category && category.attributes) {
+      category.attributes.forEach(attrName => attrSet.add(attrName));
+    }
+  });
+  return [...attrSet];
+}
+
+function collectAttributeValues($body) {
+  const result = [];
+  $body.find('[name="rule-attr-val"]').each(function () {
+    const name = $(this).data('attr');
+    const value = $(this).val();
+    if (name) result.push({ name, value: value || '' });
+  });
+  return result;
+}
+
+function renderAttributeRows(attrNames, allAttributes, currentValues) {
+  if (!attrNames || attrNames.length === 0) {
+    return '<em style="font-size:11px;color:#999;">Select specific categories first</em>';
+  }
+
+  return attrNames.map(attrName => {
+    const definition = allAttributes.find(attr => attr.name === attrName);
+    const currentValue = (currentValues || []).find(attr => attr.name === attrName)?.value ?? '';
+
+    let inputHtml;
+    if (definition && definition.type === 'Selectable' && definition.options && definition.options.length > 0) {
+      inputHtml = `<select name="rule-attr-val" data-attr="${escapeHtml(attrName)}">
+        <option value="">(any value)</option>
+        ${definition.options.map(option => `<option value="${escapeHtml(option)}" ${currentValue === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+      </select>`;
+    } else {
+      inputHtml = `<input type="text" name="rule-attr-val" data-attr="${escapeHtml(attrName)}" value="${escapeHtml(currentValue)}" placeholder="(any value)">`;
+    }
+
+    return `<div class="alerts-rule-attr-row">
+      <span style="min-width:90px;font-size:11px;">${escapeHtml(attrName)}</span>
+      ${inputHtml}
+    </div>`;
+  }).join('');
+}
+
+function refreshAttributeSection($body, allCategories, allAttributes) {
+  const isAny = $body.find('#rule-cat-any').is(':checked');
+  const selectedCats = isAny
+    ? []
+    : $body.find('input[name="rule-cat"]:checked').map(function () { return this.value; }).get();
+
+  const $attrSection = $body.find('#rule-attr-section');
+  if (!isAny && selectedCats.length === 0) {
+    $attrSection.hide();
+    return;
+  }
+  $attrSection.show();
+
+  const availableAttrs = getAvailableAttributes(selectedCats, allCategories, allAttributes);
+  const currentAttrVals = collectAttributeValues($body);
+  $body.find('#rule-attr-list').html(renderAttributeRows(availableAttrs, allAttributes, currentAttrVals));
+}
+
+function buildCommonRuleHtml(rule, allCategories, allTags, allAttributes) {
+  const ruleCategories = parseListOrAny(rule ? rule.categories : null);
+  const ruleTags = parseListOrAny(rule ? rule.tags : null);
+  const ruleAttributes = parseAttrsOrAny(rule ? rule.attributes : null);
+  const categoryNames = Object.keys(allCategories).sort();
+  const tagNames = allTags.map(tag => tag.name).sort();
+  const selectedCatNames = ruleCategories === 'ANY' ? [] : ruleCategories;
+  const attrNames = getAvailableAttributes(selectedCatNames, allCategories, allAttributes);
+  const attrIsAny = ruleAttributes === 'ANY';
+
+  return `
+    <div class="alerts-rule-section">
+      <div class="alerts-rule-section-label">Categories</div>
+      <label class="alerts-rule-any-toggle">
+        <input type="checkbox" id="rule-cat-any" ${ruleCategories === 'ANY' ? 'checked' : ''}> <span>ANY</span>
+      </label>
+      <div id="rule-cat-list" class="alerts-rule-options-list" style="${ruleCategories === 'ANY' ? 'display:none;' : ''}">
+        ${categoryNames.map(categoryName => `
+          <label>
+            <input type="checkbox" name="rule-cat" value="${escapeHtml(categoryName)}" ${ruleCategories !== 'ANY' && ruleCategories.includes(categoryName) ? 'checked' : ''}>
+            ${escapeHtml(categoryName)}
+          </label>`).join('')}
+      </div>
+    </div>
+
+    <div class="alerts-rule-section">
+      <div class="alerts-rule-section-label">Tags</div>
+      <label class="alerts-rule-any-toggle">
+        <input type="checkbox" id="rule-tag-any" ${ruleTags === 'ANY' ? 'checked' : ''}> <span>ANY</span>
+      </label>
+      <div id="rule-tag-list" class="alerts-rule-options-list" style="${ruleTags === 'ANY' ? 'display:none;' : ''}">
+        ${tagNames.length === 0
+          ? '<em style="font-size:11px;color:#999;">No tags defined</em>'
+          : tagNames.map(tagName => `
+            <label>
+              <input type="checkbox" name="rule-tag" value="${escapeHtml(tagName)}" ${ruleTags !== 'ANY' && ruleTags.includes(tagName) ? 'checked' : ''}>
+              ${escapeHtml(tagName)}
+            </label>`).join('')}
+      </div>
+    </div>
+
+    <div class="alerts-rule-section" id="rule-attr-section" style="${selectedCatNames.length === 0 && ruleCategories !== 'ANY' ? 'display:none;' : ''}">
+      <div class="alerts-rule-section-label">Attributes</div>
+      <label class="alerts-rule-any-toggle">
+        <input type="checkbox" id="rule-attr-any" ${attrIsAny ? 'checked' : ''}> <span>ANY</span>
+      </label>
+      <div id="rule-attr-list" style="${attrIsAny ? 'display:none;' : ''}">
+        ${renderAttributeRows(attrNames, allAttributes, attrIsAny ? [] : ruleAttributes)}
+      </div>
+    </div>
+  `;
+}
+
+function wireCommonRuleEvents($body, allCategories, allAttributes) {
+  $body.find('#rule-cat-any').on('change', function () {
+    const isAny = this.checked;
+    $body.find('#rule-cat-list').toggle(!isAny);
+    refreshAttributeSection($body, allCategories, allAttributes);
+  });
+
+  $body.find('input[name="rule-cat"]').on('change', function () {
+    refreshAttributeSection($body, allCategories, allAttributes);
+  });
+
+  $body.find('#rule-tag-any').on('change', function () {
+    $body.find('#rule-tag-list').toggle(!this.checked);
+  });
+
+  $body.find('#rule-attr-any').on('change', function () {
+    $body.find('#rule-attr-list').toggle(!this.checked);
+  });
+}
+
+function collectCommonRuleValues($body) {
+  const catIsAny = $body.find('#rule-cat-any').is(':checked');
+  const categories = catIsAny
+    ? 'ANY'
+    : JSON.stringify($body.find('input[name="rule-cat"]:checked').map(function () { return this.value; }).get());
+
+  const tagIsAny = $body.find('#rule-tag-any').is(':checked');
+  const tags = tagIsAny
+    ? 'ANY'
+    : JSON.stringify($body.find('input[name="rule-tag"]:checked').map(function () { return this.value; }).get());
+
+  const attrIsAny = $body.find('#rule-attr-any').is(':checked');
+  let attributes = 'ANY';
+  if (!attrIsAny) {
+    const attrVals = collectAttributeValues($body).filter(attr => attr.value !== '');
+    attributes = JSON.stringify(attrVals);
+  }
+
+  return { categories, tags, attributes };
+}
+
+function updateAcknowledgeButton() {
+  const grid = w2ui['alerts-summary-grid'];
+  const hasSelection = grid && grid.getSelection().length > 0;
+  $('#btn-alerts-acknowledge').prop('disabled', !hasSelection).css('opacity', hasSelection ? '1' : '0.5');
+}
+
+function updateRuleToolbar(gridName, editSelector, deleteSelector) {
+  const grid = w2ui[gridName];
+  const count = grid ? grid.getSelection().length : 0;
+  $(editSelector).prop('disabled', count !== 1).css('opacity', count === 1 ? '1' : '0.5');
+  $(deleteSelector).prop('disabled', count === 0).css('opacity', count > 0 ? '1' : '0.5');
+}
+
+function initRuleDivider(dividerSelector, editorSelector) {
+  const $divider = $(dividerSelector);
+  if ($divider.data('divider-init')) return;
+  $divider.data('divider-init', true);
+
+  let startX = 0;
+  let startWidth = 0;
+
+  $divider.on('mousedown', function (event) {
+    event.preventDefault();
+    startX = event.clientX;
+    const $editor = $(editorSelector);
+    startWidth = $editor.width();
+
+    $(document).on(`mousemove${dividerSelector}`, function (moveEvent) {
+      const delta = startX - moveEvent.clientX;
+      const newWidth = Math.max(260, Math.min(600, startWidth + delta));
+      $editor.css('flex', `0 0 ${newWidth}px`);
+    });
+
+    $(document).on(`mouseup${dividerSelector}`, function () {
+      $(document).off(`mousemove${dividerSelector} mouseup${dividerSelector}`);
+    });
+  });
+}
+
+function sortJsonArrayString(jsonStr) {
+  try {
+    return JSON.stringify((JSON.parse(jsonStr || '[]') || []).slice().sort());
+  } catch {
+    return '[]';
+  }
+}
 
 export function updateAlertBadge() {
   const $badge = $('#alerts-badge');
@@ -84,10 +344,6 @@ export function updateAlertBadge() {
   }
 }
 
-// ─────────────────────────────────────────────
-// Modal open / close
-// ─────────────────────────────────────────────
-
 export async function showAlertsModal() {
   $('#alerts-modal').css('display', 'flex');
   await switchTab('summary');
@@ -95,25 +351,14 @@ export async function showAlertsModal() {
 
 export function hideAlertsModal() {
   $('#alerts-modal').hide();
-  _destroyGrids();
+  closeRuleEditor();
+  closeMonitoringRuleEditor();
+  destroyGrids();
 }
-
-function _destroyGrids() {
-  ['alerts-summary-grid', 'alerts-history-grid', 'alerts-rules-grid'].forEach(name => {
-    if (w2ui[name]) w2ui[name].destroy();
-  });
-}
-
-// ─────────────────────────────────────────────
-// Tab switching
-// ─────────────────────────────────────────────
-
-let _activeTab = 'summary';
 
 export async function switchTab(tabName) {
-  _activeTab = tabName;
+  activeTab = tabName;
 
-  // Update tab bar styling
   $('.alerts-tab-btn').each(function () {
     const isActive = $(this).data('tab') === tabName;
     $(this).css({
@@ -122,19 +367,15 @@ export async function switchTab(tabName) {
     });
   });
 
-  // Show/hide content panels
   $('.alerts-tab-content').hide();
   $(`#alerts-tab-${tabName}`).css('display', 'flex');
 
-  // Load data for the activated tab
-  if (tabName === 'summary')       await loadAlertsSummary();
-  if (tabName === 'history')       await loadAlertsHistory();
-  if (tabName === 'configuration') await loadAlertRules();
+  if (tabName === 'summary') await loadAlertsSummary();
+  if (tabName === 'history') await loadAlertsHistory();
+  if (tabName === 'alerts') await loadAlertRules();
+  if (tabName === 'monitoring') await loadMonitoringRules();
+  if (tabName === 'settings') await loadMonitoringSettings();
 }
-
-// ─────────────────────────────────────────────
-// Summary Tab
-// ─────────────────────────────────────────────
 
 export async function loadAlertsSummary() {
   const result = await window.electronAPI.getAlertsSummary();
@@ -147,40 +388,32 @@ export async function loadAlertsSummary() {
 
   const records = (result.data || []).map((alert, idx) => ({
     recid: idx + 1,
-    _id:   alert.id,
+    _id: alert.id,
     detectedAt: formatTs(alert.created_at),
-    eventType:  formatEventType(alert.type),
-    filename:   alert.filename || '—',
-    category:   alert.category || '—',
-    directory:  alert.dirname || '—',
+    eventType: formatEventType(alert.type),
+    filename: alert.filename || '—',
+    category: alert.category || '—',
+    directory: alert.dirname || '—',
   }));
 
   w2ui['alerts-summary-grid'] = new w2grid({
-    name:  'alerts-summary-grid',
+    name: 'alerts-summary-grid',
     multiSelect: true,
-    show:  { header: false, toolbar: false, footer: true },
+    show: { header: false, toolbar: false, footer: true },
     columns: [
-      { field: 'detectedAt', text: 'Detected',   size: '160px', resizable: true, sortable: true },
-      { field: 'eventType',  text: 'Event',       size: '130px', resizable: true, sortable: true },
-      { field: 'filename',   text: 'File',        size: '25%',  resizable: true, sortable: true },
-      { field: 'category',   text: 'Category',    size: '15%',  resizable: true, sortable: true },
-      { field: 'directory',  text: 'Directory',   size: '30%',  resizable: true, sortable: true },
+      { field: 'detectedAt', text: 'Detected', size: '160px', resizable: true, sortable: true },
+      { field: 'eventType', text: 'Event', size: '130px', resizable: true, sortable: true },
+      { field: 'filename', text: 'File', size: '25%', resizable: true, sortable: true },
+      { field: 'category', text: 'Category', size: '15%', resizable: true, sortable: true },
+      { field: 'directory', text: 'Directory', size: '30%', resizable: true, sortable: true },
     ],
     records,
-    onSelect:   () => setTimeout(() => _updateAcknowledgeButton(), 0),
-    onUnselect: () => setTimeout(() => _updateAcknowledgeButton(), 0),
+    onSelect: () => setTimeout(() => updateAcknowledgeButton(), 0),
+    onUnselect: () => setTimeout(() => updateAcknowledgeButton(), 0),
     onLoad: event => event.preventDefault(),
   });
   w2ui['alerts-summary-grid'].render($('#alerts-summary-grid')[0]);
-  _updateAcknowledgeButton();
-}
-
-function _updateAcknowledgeButton() {
-  const grid = w2ui['alerts-summary-grid'];
-  const hasSelection = grid && grid.getSelection().length > 0;
-  const $btn = $('#btn-alerts-acknowledge');
-  $btn.prop('disabled', !hasSelection);
-  $btn.css('opacity', hasSelection ? '1' : '0.5');
+  updateAcknowledgeButton();
 }
 
 export async function acknowledgeSelected() {
@@ -191,8 +424,8 @@ export async function acknowledgeSelected() {
   if (!selected || selected.length === 0) return;
 
   const ids = selected.map(recid => {
-    const rec = grid.get(recid);
-    return rec ? rec._id : null;
+    const record = grid.get(recid);
+    return record ? record._id : null;
   }).filter(id => id !== null);
 
   if (ids.length === 0) return;
@@ -210,10 +443,6 @@ export async function acknowledgeSelected() {
   await loadAlertsSummary();
 }
 
-// ─────────────────────────────────────────────
-// History Tab
-// ─────────────────────────────────────────────
-
 export async function loadAlertsHistory() {
   const result = await window.electronAPI.getAlertsHistory();
   if (!result.success) {
@@ -224,39 +453,33 @@ export async function loadAlertsHistory() {
   if (w2ui['alerts-history-grid']) w2ui['alerts-history-grid'].destroy();
 
   const records = (result.data || []).map((alert, idx) => ({
-    recid:           idx + 1,
-    detectedAt:      formatTs(alert.created_at),
-    eventType:       formatEventType(alert.type),
-    filename:        alert.filename || '—',
-    category:        alert.category || '—',
-    directory:       alert.dirname || '—',
-    acknowledgedAt:  formatTs(alert.acknowledged_at),
-    comment:         alert.acknowledged_comment || '',
+    recid: idx + 1,
+    detectedAt: formatTs(alert.created_at),
+    eventType: formatEventType(alert.type),
+    filename: alert.filename || '—',
+    category: alert.category || '—',
+    directory: alert.dirname || '—',
+    acknowledgedAt: formatTs(alert.acknowledged_at),
+    comment: alert.acknowledged_comment || '',
   }));
 
   w2ui['alerts-history-grid'] = new w2grid({
-    name:  'alerts-history-grid',
-    show:  { header: false, toolbar: false, footer: true },
+    name: 'alerts-history-grid',
+    show: { header: false, toolbar: false, footer: true },
     columns: [
-      { field: 'detectedAt',     text: 'Detected',      size: '150px', resizable: true, sortable: true },
-      { field: 'eventType',      text: 'Event',         size: '120px', resizable: true, sortable: true },
-      { field: 'filename',       text: 'File',          size: '18%',  resizable: true, sortable: true },
-      { field: 'category',       text: 'Category',      size: '12%',  resizable: true, sortable: true },
-      { field: 'directory',      text: 'Directory',     size: '20%',  resizable: true, sortable: true },
-      { field: 'acknowledgedAt', text: 'Acknowledged',  size: '150px', resizable: true, sortable: true },
-      { field: 'comment',        text: 'Comment',       size: '20%',  resizable: true },
+      { field: 'detectedAt', text: 'Detected', size: '150px', resizable: true, sortable: true },
+      { field: 'eventType', text: 'Event', size: '120px', resizable: true, sortable: true },
+      { field: 'filename', text: 'File', size: '18%', resizable: true, sortable: true },
+      { field: 'category', text: 'Category', size: '12%', resizable: true, sortable: true },
+      { field: 'directory', text: 'Directory', size: '20%', resizable: true, sortable: true },
+      { field: 'acknowledgedAt', text: 'Acknowledged', size: '150px', resizable: true, sortable: true },
+      { field: 'comment', text: 'Comment', size: '20%', resizable: true },
     ],
     records,
     onLoad: event => event.preventDefault(),
   });
   w2ui['alerts-history-grid'].render($('#alerts-history-grid')[0]);
 }
-
-// ─────────────────────────────────────────────
-// Configuration Tab – Rules Grid
-// ─────────────────────────────────────────────
-
-let _editingRule = null; // null = new rule; object = existing rule
 
 export async function loadAlertRules() {
   const result = await window.electronAPI.getAlertRules();
@@ -268,180 +491,81 @@ export async function loadAlertRules() {
   if (w2ui['alerts-rules-grid']) w2ui['alerts-rules-grid'].destroy();
 
   const records = (result.data || []).map((rule, idx) => ({
-    recid:      idx + 1,
-    _id:        rule.id,
-    _raw:       rule,
+    recid: idx + 1,
+    _id: rule.id,
+    _raw: rule,
     categories: summariseList(rule.categories),
-    tags:       summariseList(rule.tags),
+    tags: summariseList(rule.tags),
     attributes: summariseAttributes(rule.attributes),
-    events:     summariseEvents(rule.events),
-    enabled:    rule.enabled ? 'Yes' : 'No',
+    events: summariseEvents(rule.events),
+    enabled: rule.enabled ? 'Yes' : 'No',
   }));
 
   w2ui['alerts-rules-grid'] = new w2grid({
-    name:  'alerts-rules-grid',
+    name: 'alerts-rules-grid',
     multiSelect: true,
-    show:  { header: false, toolbar: false, footer: true },
+    show: { header: false, toolbar: false, footer: true },
     columns: [
-      { field: 'categories', text: 'Categories', size: '18%', resizable: true, render: (rec) => rec.categories },
-      { field: 'tags',       text: 'Tags',       size: '18%', resizable: true, render: (rec) => rec.tags },
-      { field: 'attributes', text: 'Attributes', size: '15%', resizable: true, render: (rec) => rec.attributes },
-      { field: 'events',     text: 'Events',     size: '20%', resizable: true, render: (rec) => rec.events },
-      { field: 'enabled',    text: 'Enabled',    size: '70px', resizable: true },
+      { field: 'categories', text: 'Categories', size: '18%', resizable: true, render: rec => rec.categories },
+      { field: 'tags', text: 'Tags', size: '18%', resizable: true, render: rec => rec.tags },
+      { field: 'attributes', text: 'Attributes', size: '15%', resizable: true, render: rec => rec.attributes },
+      { field: 'events', text: 'Events', size: '20%', resizable: true, render: rec => rec.events },
+      { field: 'enabled', text: 'Enabled', size: '70px', resizable: true },
     ],
     records,
-    onSelect:   (e) => setTimeout(() => _onRuleSelect(e), 0),
-    onUnselect: ()  => setTimeout(() => _updateRuleToolbar(), 0),
+    onSelect: () => setTimeout(() => onAlertRuleSelect(), 0),
+    onUnselect: () => setTimeout(() => updateRuleToolbar('alerts-rules-grid', '#btn-alerts-rule-edit', '#btn-alerts-rule-delete'), 0),
     onLoad: event => event.preventDefault(),
   });
   w2ui['alerts-rules-grid'].render($('#alerts-rules-grid')[0]);
-  _updateRuleToolbar();
-
-  // Wire resizable divider
-  _initRuleDivider();
+  updateRuleToolbar('alerts-rules-grid', '#btn-alerts-rule-edit', '#btn-alerts-rule-delete');
+  initRuleDivider('#alerts-rule-divider', '#alerts-rule-editor');
 }
 
-function _onRuleSelect(e) {
-  _updateRuleToolbar();
+function onAlertRuleSelect() {
+  updateRuleToolbar('alerts-rules-grid', '#btn-alerts-rule-edit', '#btn-alerts-rule-delete');
   const grid = w2ui['alerts-rules-grid'];
   if (!grid) return;
-  const sel = grid.getSelection();
-  if (sel.length === 1) {
-    const rec = grid.get(sel[0]);
-    if (rec) openRuleEditor(rec._raw);
+  const selection = grid.getSelection();
+  if (selection.length === 1) {
+    const record = grid.get(selection[0]);
+    if (record) openRuleEditor(record._raw);
   }
 }
 
-function _updateRuleToolbar() {
-  const grid = w2ui['alerts-rules-grid'];
-  const count = grid ? grid.getSelection().length : 0;
-
-  const $edit = $('#btn-alerts-rule-edit');
-  const $del  = $('#btn-alerts-rule-delete');
-
-  $edit.prop('disabled', count !== 1);
-  $edit.css('opacity', count === 1 ? '1' : '0.5');
-
-  $del.prop('disabled', count === 0);
-  $del.css('opacity', count > 0 ? '1' : '0.5');
-}
-
 export function openNewRuleEditor() {
-  _editingRule = null;
+  editingAlertRule = null;
   openRuleEditor(null);
 }
 
 export function openRuleEditor(rule) {
-  _editingRule = rule || null;
-  _renderRuleEditorForm(rule);
+  editingAlertRule = rule || null;
+  renderAlertRuleEditorForm(rule);
   $('#alerts-rule-editor').css('display', 'flex');
 }
 
 export function closeRuleEditor() {
   $('#alerts-rule-editor').hide();
-  _editingRule = null;
+  editingAlertRule = null;
 }
 
-// ─────────────────────────────────────────────
-// Rule Editor Form
-// ─────────────────────────────────────────────
+async function renderAlertRuleEditorForm(rule) {
+  const { allCategories, allTags, allAttributes } = await loadRuleDependencies();
+  const ruleEvents = parseEventList(rule ? rule.events : null);
+  const ruleEnabled = rule ? !!rule.enabled : true;
+  let html = buildCommonRuleHtml(rule, allCategories, allTags, allAttributes);
 
-async function _renderRuleEditorForm(rule) {
-  // Load available categories, tags, attributes from renderer state
-  let allCategories = {};
-  let allTags = [];
-  let allAttributes = [];
-
-  try {
-    const catResult = await window.electronAPI.loadCategories();
-    allCategories = catResult || {};
-  } catch (e) { /* ignore */ }
-
-  try {
-    allTags = await window.electronAPI.getTagsList() || [];
-  } catch (e) { /* ignore */ }
-
-  try {
-    allAttributes = await window.electronAPI.getAttributesList() || [];
-  } catch (e) { /* ignore */ }
-
-  // Parse current rule values
-  const ruleCategories  = _parseListOrAny(rule ? rule.categories  : null);
-  const ruleTags        = _parseListOrAny(rule ? rule.tags        : null);
-  const ruleAttributes  = _parseAttrsOrAny(rule ? rule.attributes  : null);
-  const ruleEvents      = _parseEventList(rule ? rule.events       : null);
-  const ruleEnabled     = rule ? !!rule.enabled : true;
-
-  const categoryNames = Object.keys(allCategories).sort();
-  const tagNames      = allTags.map(t => t.name).sort();
-
-  // Figure out which attributes are available given the currently-selected categories
-  const selectedCatNames = ruleCategories === 'ANY' ? [] : ruleCategories;
-  const availableAttrNames = _getAvailableAttributes(selectedCatNames, allCategories, allAttributes);
-
-  let html = '';
-
-  // ── Categories ──
-  html += `<div class="alerts-rule-section">
-    <div class="alerts-rule-section-label">Categories</div>
-    <label class="alerts-rule-any-toggle">
-      <input type="checkbox" id="rule-cat-any" ${ruleCategories === 'ANY' ? 'checked' : ''}> <span>ANY</span>
-    </label>
-    <div id="rule-cat-list" class="alerts-rule-options-list" style="${ruleCategories === 'ANY' ? 'display:none;' : ''}">
-      ${categoryNames.map(c => `
-        <label>
-          <input type="checkbox" name="rule-cat" value="${_esc(c)}"
-            ${ruleCategories !== 'ANY' && ruleCategories.includes(c) ? 'checked' : ''}>
-          ${_esc(c)}
-        </label>`).join('')}
-    </div>
-  </div>`;
-
-  // ── Tags ──
-  html += `<div class="alerts-rule-section">
-    <div class="alerts-rule-section-label">Tags</div>
-    <label class="alerts-rule-any-toggle">
-      <input type="checkbox" id="rule-tag-any" ${ruleTags === 'ANY' ? 'checked' : ''}> <span>ANY</span>
-    </label>
-    <div id="rule-tag-list" class="alerts-rule-options-list" style="${ruleTags === 'ANY' ? 'display:none;' : ''}">
-      ${tagNames.length === 0
-        ? '<em style="font-size:11px;color:#999;">No tags defined</em>'
-        : tagNames.map(t => `
-          <label>
-            <input type="checkbox" name="rule-tag" value="${_esc(t)}"
-              ${ruleTags !== 'ANY' && ruleTags.includes(t) ? 'checked' : ''}>
-            ${_esc(t)}
-          </label>`).join('')}
-    </div>
-  </div>`;
-
-  // ── Attributes ──
-  const attrIsAny = ruleAttributes === 'ANY';
-  html += `<div class="alerts-rule-section" id="rule-attr-section"
-      style="${selectedCatNames.length === 0 && ruleCategories !== 'ANY' ? 'display:none;' : ''}">
-    <div class="alerts-rule-section-label">Attributes</div>
-    <label class="alerts-rule-any-toggle">
-      <input type="checkbox" id="rule-attr-any" ${attrIsAny ? 'checked' : ''}> <span>ANY</span>
-    </label>
-    <div id="rule-attr-list" style="${attrIsAny ? 'display:none;' : ''}">
-      ${_renderAttributeRows(availableAttrNames, allAttributes, attrIsAny ? [] : ruleAttributes)}
-    </div>
-  </div>`;
-
-  // ── Events ──
   html += `<div class="alerts-rule-section">
     <div class="alerts-rule-section-label">Events <em style="font-weight:normal;color:#888;font-size:10px;">(at least one required)</em></div>
     <div class="alerts-rule-options-list">
-      ${ALL_EVENT_TYPES.map(e => `
+      ${ALL_EVENT_TYPES.map(eventType => `
         <label>
-          <input type="checkbox" name="rule-event" value="${e}"
-            ${ruleEvents.includes(e) ? 'checked' : ''}>
-          ${EVENT_LABELS[e]}
+          <input type="checkbox" name="rule-event" value="${eventType}" ${ruleEvents.includes(eventType) ? 'checked' : ''}>
+          ${EVENT_LABELS[eventType]}
         </label>`).join('')}
     </div>
   </div>`;
 
-  // ── Enabled ──
   html += `<div class="alerts-rule-section">
     <label class="alerts-rule-any-toggle">
       <input type="checkbox" id="rule-enabled" ${ruleEnabled ? 'checked' : ''}> <span>Enabled</span>
@@ -450,159 +574,37 @@ async function _renderRuleEditorForm(rule) {
 
   const $body = $('#alerts-rule-editor-body');
   $body.html(html);
-
-  // ── Dynamic behaviour wiring ──
-
-  // ANY toggles for categories
-  $body.find('#rule-cat-any').on('change', function () {
-    const isAny = this.checked;
-    $body.find('#rule-cat-list').toggle(!isAny);
-    _refreshAttributeSection($body, allCategories, allAttributes);
-  });
-
-  // Category checkbox changes → refresh attribute section
-  $body.find('input[name="rule-cat"]').on('change', function () {
-    _refreshAttributeSection($body, allCategories, allAttributes);
-  });
-
-  // ANY toggles for tags
-  $body.find('#rule-tag-any').on('change', function () {
-    $body.find('#rule-tag-list').toggle(!this.checked);
-  });
-
-  // ANY toggle for attributes
-  $body.find('#rule-attr-any').on('change', function () {
-    $body.find('#rule-attr-list').toggle(!this.checked);
-  });
+  wireCommonRuleEvents($body, allCategories, allAttributes);
 }
-
-function _renderAttributeRows(attrNames, allAttributes, currentValues) {
-  if (!attrNames || attrNames.length === 0) {
-    return '<em style="font-size:11px;color:#999;">Select specific categories first</em>';
-  }
-  return attrNames.map(attrName => {
-    const def = allAttributes.find(a => a.name === attrName);
-    const currentVal = (currentValues || []).find(a => a.name === attrName)?.value ?? '';
-    let inputHtml;
-    if (def && def.type === 'Selectable' && def.options && def.options.length > 0) {
-      inputHtml = `<select name="rule-attr-val" data-attr="${_esc(attrName)}">
-        <option value="">(any value)</option>
-        ${def.options.map(opt => `<option value="${_esc(opt)}" ${currentVal === opt ? 'selected' : ''}>${_esc(opt)}</option>`).join('')}
-      </select>`;
-    } else {
-      inputHtml = `<input type="text" name="rule-attr-val" data-attr="${_esc(attrName)}"
-        value="${_esc(currentVal)}" placeholder="(any value)">`;
-    }
-    return `<div class="alerts-rule-attr-row">
-      <span style="min-width:90px;font-size:11px;">${_esc(attrName)}</span>
-      ${inputHtml}
-    </div>`;
-  }).join('');
-}
-
-function _refreshAttributeSection($body, allCategories, allAttributes) {
-  const isAny = $body.find('#rule-cat-any').is(':checked');
-  const selectedCats = isAny
-    ? []
-    : $body.find('input[name="rule-cat"]:checked').map(function () { return this.value; }).get();
-
-  const $attrSection = $body.find('#rule-attr-section');
-  if (!isAny && selectedCats.length === 0) {
-    $attrSection.hide();
-    return;
-  }
-  $attrSection.show();
-
-  const availableAttrs = _getAvailableAttributes(selectedCats, allCategories, allAttributes);
-  const currentAttrVals = _collectAttributeValues($body);
-  $body.find('#rule-attr-list').html(
-    _renderAttributeRows(availableAttrs, allAttributes, currentAttrVals)
-  );
-}
-
-function _getAvailableAttributes(selectedCatNames, allCategories, allAttributes) {
-  if (!selectedCatNames || selectedCatNames.length === 0) {
-    // When ANY is selected, expose all defined attributes
-    return allAttributes.map(a => a.name);
-  }
-  const attrSet = new Set();
-  selectedCatNames.forEach(catName => {
-    const cat = allCategories[catName];
-    if (cat && cat.attributes) {
-      cat.attributes.forEach(a => attrSet.add(a));
-    }
-  });
-  return [...attrSet];
-}
-
-function _collectAttributeValues($body) {
-  const result = [];
-  $body.find('[name="rule-attr-val"]').each(function () {
-    const name = $(this).data('attr');
-    const value = $(this).val();
-    if (name) result.push({ name, value: value || '' });
-  });
-  return result;
-}
-
-// ─────────────────────────────────────────────
-// Save / Delete rules
-// ─────────────────────────────────────────────
 
 export async function saveRule() {
   const $body = $('#alerts-rule-editor-body');
-
-  // Collect event selections — at least one required
   const events = $body.find('input[name="rule-event"]:checked').map(function () { return this.value; }).get();
   if (events.length === 0) {
     alert('Please select at least one event type.');
     return;
   }
 
-  // Categories
-  const catIsAny = $body.find('#rule-cat-any').is(':checked');
-  const categories = catIsAny
-    ? 'ANY'
-    : JSON.stringify($body.find('input[name="rule-cat"]:checked').map(function () { return this.value; }).get());
-
-  // Tags
-  const tagIsAny = $body.find('#rule-tag-any').is(':checked');
-  const tags = tagIsAny
-    ? 'ANY'
-    : JSON.stringify($body.find('input[name="rule-tag"]:checked').map(function () { return this.value; }).get());
-
-  // Attributes
-  const attrIsAny = $body.find('#rule-attr-any').is(':checked');
-  let attributes = 'ANY';
-  if (!attrIsAny) {
-    const attrVals = _collectAttributeValues($body).filter(a => a.value !== '');
-    attributes = JSON.stringify(attrVals);
-  }
-
+  const common = collectCommonRuleValues($body);
   const enabled = $body.find('#rule-enabled').is(':checked');
-
   const rule = {
-    id:         _editingRule ? _editingRule.id : undefined,
-    categories,
-    tags,
-    attributes,
-    events:     JSON.stringify(events),
+    id: editingAlertRule ? editingAlertRule.id : undefined,
+    ...common,
+    events: JSON.stringify(events),
     enabled,
   };
 
-  // Duplicate check: reject exact match against any existing rule (excluding self when editing)
   const grid = w2ui['alerts-rules-grid'];
   if (grid) {
     const sortedEvents = JSON.stringify([...events].sort());
     const duplicate = grid.records.find(rec => {
-      if (_editingRule && rec._id === _editingRule.id) return false; // skip self
-      const r = rec._raw;
-      const rEvents = (() => { try { return JSON.stringify(JSON.parse(r.events || '[]').sort()); } catch { return '[]'; } })();
-      return r.categories === categories &&
-             r.tags       === tags       &&
-             r.attributes === attributes &&
-             rEvents      === sortedEvents &&
-             !!r.enabled  === enabled;
+      if (editingAlertRule && rec._id === editingAlertRule.id) return false;
+      const existing = rec._raw;
+      return existing.categories === rule.categories &&
+        existing.tags === rule.tags &&
+        existing.attributes === rule.attributes &&
+        sortJsonArrayString(existing.events) === sortedEvents &&
+        !!existing.enabled === enabled;
     });
     if (duplicate) {
       alert('A rule with identical settings already exists. Please adjust the rule definition.');
@@ -624,12 +626,12 @@ export async function deleteRules() {
   const grid = w2ui['alerts-rules-grid'];
   if (!grid) return;
 
-  const sel = grid.getSelection();
-  if (sel.length === 0) return;
+  const selected = grid.getSelection();
+  if (selected.length === 0) return;
 
-  const ids = sel.map(recid => {
-    const rec = grid.get(recid);
-    return rec ? rec._id : null;
+  const ids = selected.map(recid => {
+    const record = grid.get(recid);
+    return record ? record._id : null;
   }).filter(id => id !== null);
 
   if (!confirm(`Delete ${ids.length} rule${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
@@ -644,60 +646,218 @@ export async function deleteRules() {
   await loadAlertRules();
 }
 
-// ─────────────────────────────────────────────
-// Rule editor divider (resizable)
-// ─────────────────────────────────────────────
+export async function loadMonitoringRules() {
+  const result = await window.electronAPI.getMonitoringRules();
+  if (!result.success) {
+    console.error('Error loading monitoring rules:', result.error);
+    return;
+  }
 
-function _initRuleDivider() {
-  const $divider = $('#alerts-rule-divider');
-  if ($divider.data('divider-init')) return;
-  $divider.data('divider-init', true);
+  if (w2ui['monitoring-rules-grid']) w2ui['monitoring-rules-grid'].destroy();
 
-  let startX = 0;
-  let startWidth = 0;
+  const records = (result.data || []).map((rule, idx) => ({
+    recid: idx + 1,
+    _id: rule.id,
+    _raw: rule,
+    categories: summariseList(rule.categories),
+    tags: summariseList(rule.tags),
+    attributes: summariseAttributes(rule.attributes),
+    interval: summariseInterval(rule),
+    maxDepth: String(rule.max_depth ?? 0),
+    enabled: rule.enabled ? 'Yes' : 'No',
+  }));
 
-  $divider.on('mousedown', function (e) {
-    e.preventDefault();
-    startX = e.clientX;
-    const $editor = $('#alerts-rule-editor');
-    startWidth = $editor.width();
-
-    $(document).on('mousemove.ruleDivider', function (me) {
-      const delta = startX - me.clientX;
-      const newWidth = Math.max(260, Math.min(600, startWidth + delta));
-      $editor.css('flex', `0 0 ${newWidth}px`);
-    });
-
-    $(document).on('mouseup.ruleDivider', function () {
-      $(document).off('mousemove.ruleDivider mouseup.ruleDivider');
-    });
+  w2ui['monitoring-rules-grid'] = new w2grid({
+    name: 'monitoring-rules-grid',
+    multiSelect: true,
+    show: { header: false, toolbar: false, footer: true },
+    columns: [
+      { field: 'categories', text: 'Categories', size: '18%', resizable: true, render: rec => rec.categories },
+      { field: 'tags', text: 'Tags', size: '18%', resizable: true, render: rec => rec.tags },
+      { field: 'attributes', text: 'Attributes', size: '15%', resizable: true, render: rec => rec.attributes },
+      { field: 'interval', text: 'Interval', size: '120px', resizable: true },
+      { field: 'maxDepth', text: 'Depth', size: '70px', resizable: true },
+      { field: 'enabled', text: 'Enabled', size: '70px', resizable: true },
+    ],
+    records,
+    onSelect: () => setTimeout(() => onMonitoringRuleSelect(), 0),
+    onUnselect: () => setTimeout(() => updateRuleToolbar('monitoring-rules-grid', '#btn-monitoring-rule-edit', '#btn-monitoring-rule-delete'), 0),
+    onLoad: event => event.preventDefault(),
   });
+  w2ui['monitoring-rules-grid'].render($('#monitoring-rules-grid')[0]);
+  updateRuleToolbar('monitoring-rules-grid', '#btn-monitoring-rule-edit', '#btn-monitoring-rule-delete');
+  initRuleDivider('#monitoring-rule-divider', '#monitoring-rule-editor');
 }
 
-// ─────────────────────────────────────────────
-// Utilities
-// ─────────────────────────────────────────────
-
-function _parseListOrAny(json) {
-  if (!json || json === 'ANY') return 'ANY';
-  try { return JSON.parse(json); } catch { return 'ANY'; }
+function onMonitoringRuleSelect() {
+  updateRuleToolbar('monitoring-rules-grid', '#btn-monitoring-rule-edit', '#btn-monitoring-rule-delete');
+  const grid = w2ui['monitoring-rules-grid'];
+  if (!grid) return;
+  const selection = grid.getSelection();
+  if (selection.length === 1) {
+    const record = grid.get(selection[0]);
+    if (record) openMonitoringRuleEditor(record._raw);
+  }
 }
 
-function _parseAttrsOrAny(json) {
-  if (!json || json === 'ANY') return 'ANY';
-  try { return JSON.parse(json); } catch { return 'ANY'; }
+export function openNewMonitoringRuleEditor() {
+  editingMonitoringRule = null;
+  openMonitoringRuleEditor(null);
 }
 
-function _parseEventList(json) {
-  if (!json) return [];
-  try { return JSON.parse(json) || []; } catch { return []; }
+export function openMonitoringRuleEditor(rule) {
+  editingMonitoringRule = rule || null;
+  renderMonitoringRuleEditorForm(rule);
+  $('#monitoring-rule-editor').css('display', 'flex');
 }
 
-function _esc(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+export function closeMonitoringRuleEditor() {
+  $('#monitoring-rule-editor').hide();
+  editingMonitoringRule = null;
+}
+
+async function renderMonitoringRuleEditorForm(rule) {
+  const { allCategories, allTags, allAttributes } = await loadRuleDependencies();
+  const intervalValue = Number(rule ? rule.interval_value : 1) || 1;
+  const intervalUnit = rule ? (rule.interval_unit || 'days') : 'days';
+  const maxDepth = Number(rule ? rule.max_depth : 0) || 0;
+  const ruleEnabled = rule ? !!rule.enabled : true;
+
+  let html = buildCommonRuleHtml(rule, allCategories, allTags, allAttributes);
+  html += `<div class="alerts-rule-section">
+    <div class="alerts-rule-section-label">Scan Interval</div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <input type="number" id="monitoring-interval-value" min="1" max="100000" value="${intervalValue}" style="width:100px;">
+      <select id="monitoring-interval-unit">
+        ${MONITORING_INTERVAL_UNITS.map(unit => `<option value="${unit}" ${intervalUnit === unit ? 'selected' : ''}>${unit}</option>`).join('')}
+      </select>
+    </div>
+  </div>`;
+
+  html += `<div class="alerts-rule-section">
+    <div class="alerts-rule-section-label">Maximum Recursive Depth</div>
+    <input type="number" id="monitoring-max-depth" min="0" max="99" value="${maxDepth}">
+  </div>`;
+
+  html += `<div class="alerts-rule-section">
+    <label class="alerts-rule-any-toggle">
+      <input type="checkbox" id="monitoring-rule-enabled" ${ruleEnabled ? 'checked' : ''}> <span>Enabled</span>
+    </label>
+  </div>`;
+
+  const $body = $('#monitoring-rule-editor-body');
+  $body.html(html);
+  wireCommonRuleEvents($body, allCategories, allAttributes);
+}
+
+export async function saveMonitoringRule() {
+  const $body = $('#monitoring-rule-editor-body');
+  const common = collectCommonRuleValues($body);
+  let intervalValue = parseInt($body.find('#monitoring-interval-value').val() || '1', 10);
+  let maxDepth = parseInt($body.find('#monitoring-max-depth').val() || '0', 10);
+  const intervalUnit = $body.find('#monitoring-interval-unit').val() || 'days';
+  const enabled = $body.find('#monitoring-rule-enabled').is(':checked');
+
+  if (Number.isNaN(intervalValue) || intervalValue < 1) intervalValue = 1;
+  if (Number.isNaN(maxDepth) || maxDepth < 0) maxDepth = 0;
+
+  const rule = {
+    id: editingMonitoringRule ? editingMonitoringRule.id : undefined,
+    ...common,
+    interval_value: intervalValue,
+    interval_unit: intervalUnit,
+    max_depth: maxDepth,
+    enabled,
+  };
+
+  const grid = w2ui['monitoring-rules-grid'];
+  if (grid) {
+    const duplicate = grid.records.find(rec => {
+      if (editingMonitoringRule && rec._id === editingMonitoringRule.id) return false;
+      const existing = rec._raw;
+      return existing.categories === rule.categories &&
+        existing.tags === rule.tags &&
+        existing.attributes === rule.attributes &&
+        Number(existing.interval_value) === rule.interval_value &&
+        existing.interval_unit === rule.interval_unit &&
+        Number(existing.max_depth) === rule.max_depth &&
+        !!existing.enabled === enabled;
+    });
+    if (duplicate) {
+      alert('A monitoring rule with identical settings already exists. Please adjust the rule definition.');
+      return;
+    }
+  }
+
+  const result = await window.electronAPI.saveMonitoringRule(rule);
+  if (!result.success) {
+    console.error('Error saving monitoring rule:', result.error);
+    return;
+  }
+
+  closeMonitoringRuleEditor();
+  await loadMonitoringRules();
+}
+
+export async function deleteMonitoringRules() {
+  const grid = w2ui['monitoring-rules-grid'];
+  if (!grid) return;
+
+  const selected = grid.getSelection();
+  if (selected.length === 0) return;
+
+  const ids = selected.map(recid => {
+    const record = grid.get(recid);
+    return record ? record._id : null;
+  }).filter(id => id !== null);
+
+  if (!confirm(`Delete ${ids.length} monitoring rule${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
+
+  const result = await window.electronAPI.deleteMonitoringRules(ids);
+  if (!result.success) {
+    console.error('Error deleting monitoring rules:', result.error);
+    return;
+  }
+
+  closeMonitoringRuleEditor();
+  await loadMonitoringRules();
+}
+
+export async function loadMonitoringSettings() {
+  const settings = await window.electronAPI.getSettings();
+  $('#alerts-settings-monitoring-enabled').prop('checked', !!settings.monitoring_enabled);
+  $('#alerts-settings-scheduler-interval').val(settings.monitoring_scheduler_interval || 15);
+  $('#alerts-settings-max-dirs-per-pass').val(settings.monitoring_max_dirs_per_pass || 10);
+  $('#alerts-settings-inter-scan-delay').val(settings.monitoring_inter_scan_delay_ms || 50);
+}
+
+export async function saveMonitoringSettings() {
+  try {
+    const settings = await window.electronAPI.getSettings();
+    let schedulerInterval = parseInt($('#alerts-settings-scheduler-interval').val() || '15', 10);
+    let maxDirsPerPass = parseInt($('#alerts-settings-max-dirs-per-pass').val() || '10', 10);
+    let interScanDelay = parseInt($('#alerts-settings-inter-scan-delay').val() || '50', 10);
+
+    if (Number.isNaN(schedulerInterval) || schedulerInterval < 5) schedulerInterval = 5;
+    if (Number.isNaN(maxDirsPerPass) || maxDirsPerPass < 1) maxDirsPerPass = 1;
+    if (Number.isNaN(interScanDelay) || interScanDelay < 0) interScanDelay = 0;
+
+    settings.monitoring_enabled = $('#alerts-settings-monitoring-enabled').is(':checked');
+    settings.monitoring_scheduler_interval = schedulerInterval;
+    settings.monitoring_max_dirs_per_pass = maxDirsPerPass;
+    settings.monitoring_inter_scan_delay_ms = interScanDelay;
+
+    const result = await window.electronAPI.saveSettings(settings);
+    if (!result || result.success === false) {
+      throw new Error(result?.error || 'Unable to save monitoring settings');
+    }
+
+    if (settings.monitoring_enabled) {
+      await window.electronAPI.startActiveMonitoring();
+    } else {
+      await window.electronAPI.stopActiveMonitoring();
+    }
+  } catch (err) {
+    alert('Error saving monitoring settings: ' + err.message);
+  }
 }

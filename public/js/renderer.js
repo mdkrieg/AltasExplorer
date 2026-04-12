@@ -832,6 +832,40 @@ function attachEventListeners() {
   $('#btn-alerts-rule-cancel').click(function () {
     alerts.closeRuleEditor();
   });
+
+  // Monitoring configuration: Add new rule
+  $('#btn-monitoring-rule-add').click(function () {
+    alerts.openNewMonitoringRuleEditor();
+  });
+
+  // Monitoring configuration: Edit selected rule
+  $('#btn-monitoring-rule-edit').click(function () {
+    const sel = w2ui['monitoring-rules-grid'] ? w2ui['monitoring-rules-grid'].getSelection() : [];
+    if (sel.length === 1) {
+      const rec = w2ui['monitoring-rules-grid'].get(sel[0]);
+      if (rec) alerts.openMonitoringRuleEditor(rec._raw);
+    }
+  });
+
+  // Monitoring configuration: Delete selected rules
+  $('#btn-monitoring-rule-delete').click(async function () {
+    await alerts.deleteMonitoringRules();
+  });
+
+  // Monitoring configuration: Save rule
+  $('#btn-monitoring-rule-save').click(async function () {
+    await alerts.saveMonitoringRule();
+  });
+
+  // Monitoring configuration: Cancel rule editor
+  $('#btn-monitoring-rule-cancel').click(function () {
+    alerts.closeMonitoringRuleEditor();
+  });
+
+  // Alerts and Monitoring settings: Save
+  $('#btn-alerts-settings-save').click(async function () {
+    await alerts.saveMonitoringSettings();
+  });
 }
 
 /**

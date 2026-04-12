@@ -285,6 +285,21 @@ class CategoryService {
       if (typeof settings.background_refresh_interval === 'undefined') {
         settings.background_refresh_interval = 30;
       }
+      if (typeof settings.checksum_max_concurrent === 'undefined') {
+        settings.checksum_max_concurrent = 1;
+      }
+      if (typeof settings.monitoring_enabled === 'undefined') {
+        settings.monitoring_enabled = false;
+      }
+      if (typeof settings.monitoring_scheduler_interval === 'undefined') {
+        settings.monitoring_scheduler_interval = 15;
+      }
+      if (typeof settings.monitoring_max_dirs_per_pass === 'undefined') {
+        settings.monitoring_max_dirs_per_pass = 10;
+      }
+      if (typeof settings.monitoring_inter_scan_delay_ms === 'undefined') {
+        settings.monitoring_inter_scan_delay_ms = 50;
+      }
       return settings;
     } catch {
       return { 
@@ -295,7 +310,12 @@ class CategoryService {
         show_folder_name_with_dot_entries: false,
         record_height: 30,
         background_refresh_enabled: false,
-        background_refresh_interval: 30
+        background_refresh_interval: 30,
+        checksum_max_concurrent: 1,
+        monitoring_enabled: false,
+        monitoring_scheduler_interval: 15,
+        monitoring_max_dirs_per_pass: 10,
+        monitoring_inter_scan_delay_ms: 50
       };
     }
   }

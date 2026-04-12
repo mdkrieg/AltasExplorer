@@ -168,6 +168,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAlertRules: () => ipcRenderer.invoke('get-alert-rules'),
   saveAlertRule: (rule) => ipcRenderer.invoke('save-alert-rule', rule),
   deleteAlertRules: (ids) => ipcRenderer.invoke('delete-alert-rules', { ids }),
+  getMonitoringRules: () => ipcRenderer.invoke('get-monitoring-rules'),
+  saveMonitoringRule: (rule) => ipcRenderer.invoke('save-monitoring-rule', rule),
+  deleteMonitoringRules: (ids) => ipcRenderer.invoke('delete-monitoring-rules', { ids }),
+  startActiveMonitoring: () => ipcRenderer.invoke('start-active-monitoring'),
+  stopActiveMonitoring: () => ipcRenderer.invoke('stop-active-monitoring'),
   
   // Custom Actions
   getCustomActions: () => ipcRenderer.invoke('get-custom-actions'),

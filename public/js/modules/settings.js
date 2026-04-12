@@ -213,6 +213,7 @@ export async function initializeBrowserSettingsForm() {
 	const recordHeight = settings.record_height || 30;
 	const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
 	const backgroundRefreshInterval = settings.background_refresh_interval || 30;
+	const checksumMaxConcurrent = settings.checksum_max_concurrent || 1;
 
 	$('#browser-home-directory').val(homeDirectory);
 	$('#browser-notes-format').val(fileFormat);
@@ -222,6 +223,7 @@ export async function initializeBrowserSettingsForm() {
 	$('#browser-record-height').val(recordHeight);
 	$('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
 	$('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
+	$('#browser-checksum-max-concurrent').val(checksumMaxConcurrent);
 
 	await updateHomeDirectoryWarning(homeDirectory);
 	updateRecordHeightPreview();
@@ -298,6 +300,7 @@ async function saveBrowserSettings() {
 		let recordHeight = parseInt($('#browser-record-height').val() || '30');
 		const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
 		let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
+		let checksumMaxConcurrent = parseInt($('#browser-checksum-max-concurrent').val() || '1');
 
 		if (isNaN(recordHeight) || recordHeight < 20) {
 			recordHeight = 20;
@@ -317,6 +320,14 @@ async function saveBrowserSettings() {
 			$('#browser-background-refresh-interval').val(backgroundRefreshInterval);
 		}
 
+		if (isNaN(checksumMaxConcurrent) || checksumMaxConcurrent < 1) {
+			checksumMaxConcurrent = 1;
+			$('#browser-checksum-max-concurrent').val(checksumMaxConcurrent);
+		} else if (checksumMaxConcurrent > 2) {
+			checksumMaxConcurrent = 2;
+			$('#browser-checksum-max-concurrent').val(checksumMaxConcurrent);
+		}
+
 		const settings = await window.electronAPI.getSettings();
 		settings.home_directory = homeDirectory;
 		settings.file_format = fileFormat;
@@ -326,6 +337,7 @@ async function saveBrowserSettings() {
 		settings.background_refresh_enabled = backgroundRefreshEnabled;
 		settings.background_refresh_interval = backgroundRefreshInterval;
 		settings.show_folder_name_with_dot_entries = showFolderNameWithDotEntries;
+		settings.checksum_max_concurrent = checksumMaxConcurrent;
 
 		const result = await window.electronAPI.saveSettings(settings);
 		if (!result || result.success === false) {

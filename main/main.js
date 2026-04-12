@@ -21,6 +21,197 @@ const { dialog } = require('electron');
 
 let mainWindow;
 
+let checksumInFlight = 0;
+const checksumWaiters = [];
+let monitoringTimer = null;
+let monitoringPassInProgress = false;
+
+function delay(ms) {
+  if (!ms || ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function acquireChecksumSlot() {
+  const settings = categories.getSettings();
+  const maxConcurrent = Math.max(1, Math.min(2, Number(settings.checksum_max_concurrent) || 1));
+
+  if (checksumInFlight < maxConcurrent) {
+    checksumInFlight++;
+    return () => {
+      checksumInFlight--;
+      const next = checksumWaiters.shift();
+      if (next) next();
+    };
+  }
+
+  await new Promise(resolve => checksumWaiters.push(resolve));
+  checksumInFlight++;
+  return () => {
+    checksumInFlight--;
+    const next = checksumWaiters.shift();
+    if (next) next();
+  };
+}
+
+function getRuleIntervalMs(rule) {
+  const value = Math.max(1, Number(rule.interval_value) || 1);
+  switch (rule.interval_unit) {
+    case 'seconds':
+      return value * 1000;
+    case 'minutes':
+      return value * 60 * 1000;
+    case 'hours':
+      return value * 60 * 60 * 1000;
+    case 'days':
+    default:
+      return value * 24 * 60 * 60 * 1000;
+  }
+}
+
+function doesRuleMatchFilters(rule, category, tagsJson, attributesJson) {
+  if (rule.categories !== 'ANY') {
+    try {
+      const ruleCategories = JSON.parse(rule.categories);
+      if (!ruleCategories.includes(category)) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  if (rule.tags !== 'ANY') {
+    try {
+      const ruleTags = JSON.parse(rule.tags);
+      const itemTags = tagsJson ? JSON.parse(tagsJson) : [];
+      if (!ruleTags.some(tag => itemTags.includes(tag))) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  if (rule.attributes !== 'ANY') {
+    try {
+      const ruleAttrs = JSON.parse(rule.attributes);
+      const itemAttrs = attributesJson ? JSON.parse(attributesJson) : {};
+      const allMatch = ruleAttrs.every(attr => {
+        if (attr.value === '' || attr.value === null || typeof attr.value === 'undefined') {
+          return Object.prototype.hasOwnProperty.call(itemAttrs, attr.name);
+        }
+        return itemAttrs[attr.name] === attr.value;
+      });
+      if (!allMatch) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+async function runMonitoringPass() {
+  if (monitoringPassInProgress) {
+    return;
+  }
+
+  const settings = categories.getSettings();
+  if (!settings.monitoring_enabled) {
+    return;
+  }
+
+  monitoringPassInProgress = true;
+  try {
+    const rules = db.getMonitoringRules().filter(rule => rule.enabled);
+    if (rules.length === 0) {
+      return;
+    }
+
+    const allDirs = db.getDirectoriesForMonitoring();
+    const now = Date.now();
+    const queue = [];
+    const seen = new Set();
+    const maxPerPass = Math.max(1, Number(settings.monitoring_max_dirs_per_pass) || 10);
+
+    for (const rule of rules) {
+      const cutoff = now - getRuleIntervalMs(rule);
+      for (const dir of allDirs) {
+        if (queue.length >= maxPerPass) {
+          break;
+        }
+        if (!doesRuleMatchFilters(rule, dir.category || 'Default', dir.dot_tags || null, dir.dot_attributes || null)) {
+          continue;
+        }
+        if (dir.last_observed_at && dir.last_observed_at > cutoff) {
+          continue;
+        }
+
+        const queueKey = `${rule.id}:${dir.id}`;
+        if (seen.has(queueKey)) {
+          continue;
+        }
+        seen.add(queueKey);
+        queue.push({
+          rule,
+          dirname: dir.dirname,
+          remainingDepth: Math.max(0, Number(rule.max_depth) || 0)
+        });
+      }
+
+      if (queue.length >= maxPerPass) {
+        break;
+      }
+    }
+
+    const interScanDelay = Math.max(0, Number(settings.monitoring_inter_scan_delay_ms) || 0);
+    while (queue.length > 0) {
+      const job = queue.shift();
+      const result = doScanDirectoryWithComparison(job.dirname, false, true, {
+        observationSource: 'monitoring'
+      });
+
+      if (result.success && result.alertsCreated && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('alert-count-updated', { count: db.getUnacknowledgedAlertCount() });
+      }
+
+      if (result.success && job.remainingDepth > 0) {
+        const subdirs = (result.entries || []).filter(entry => entry.isDirectory && entry.filename !== '.');
+        for (const subdir of subdirs) {
+          queue.push({
+            rule: job.rule,
+            dirname: subdir.path,
+            remainingDepth: job.remainingDepth - 1
+          });
+        }
+      }
+
+      await delay(interScanDelay);
+    }
+  } catch (err) {
+    logger.error('Active monitoring pass failed:', err.message);
+  } finally {
+    monitoringPassInProgress = false;
+  }
+}
+
+function reconfigureActiveMonitoring() {
+  if (monitoringTimer) {
+    clearInterval(monitoringTimer);
+    monitoringTimer = null;
+  }
+
+  const settings = categories.getSettings();
+  if (!settings.monitoring_enabled) {
+    return;
+  }
+
+  const intervalMs = Math.max(5, Number(settings.monitoring_scheduler_interval) || 15) * 1000;
+  monitoringTimer = setInterval(() => {
+    runMonitoringPass().catch(err => {
+      logger.error('Active monitoring interval failed:', err.message);
+    });
+  }, intervalMs);
+}
+
 function getTerminalShell() {
   return process.platform === 'win32'
     ? (process.env.COMSPEC || 'cmd.exe')
@@ -149,6 +340,10 @@ function initialize() {
   logger.info('Initializing application');
   syncIconAssets();
   db.initialize();
+  reconfigureActiveMonitoring();
+  runMonitoringPass().catch(err => {
+    logger.error('Initial active monitoring pass failed:', err.message);
+  });
   
   // Load default window icon
   const defaultCategory = categories.getCategory('Default');
@@ -1004,6 +1199,7 @@ ipcMain.handle('get-settings', () => {
 ipcMain.handle('save-settings', (event, settings) => {
   try {
     categories.saveSettings(settings);
+    reconfigureActiveMonitoring();
     return { success: true };
   } catch (err) {
     logger.error('Error saving settings:', err.message);
@@ -1713,30 +1909,8 @@ function doesEventMatchRules(rules, eventType, category, dirTagsJson, fileAttrib
     try { events = JSON.parse(rule.events); } catch { continue; }
     if (!Array.isArray(events) || !events.includes(eventType)) continue;
 
-    // Check category
-    if (rule.categories !== 'ANY') {
-      try {
-        const ruleCategories = JSON.parse(rule.categories);
-        if (!ruleCategories.includes(category)) continue;
-      } catch { continue; }
-    }
-
-    // Check tags (at least one rule tag must appear in item tags)
-    if (rule.tags !== 'ANY') {
-      try {
-        const ruleTags = JSON.parse(rule.tags);
-        const itemTags = dirTagsJson ? JSON.parse(dirTagsJson) : [];
-        if (!ruleTags.some(t => itemTags.includes(t))) continue;
-      } catch { continue; }
-    }
-
-    // Check attributes (all rule attribute conditions must match)
-    if (rule.attributes !== 'ANY') {
-      try {
-        const ruleAttrs = JSON.parse(rule.attributes); // [{name, value}, ...]
-        const fileAttrs = fileAttributesJson ? JSON.parse(fileAttributesJson) : {};
-        if (!ruleAttrs.every(a => fileAttrs[a.name] === a.value)) continue;
-      } catch { continue; }
+    if (!doesRuleMatchFilters(rule, category, dirTagsJson, fileAttributesJson)) {
+      continue;
     }
 
     return rule; // First matching rule
@@ -1747,7 +1921,7 @@ function doesEventMatchRules(rules, eventType, category, dirTagsJson, fileAttrib
 /**
  * Core scan logic (shared by IPC handler and background refresh timer)
  */
-function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBackgroundRefresh = false) {
+function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBackgroundRefresh = false, options = {}) {
   try {
     // Validate path parameter
     if (!dirPath || typeof dirPath !== 'string') {
@@ -1775,12 +1949,16 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
 
     // Create or get the directory entry (returns dir_id)
     const dirId = db.getOrCreateDirectory(normalizedPath, dirInode, categoryName);
+    db.updateDirectoryParent(normalizedPath, db.getParentDirectoryId(normalizedPath));
+    db.updateDirectoryObservation(
+      normalizedPath,
+      options.observationSource || (isManualNavigation ? 'manual' : isBackgroundRefresh ? 'background-refresh' : 'scan')
+    );
 
     // Load alert rules once for this scan pass
     let alertRules = [];
     try { alertRules = db.getAlertRules(); } catch (e) { /* non-fatal */ }
-    const dirRecord0 = db.getDirectory(normalizedPath);
-    const dirTagsJson = dirRecord0 ? dirRecord0.tags : null;
+    const dirTagsJson = db.getTagsForDirectoryId(dirId);
     let alertsCreated = 0;
 
     // Create/update dot entry for the directory itself
@@ -1921,6 +2099,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           changeState = 'new';
           db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
         }
+        db.updateDirectoryParent(entry.path, db.getParentDirectoryId(entry.path));
         // Note: Don't check for existing dot files to determine changeState - subdirectories'
         // dot files are stored in their own directory entry (different dir_id), not in parent
 
@@ -2317,6 +2496,7 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
  * File Change Detection: Calculate checksum for a file
  */
 ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId, isManual = false }) => {
+  const releaseChecksumSlot = await acquireChecksumSlot();
   try {
     // Retrieve previously stored checksum for comparison
     const existingChecksum = db.getFileChecksum(inode, dirId);
@@ -2359,7 +2539,7 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
           if (existingChecksum !== null) {
             try {
               const csAlertRules = db.getAlertRules();
-              const csTagsJson = dirRecord ? dirRecord.tags : null;
+              const csTagsJson = dirRecord ? db.getTagsForDirectoryId(dirId) : null;
               const csAttrsJson = fileRecord ? fileRecord.attributes : null;
               const csRule = doesEventMatchRules(csAlertRules, 'fileChanged', categoryName, csTagsJson, csAttrsJson);
               if (csRule) {
@@ -2396,6 +2576,8 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
       hadPreviousChecksum: false,
       error: err.message 
     };
+  } finally {
+    releaseChecksumSlot();
   }
 });
 
@@ -2559,6 +2741,51 @@ ipcMain.handle('delete-alert-rules', (event, { ids }) => {
     logger.error('Error deleting alert rules:', err.message);
     return { success: false, error: err.message };
   }
+});
+
+ipcMain.handle('get-monitoring-rules', () => {
+  try {
+    return { success: true, data: db.getMonitoringRules() };
+  } catch (err) {
+    logger.error('Error retrieving monitoring rules:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('save-monitoring-rule', (event, rule) => {
+  try {
+    const result = db.saveMonitoringRule(rule);
+    reconfigureActiveMonitoring();
+    return { success: true, id: result.id };
+  } catch (err) {
+    logger.error('Error saving monitoring rule:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('delete-monitoring-rules', (event, { ids }) => {
+  try {
+    db.deleteMonitoringRules(ids);
+    reconfigureActiveMonitoring();
+    return { success: true };
+  } catch (err) {
+    logger.error('Error deleting monitoring rules:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('start-active-monitoring', async () => {
+  reconfigureActiveMonitoring();
+  await runMonitoringPass();
+  return { success: true };
+});
+
+ipcMain.handle('stop-active-monitoring', () => {
+  if (monitoringTimer) {
+    clearInterval(monitoringTimer);
+    monitoringTimer = null;
+  }
+  return { success: true };
 });
 
 /**

@@ -29,11 +29,14 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         inode TEXT NOT NULL,
         dirname TEXT NOT NULL UNIQUE,
+        parent_id INTEGER,
         category TEXT DEFAULT 'Default',
         category_force INTEGER NOT NULL DEFAULT 0,
         description VARCHAR(256),
         initials VARCHAR(8),
-        tags TEXT
+        last_observed_at INTEGER,
+        last_observed_source TEXT,
+        FOREIGN KEY (parent_id) REFERENCES dirs(id)
       );
 
       CREATE TABLE IF NOT EXISTS files (
@@ -103,7 +106,21 @@ class DatabaseService {
         created_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS monitoring_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        categories TEXT NOT NULL DEFAULT 'ANY',
+        tags TEXT NOT NULL DEFAULT 'ANY',
+        attributes TEXT NOT NULL DEFAULT 'ANY',
+        interval_value INTEGER NOT NULL,
+        interval_unit TEXT NOT NULL,
+        max_depth INTEGER NOT NULL DEFAULT 0,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_dirs_dirname ON dirs(dirname);
+      CREATE INDEX IF NOT EXISTS idx_dirs_parent_id ON dirs(parent_id);
+      CREATE INDEX IF NOT EXISTS idx_dirs_last_observed_at ON dirs(last_observed_at);
       CREATE INDEX IF NOT EXISTS idx_files_dir_id ON files(dir_id);
       CREATE INDEX IF NOT EXISTS idx_files_inode ON files(inode);
       CREATE INDEX IF NOT EXISTS idx_file_history_inode ON file_history(inode);
@@ -136,20 +153,20 @@ class DatabaseService {
   /**
    * Upsert a directory entry
    */
-  upsertDirectory(dirname, inode, category = 'Default', description = null, initials = null, tags = null, categoryForce = 0) {
+  upsertDirectory(dirname, inode, category = 'Default', description = null, initials = null, parentId = null, categoryForce = 0) {
     const stmt = this.db.prepare(`
-      INSERT INTO dirs (dirname, inode, category, category_force, description, initials, tags)
+      INSERT INTO dirs (dirname, inode, parent_id, category, category_force, description, initials)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(dirname) DO UPDATE SET
         inode = excluded.inode,
+        parent_id = excluded.parent_id,
         category = CASE WHEN dirs.category_force = 1 THEN dirs.category ELSE excluded.category END,
         category_force = CASE WHEN dirs.category_force = 1 THEN dirs.category_force ELSE excluded.category_force END,
         description = excluded.description,
-        initials = excluded.initials,
-        tags = excluded.tags
+        initials = excluded.initials
     `);
 
-    return stmt.run(dirname, inode, category, categoryForce, description, initials, tags);
+    return stmt.run(dirname, inode, parentId, category, categoryForce, description, initials);
   }
 
   /**
@@ -165,7 +182,8 @@ class DatabaseService {
     }
 
     // Create new directory
-    this.upsertDirectory(dirname, inode, category, description, initials, null, categoryForce);
+    const parentId = this.getParentDirectoryId(dirname);
+    this.upsertDirectory(dirname, inode, category, description, initials, parentId, categoryForce);
     
     // Return the id of the newly created directory
     const result = getStmt.get(dirname);
@@ -178,6 +196,15 @@ class DatabaseService {
   getDirectory(dirname) {
     const stmt = this.db.prepare('SELECT * FROM dirs WHERE dirname = ?');
     return stmt.get(dirname);
+  }
+
+  getParentDirectoryId(dirname) {
+    const parentPath = path.dirname(dirname);
+    if (!parentPath || parentPath === dirname) {
+      return null;
+    }
+    const parent = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(parentPath);
+    return parent ? parent.id : null;
   }
 
   /**
@@ -210,6 +237,20 @@ class DatabaseService {
   updateDirectoryInitials(dirname, initials) {
     const stmt = this.db.prepare('UPDATE dirs SET initials = ? WHERE dirname = ?');
     return stmt.run(initials ? initials.slice(0, 2).toUpperCase() : null, dirname);
+  }
+
+  updateDirectoryObservation(dirname, source, observedAt = Date.now()) {
+    const stmt = this.db.prepare('UPDATE dirs SET last_observed_at = ?, last_observed_source = ? WHERE dirname = ?');
+    return stmt.run(observedAt, source || null, dirname);
+  }
+
+  updateDirectoryParent(dirname, parentId) {
+    const stmt = this.db.prepare('UPDATE dirs SET parent_id = ? WHERE dirname = ?');
+    return stmt.run(parentId, dirname);
+  }
+
+  getDirectoriesByParentId(parentId) {
+    return this.db.prepare('SELECT * FROM dirs WHERE parent_id = ? ORDER BY dirname ASC').all(parentId);
   }
 
   /**
@@ -414,16 +455,21 @@ class DatabaseService {
    * Add/update tags for a directory
    */
   updateDirectoryTags(dirname, tags) {
-    const stmt = this.db.prepare('UPDATE dirs SET tags = ? WHERE dirname = ?');
-    return stmt.run(tags, dirname);
+    const dirRow = this.db.prepare('SELECT id, inode FROM dirs WHERE dirname = ?').get(dirname);
+    if (!dirRow) return null;
+    const existingDot = this.db.prepare('SELECT id FROM files WHERE dir_id = ? AND filename = ?').get(dirRow.id, '.');
+    if (existingDot) {
+      return this.db.prepare('UPDATE files SET tags = ? WHERE dir_id = ? AND filename = ?').run(tags, dirRow.id, '.');
+    }
+    return this.db.prepare('INSERT INTO files (inode, dir_id, filename, dateModified, dateCreated, size, mode, tags) VALUES (?, ?, ".", NULL, NULL, 0, NULL, ?)').run(dirRow.inode, dirRow.id, tags);
   }
 
   /**
    * Update directory metadata (description, initials, tags)
    */
-  updateDirectoryMetadata(dirname, { description = null, initials = null, tags = null } = {}) {
-    const stmt = this.db.prepare('UPDATE dirs SET description = ?, initials = ?, tags = ? WHERE dirname = ?');
-    return stmt.run(description, initials, tags, dirname);
+  updateDirectoryMetadata(dirname, { description = null, initials = null } = {}) {
+    const stmt = this.db.prepare('UPDATE dirs SET description = ?, initials = ? WHERE dirname = ?');
+    return stmt.run(description, initials, dirname);
   }
 
   /**
@@ -465,6 +511,16 @@ class DatabaseService {
     if (!dirRow) return null;
     const row = this.db.prepare('SELECT tags FROM files WHERE dir_id = ? AND filename = ?').get(dirRow.id, '.');
     return (row && row.tags) ? row.tags : null;
+  }
+
+  getTagsForDirectoryId(dirId) {
+    const row = this.db.prepare('SELECT tags FROM files WHERE dir_id = ? AND filename = ?').get(dirId, '.');
+    return (row && row.tags) ? row.tags : null;
+  }
+
+  getAttributesForDirectoryId(dirId) {
+    const row = this.db.prepare('SELECT attributes FROM files WHERE dir_id = ? AND filename = ?').get(dirId, '.');
+    return (row && row.attributes) ? row.attributes : null;
   }
 
   /**
@@ -776,6 +832,50 @@ class DatabaseService {
     if (!ids || ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
     this.db.prepare(`DELETE FROM alert_rules WHERE id IN (${placeholders})`).run(...ids);
+  }
+
+  getMonitoringRules() {
+    return this.db.prepare('SELECT * FROM monitoring_rules ORDER BY id ASC').all();
+  }
+
+  saveMonitoringRule(rule) {
+    const {
+      id,
+      categories,
+      tags,
+      attributes,
+      interval_value,
+      interval_unit,
+      max_depth,
+      enabled
+    } = rule;
+
+    if (id) {
+      this.db.prepare(
+        'UPDATE monitoring_rules SET categories=?, tags=?, attributes=?, interval_value=?, interval_unit=?, max_depth=?, enabled=? WHERE id=?'
+      ).run(categories, tags, attributes, interval_value, interval_unit, max_depth, enabled ? 1 : 0, id);
+      return { id };
+    }
+
+    const result = this.db.prepare(
+      'INSERT INTO monitoring_rules (categories, tags, attributes, interval_value, interval_unit, max_depth, enabled, created_at) VALUES (?,?,?,?,?,?,?,?)'
+    ).run(categories, tags, attributes, interval_value, interval_unit, max_depth, enabled ? 1 : 0, Date.now());
+    return { id: result.lastInsertRowid };
+  }
+
+  deleteMonitoringRules(ids) {
+    if (!ids || ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.prepare(`DELETE FROM monitoring_rules WHERE id IN (${placeholders})`).run(...ids);
+  }
+
+  getDirectoriesForMonitoring() {
+    return this.db.prepare(`
+      SELECT d.*, f.tags AS dot_tags, f.attributes AS dot_attributes
+      FROM dirs d
+      LEFT JOIN files f ON f.dir_id = d.id AND f.filename = '.'
+      ORDER BY COALESCE(d.last_observed_at, 0) ASC, d.dirname ASC
+    `).all();
   }
 
   /**
