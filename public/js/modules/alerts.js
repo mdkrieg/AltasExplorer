@@ -354,10 +354,14 @@ function getNextAlertRuleName(rules) {
 
 export function updateAlertBadge() {
   const $badge = $('#alerts-badge');
+  const $collapsedBadge = $('#alerts-badge-collapsed');
   if (panels.unacknowledgedAlertCount > 0) {
-    $badge.text(panels.unacknowledgedAlertCount > 99 ? '99+' : panels.unacknowledgedAlertCount).show();
+    const badgeText = panels.unacknowledgedAlertCount > 99 ? '99+' : panels.unacknowledgedAlertCount;
+    $badge.text(badgeText).show();
+    $collapsedBadge.text(badgeText).addClass('has-alerts');
   } else {
     $badge.hide();
+    $collapsedBadge.text('').removeClass('has-alerts');
   }
 }
 

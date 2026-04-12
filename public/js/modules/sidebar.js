@@ -24,6 +24,7 @@ let w2uiFavoritesSidebar = null;
 let favoritesContextMenuTarget = null;
 let favIconMap = {};
 let favEditMode = false;
+let favoritesEditSnapshot = null;
 let sidebarCollapsed = false;
 const SIDEBAR_COLLAPSED_WIDTH = 50;
 const SIDEBAR_EXPANDED_MIN_WIDTH = 150;
@@ -39,6 +40,300 @@ function showConfirmPrompt(msg) {
 
 function getSidebarMaxWidth() {
   return window.innerWidth - 300;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function cloneFavoriteData(value) {
+  return JSON.parse(JSON.stringify(value ?? []));
+}
+
+function isPlaceholderFavoriteNode(node) {
+  return !!(node?.id && (node.id.startsWith('empty-') || node.id.startsWith('edit-')));
+}
+
+function visitFavoriteNodes(nodes, visitor) {
+  if (!Array.isArray(nodes)) return;
+
+  for (const node of nodes) {
+    visitor(node);
+    if (Array.isArray(node.nodes) && node.nodes.length > 0) {
+      visitFavoriteNodes(node.nodes, visitor);
+    }
+  }
+}
+
+function getFavoriteItemNodes(nodes = w2uiFavoritesSidebar?.nodes || []) {
+  const items = [];
+  visitFavoriteNodes(nodes, node => {
+    if (!node.group && !isPlaceholderFavoriteNode(node)) {
+      items.push(node);
+    }
+  });
+  return items;
+}
+
+function findFavoriteNodeLabel(node) {
+  if (!node) return '';
+  return node.text || node.path || '';
+}
+
+function setFavoriteItemsDisabled(disabled) {
+  if (!w2uiFavoritesSidebar) return;
+
+  const itemIds = getFavoriteItemNodes().map(node => node.id);
+  if (itemIds.length === 0) return;
+
+  if (disabled) {
+    w2uiFavoritesSidebar.disable(...itemIds);
+  } else {
+    w2uiFavoritesSidebar.enable(...itemIds);
+  }
+}
+
+function applyFavoriteTooltips() {
+  const container = document.getElementById('w2ui-favorites');
+  if (!container || !w2uiFavoritesSidebar) return;
+
+  container.querySelectorAll('.w2ui-node, .w2ui-node-group').forEach(element => {
+    const nodeId = element.dataset.id;
+    if (!nodeId) return;
+
+    const node = w2uiFavoritesSidebar.get(nodeId);
+    if (!node || isPlaceholderFavoriteNode(node)) {
+      element.removeAttribute('title');
+      return;
+    }
+
+    const label = findFavoriteNodeLabel(node);
+    if (label) {
+      element.setAttribute('title', label);
+    } else {
+      element.removeAttribute('title');
+    }
+  });
+}
+
+function refreshFavoritesDom() {
+  if (!w2uiFavoritesSidebar) return;
+
+  w2uiFavoritesSidebar.refresh();
+  applyFavoriteTooltips();
+
+  if (favEditMode) {
+    decorateFavoritesEditMode();
+  }
+}
+
+function isFavoritePathPresent(dirPath) {
+  const normalized = dirPath.replace(/\\/g, '/');
+  let present = false;
+
+  visitFavoriteNodes(w2uiFavoritesSidebar?.nodes || [], node => {
+    if (present || node.group || isPlaceholderFavoriteNode(node)) return;
+    if ((node.path || '').replace(/\\/g, '/') === normalized) {
+      present = true;
+    }
+  });
+
+  return present;
+}
+
+async function createFavoriteNode(dirPath, name = null) {
+  const nodeId = `fav-edit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const safeId = nodeId.replace(/[^a-z0-9]/gi, '_');
+  const iconClass = `fav_icon_${safeId}`;
+
+  try {
+    const [category, initials] = await Promise.all([
+      window.electronAPI.getCategoryForDirectory(dirPath),
+      window.electronAPI.getDirectoryInitials(dirPath)
+    ]);
+    const iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, initials || null);
+    favIconMap[safeId] = iconUrl;
+    updateFavoriteIconStyles();
+  } catch (err) {
+    // Ignore icon-generation failures and keep the default styling.
+  }
+
+  return {
+    id: nodeId,
+    text: name || dirPath.split(/[\\/]/).filter(Boolean).pop() || dirPath,
+    icon: iconClass,
+    path: dirPath,
+    group: false
+  };
+}
+
+function applyFavoritesHeaderState() {
+  const btn = document.getElementById('btn-favorites-edit');
+  if (!btn) return;
+
+  if (favEditMode) {
+    btn.innerHTML = '&#10003;';
+    btn.title = 'Confirm changes';
+    btn.classList.add('active');
+  } else {
+    btn.innerHTML = '&#9998;';
+    btn.title = 'Edit favorites';
+    btn.classList.remove('active');
+  }
+}
+
+function setFavoriteNodePendingDelete(nodeId) {
+  const node = w2uiFavoritesSidebar?.get(nodeId);
+  if (!node || isPlaceholderFavoriteNode(node)) return;
+
+  node.pendingDelete = true;
+  if (!node.group) {
+    w2uiFavoritesSidebar.disable(node.id);
+  }
+
+  refreshFavoritesDom();
+}
+
+function syncFavoriteDeleteInheritance(nodes = w2uiFavoritesSidebar?.nodes || [], inheritedDelete = false) {
+  if (!Array.isArray(nodes)) return;
+
+  for (const node of nodes) {
+    if (isPlaceholderFavoriteNode(node)) continue;
+
+    node.pendingDeleteInherited = inheritedDelete;
+
+    if (Array.isArray(node.nodes) && node.nodes.length > 0) {
+      syncFavoriteDeleteInheritance(node.nodes, inheritedDelete || !!node.pendingDelete);
+    }
+  }
+}
+
+function decorateFavoritesEditMode() {
+  const container = document.getElementById('w2ui-favorites');
+  if (!container || !w2uiFavoritesSidebar) return;
+
+  syncFavoriteDeleteInheritance();
+
+  container.querySelectorAll('.w2ui-node-group').forEach(groupEl => {
+    const nodeId = groupEl.dataset.id;
+    if (!nodeId) return;
+
+    const node = w2uiFavoritesSidebar.get(nodeId);
+    if (!node || !node.group || isPlaceholderFavoriteNode(node)) return;
+
+    const isMarkedDeleted = !!(node.pendingDelete || node.pendingDeleteInherited);
+
+    groupEl.classList.toggle('fav-node-pending-delete', isMarkedDeleted);
+
+    const existingTextEl = groupEl.querySelector('.fav-group-edit-input, .fav-group-static-text, .w2ui-group-text');
+    if (isMarkedDeleted) {
+      if (!groupEl.querySelector('.fav-group-static-text')) {
+        const staticText = document.createElement('span');
+        staticText.className = 'w2ui-group-text fav-group-static-text';
+        staticText.textContent = node.text;
+        if (existingTextEl) {
+          existingTextEl.replaceWith(staticText);
+        } else {
+          groupEl.appendChild(staticText);
+        }
+      }
+    } else if (!groupEl.querySelector('.fav-group-edit-input')) {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = node.text;
+      input.className = 'fav-group-edit-input';
+      input.dataset.nodeId = nodeId;
+      input.addEventListener('click', e => e.stopPropagation());
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          void exitFavoritesEditMode({ saveChanges: true });
+        }
+        e.stopPropagation();
+      });
+
+      if (existingTextEl) {
+        existingTextEl.replaceWith(input);
+      } else {
+        groupEl.appendChild(input);
+      }
+    }
+
+    if (!groupEl.querySelector('.btn-fav-toggle-group')) {
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'btn-fav-toggle-group';
+      toggleBtn.dataset.nodeId = nodeId;
+      toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (node.pendingDelete || node.pendingDeleteInherited) return;
+        w2uiFavoritesSidebar.toggle(nodeId);
+        applyFavoriteTooltips();
+        if (favEditMode) {
+          decorateFavoritesEditMode();
+        }
+      });
+      groupEl.appendChild(toggleBtn);
+    }
+
+    const toggleBtn = groupEl.querySelector('.btn-fav-toggle-group');
+    if (toggleBtn) {
+      const hasChildren = (node.nodes || []).some(child => !isPlaceholderFavoriteNode(child));
+      toggleBtn.innerHTML = node.expanded ? '&#9660;' : '&#9654;';
+      toggleBtn.title = node.expanded ? 'Collapse group' : 'Expand group';
+      toggleBtn.disabled = isMarkedDeleted || !hasChildren;
+    }
+
+    if (!groupEl.querySelector('.btn-fav-delete-group')) {
+      const trashBtn = document.createElement('button');
+      trashBtn.className = 'btn-fav-delete-group';
+      trashBtn.innerHTML = '&#128465;';
+      trashBtn.title = 'Delete group';
+      trashBtn.dataset.nodeId = nodeId;
+      trashBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setFavoriteNodePendingDelete(nodeId);
+      });
+      groupEl.appendChild(trashBtn);
+    }
+
+    const groupDeleteBtn = groupEl.querySelector('.btn-fav-delete-group');
+    if (groupDeleteBtn) {
+      groupDeleteBtn.disabled = isMarkedDeleted;
+    }
+  });
+
+  container.querySelectorAll('.w2ui-node:not(.w2ui-node-group)').forEach(itemEl => {
+    const nodeId = itemEl.dataset.id;
+    if (!nodeId || nodeId.startsWith('empty-') || nodeId.startsWith('edit-')) return;
+
+    const node = w2uiFavoritesSidebar.get(nodeId);
+    if (!node || node.group) return;
+
+  const isMarkedDeleted = !!(node.pendingDelete || node.pendingDeleteInherited);
+
+  itemEl.classList.toggle('fav-node-pending-delete', isMarkedDeleted);
+
+    if (!itemEl.querySelector('.btn-fav-delete-fav')) {
+      const trashBtn = document.createElement('button');
+      trashBtn.className = 'btn-fav-delete-fav';
+      trashBtn.innerHTML = '&#128465;';
+      trashBtn.title = 'Delete favorite';
+      trashBtn.dataset.nodeId = nodeId;
+      trashBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setFavoriteNodePendingDelete(nodeId);
+      });
+      itemEl.appendChild(trashBtn);
+    }
+
+    const itemDeleteBtn = itemEl.querySelector('.btn-fav-delete-fav');
+    if (itemDeleteBtn) {
+      itemDeleteBtn.disabled = isMarkedDeleted;
+    }
+  });
 }
 
 function resizeSidebarGrids() {
@@ -375,7 +670,7 @@ async function initializeFavoritesSidebar() {
     w2uiFavoritesSidebar = new w2sidebar({
       box: '#w2ui-favorites',
       name: 'favorites-sidebar',
-      topHTML: `<div class="favorites-header"><span class="favorites-label favorites-label-full">FAVORITES</span><span class="favorites-label favorites-label-short">FAV</span><button id="btn-favorites-edit" class="btn-favorites-edit" title="Edit favorites">&#9998;</button></div>`,
+      topHTML: `<div class="favorites-header"><span class="favorites-label favorites-label-full">FAVORITES</span><span class="favorites-label favorites-label-short">FAV</span><button id="btn-favorites-cancel" class="btn-favorites-edit btn-favorites-cancel" title="Discard changes" aria-label="Discard changes"><span class="fav-cancel-icon" aria-hidden="true"></span></button><button id="btn-favorites-edit" class="btn-favorites-edit" title="Edit favorites">&#9998;</button></div>`,
       reorder: true,
       nodes: nodes,
       onClick: async (event) => {
@@ -442,11 +737,18 @@ async function initializeFavoritesSidebar() {
     });
 
     // Attach edit button handler using event delegation
-    document.getElementById('w2ui-favorites').addEventListener('click', (e) => {
+    document.getElementById('w2ui-favorites').addEventListener('click', async (e) => {
+      if (e.target.closest('#btn-favorites-cancel')) {
+        await exitFavoritesEditMode({ saveChanges: false });
+        return;
+      }
       if (e.target.closest('#btn-favorites-edit')) {
-        toggleFavoritesEditMode();
+        await toggleFavoritesEditMode();
       }
     });
+
+    applyFavoriteTooltips();
+    applyFavoritesHeaderState();
 
     console.log('W2UI favorites sidebar initialized successfully');
   } catch (err) {
@@ -562,7 +864,7 @@ function convertW2UINodesToFavorites(nodes, groupPath = []) {
     const node = nodes[i];
 
     // Skip placeholder nodes (empty items and edit controls)
-    if (node.id && (node.id.startsWith('empty-') || node.id.startsWith('edit-'))) {
+    if (isPlaceholderFavoriteNode(node) || node.pendingDelete) {
       continue;
     }
 
@@ -705,7 +1007,7 @@ export async function refreshFavoritesSidebar() {
 
     if (w2uiFavoritesSidebar) {
       w2uiFavoritesSidebar.nodes = nodes;
-      w2uiFavoritesSidebar.refresh();
+      refreshFavoritesDom();
     }
   } catch (err) {
     console.error('Error refreshing favorites sidebar:', err);
@@ -903,19 +1205,24 @@ $(document).on('click', function (e) {
 
 function toggleFavoritesEditMode() {
   if (favEditMode) {
-    exitFavoritesEditMode();
+    return exitFavoritesEditMode({ saveChanges: true });
   } else {
-    enterFavoritesEditMode();
+    return enterFavoritesEditMode();
   }
 }
 
 function enterFavoritesEditMode() {
+  if (!w2uiFavoritesSidebar) return;
+
+  if (!favEditMode) {
+    favoritesEditSnapshot = cloneFavoriteData(convertW2UINodesToFavorites(w2uiFavoritesSidebar.nodes));
+  }
+
   favEditMode = true;
   $("#w2ui-favorites").addClass('edit-mode');
 
   // Disable dragging of items while in edit mode to prevent conflicts with renaming and deleting
-  const itemNodes = w2uiFavoritesSidebar.nodes.filter(n => !n.group && !n.id.startsWith("edit-") );
-  w2uiFavoritesSidebar.disable(...itemNodes.map(n => n.id));
+  setFavoriteItemsDisabled(true);
   w2uiFavoritesSidebar.reorder = false;
 
   if (!w2uiFavoritesSidebar.get('edit-AddGroup')) {
@@ -925,115 +1232,68 @@ function enterFavoritesEditMode() {
     ]);
   }
 
-  const btn = document.getElementById('btn-favorites-edit');
-  if (btn) {
-    btn.innerHTML = '&#10003;';
-    btn.title = 'Save changes';
-    btn.classList.add('active');
-  }
-
-  const container = document.getElementById('w2ui-favorites');
-  if (!container || !w2uiFavoritesSidebar) return;
-
-  container.querySelectorAll('.w2ui-node-group').forEach(groupEl => {
-    const nodeId = groupEl.dataset.id;
-    if (!nodeId) return;
-    const node = w2uiFavoritesSidebar.get(nodeId);
-    if (!node || !node.group) return;
-
-    // Replace group text span with an editable input
-    const textSpan = groupEl.querySelector('.w2ui-group-text');
-    if (textSpan && !groupEl.querySelector('.fav-group-edit-input')) {
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = node.text;
-      input.className = 'fav-group-edit-input';
-      input.dataset.nodeId = nodeId;
-      input.addEventListener('click', e => e.stopPropagation());
-      input.addEventListener('keydown', e => {
-        if (e.key === 'Enter') exitFavoritesEditMode();
-        e.stopPropagation();
-      });
-      console.log(input);
-      textSpan.replaceWith(input);
-    }
-
-    // Add trash button
-    if (!groupEl.querySelector('.btn-fav-delete-group')) {
-      const trashBtn = document.createElement('button');
-      trashBtn.className = 'btn-fav-delete-group';
-      trashBtn.innerHTML = '&#128465;';
-      trashBtn.title = 'Delete group';
-      trashBtn.dataset.nodeId = nodeId;
-      trashBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await handleDeleteGroupInEditMode(nodeId);
-      });
-      groupEl.appendChild(trashBtn);
-    }
-  });
-
-  // Add trash buttons to individual favorite items (non-group nodes)
-  container.querySelectorAll('.w2ui-node:not(.w2ui-node-group)').forEach(itemEl => {
-    const nodeId = itemEl.dataset.id;
-    if (!nodeId || nodeId.startsWith('empty-') || nodeId.startsWith('edit-')) return;
-    if (itemEl.querySelector('.btn-fav-delete-fav')) return; // Already added
-
-    const trashBtn = document.createElement('button');
-    trashBtn.className = 'btn-fav-delete-fav';
-    trashBtn.innerHTML = '&#128465;';
-    trashBtn.title = 'Delete favorite';
-    trashBtn.dataset.nodeId = nodeId;
-    trashBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await handleDeleteFavoriteInEditMode(nodeId, itemEl);
-    });
-    itemEl.appendChild(trashBtn);
-  });
+  applyFavoritesHeaderState();
+  refreshFavoritesDom();
 }
 
-async function exitFavoritesEditMode() {
+async function exitFavoritesEditMode({ saveChanges = true } = {}) {
+  if (!w2uiFavoritesSidebar) return;
+
   favEditMode = false;
   $("#w2ui-favorites").removeClass('edit-mode');
 
-  const btn = document.getElementById('btn-favorites-edit');
-  if (btn) {
-    btn.innerHTML = '&#9998;';
-    btn.title = 'Edit favorites';
-    btn.classList.remove('active');
+  const container = document.getElementById('w2ui-favorites');
+  if (!container) return;
+
+  if (saveChanges) {
+    container.querySelectorAll('.fav-group-edit-input').forEach(input => {
+      const nodeId = input.dataset.nodeId;
+      if (!nodeId) return;
+      const node = w2uiFavoritesSidebar.get(nodeId);
+      if (node && input.value.trim()) {
+        node.text = input.value.trim();
+      }
+    });
+  } else if (favoritesEditSnapshot) {
+    w2uiFavoritesSidebar.nodes = await convertFavoritesToW2UINodes(cloneFavoriteData(favoritesEditSnapshot));
   }
 
-  const container = document.getElementById('w2ui-favorites');
-  if (!container || !w2uiFavoritesSidebar) return;
-
-  // Apply renames, then manually restore DOM so refresh() sees clean group rows
   container.querySelectorAll('.fav-group-edit-input').forEach(input => {
     const nodeId = input.dataset.nodeId;
-    if (!nodeId) return;
-    const node = w2uiFavoritesSidebar.get(nodeId);
-    if (node && input.value.trim()) {
-      node.text = input.value.trim();
-    }
-    // Restore the .w2ui-group-text span so enterFavoritesEditMode() can find it next time
+    const node = nodeId ? w2uiFavoritesSidebar.get(nodeId) : null;
     const span = document.createElement('span');
     span.className = 'w2ui-group-text';
     span.textContent = node ? node.text : input.value;
     input.replaceWith(span);
   });
-  // Remove trash buttons
+
+  container.querySelectorAll('.fav-group-static-text').forEach(staticText => {
+    if (!staticText.classList.contains('w2ui-group-text')) {
+      staticText.classList.add('w2ui-group-text');
+    }
+  });
+
   container.querySelectorAll('.btn-fav-delete-group').forEach(trashBtn => trashBtn.remove());
   container.querySelectorAll('.btn-fav-delete-fav').forEach(trashBtn => trashBtn.remove());
+  container.querySelectorAll('.btn-fav-toggle-group').forEach(toggleBtn => toggleBtn.remove());
 
   w2uiFavoritesSidebar.remove('edit-AddGroup', 'edit-AddFav');
 
   // Re-enable dragging of items after exiting edit mode
-  const itemNodes = w2uiFavoritesSidebar.nodes.filter(n => !n.group);
-  w2uiFavoritesSidebar.enable(...itemNodes.map(n => n.id));
+  setFavoriteItemsDisabled(false);
   w2uiFavoritesSidebar.unlock();
   w2uiFavoritesSidebar.reorder = true;
 
-  await persistW2UINodes();
-  w2uiFavoritesSidebar.refresh();
+  if (saveChanges) {
+    await persistW2UINodes();
+    favoritesEditSnapshot = null;
+    await refreshFavoritesSidebar();
+  } else {
+    favoritesEditSnapshot = null;
+    refreshFavoritesDom();
+  }
+
+  applyFavoritesHeaderState();
 }
 
 async function addGroupInEditMode() {
@@ -1047,12 +1307,7 @@ async function addGroupInEditMode() {
     expanded: true,
     nodes: [{ id: `empty-${newId}`, text: '(empty)' }]
   }]);
-  // Wait one tick for the sidebar's internal refresh to update the DOM,
-  // then re-enter edit mode (guarded add() makes this safe to call again)
-  await new Promise(r => setTimeout(r, 50));
-  enterFavoritesEditMode();
-  // Wait for DOM update from enterFavoritesEditMode before trying to focus
-  await new Promise(r => setTimeout(r, 30));
+  refreshFavoritesDom();
   const input = document.querySelector(`.fav-group-edit-input[data-node-id="${newId}"]`);
   if (input) {
     input.focus();
@@ -1082,8 +1337,12 @@ async function addFavoritesFromSelection() {
   if (dirs.length === 0) return;
 
   if (dirs.length === 1) {
-    await addToFavorites(dirs[0].path);
-    enterFavoritesEditMode();
+    const dir = dirs[0];
+    if (!isFavoritePathPresent(dir.path)) {
+      const node = await createFavoriteNode(dir.path, dir.filenameRaw || dir.filename);
+      w2uiFavoritesSidebar.insert(null, 'edit-AddGroup', [node]);
+      refreshFavoritesDom();
+    }
   } else {
     showAddFavConfirmModal(dirs);
   }
@@ -1137,73 +1396,35 @@ function showAddFavConfirmModal(dirs) {
   document.getElementById('fav-addconfirm-ok-btn').addEventListener('click', async () => {
     close();
     for (const d of dirs) {
-      await addToFavorites(d.path);
+      if (isFavoritePathPresent(d.path)) continue;
+      const node = await createFavoriteNode(d.path, d.filenameRaw || d.filename);
+      w2uiFavoritesSidebar.insert(null, 'edit-AddGroup', [node]);
     }
-    enterFavoritesEditMode();
+    refreshFavoritesDom();
   });
 
   overlay._escKeyHandler = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', overlay._escKeyHandler);
 }
 
-/**
- * Delete a favorite item in edit mode with animation
- */
-async function handleDeleteFavoriteInEditMode(nodeId, domElement) {
-  // Add animation class for the gap to collapse
-  domElement.classList.add('fav-item-deleting');
-
-  // Wait for animation to complete before removing from sidebar
-  await new Promise(r => setTimeout(r, 200));
-
-  // Delete from sidebar
-  w2uiFavoritesSidebar.remove(nodeId);
-
-  // Persist changes
-  await persistW2UINodes();
-
-  // Refresh to redraw
-  w2uiFavoritesSidebar.refresh();
-
-  // Re-enter edit mode to apply trash buttons again
-  if (favEditMode) enterFavoritesEditMode();
-}
-
-async function handleDeleteGroupInEditMode(nodeId) {
-  const node = w2uiFavoritesSidebar.get(nodeId);
-  if (!node || !node.group) return;
-
-  const realItems = (node.nodes || []).filter(n => !n.id.startsWith('empty-'));
-
-  if (realItems.length === 0) {
-    // Delete immediately — no real items
-    deleteGroupById(nodeId);
-    await persistW2UINodes();
-    await refreshFavoritesSidebar();
-    if (favEditMode) enterFavoritesEditMode();
-  } else {
-    // Show confirmation modal
-    showFavDeleteGroupModal(nodeId, realItems);
-  }
-}
-
 function deleteGroupById(nodeId) {
-  const idx = w2uiFavoritesSidebar.nodes.findIndex(n => n.id === nodeId);
-  if (idx !== -1) {
-    w2uiFavoritesSidebar.nodes.splice(idx, 1);
-    return true;
-  }
-  // Try one level of nesting
-  for (const node of w2uiFavoritesSidebar.nodes) {
-    if (node.group && node.nodes) {
-      const childIdx = node.nodes.findIndex(n => n.id === nodeId);
-      if (childIdx !== -1) {
-        node.nodes.splice(childIdx, 1);
+  const removeById = (nodes) => {
+    const idx = nodes.findIndex(n => n.id === nodeId);
+    if (idx !== -1) {
+      nodes.splice(idx, 1);
+      return true;
+    }
+
+    for (const node of nodes) {
+      if (node.group && Array.isArray(node.nodes) && removeById(node.nodes)) {
         return true;
       }
     }
-  }
-  return false;
+
+    return false;
+  };
+
+  return removeById(w2uiFavoritesSidebar.nodes);
 }
 
 // ── Favorites Delete Group Modal ───────────────────────────────────────────

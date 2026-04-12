@@ -1750,6 +1750,7 @@ hr {
    ===================== */
 
 #sidebar-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -1801,6 +1802,28 @@ hr {
   text-align: center;
   padding: 0 2px;
   pointer-events: none;
+}
+
+#alerts-badge-collapsed {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: none;
+  background: #e53935;
+  color: #fff;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 600;
+  min-width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  padding: 0 4px;
+  pointer-events: none;
+}
+
+#sidebar-content.sidebar-collapsed #alerts-badge-collapsed.has-alerts {
+  display: block;
 }
 
 /* =====================
@@ -2028,6 +2051,9 @@ hr {
 
 /* Edit / Save button in favorites header */
 .btn-favorites-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   background: none;
   border: none;
@@ -2046,6 +2072,35 @@ hr {
 .btn-favorites-edit.active {
   color: #2e7d32;
   background: rgba(46,125,50,0.1);
+}
+
+.btn-favorites-cancel {
+  display: none;
+}
+
+#w2ui-favorites.edit-mode .btn-favorites-cancel {
+  display: inline-flex;
+}
+
+.fav-cancel-icon {
+  position: relative;
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.fav-cancel-icon::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 50%;
+  height: 1.5px;
+  background: currentColor;
+  transform: translateY(-50%) rotate(-45deg);
+  transform-origin: center;
 }
 
 /* Group-name input shown in edit mode */
@@ -2087,6 +2142,31 @@ hr {
   background: rgba(198,40,40,0.1);
 }
 
+.btn-fav-toggle-group {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px 4px;
+  font-size: 12px;
+  color: #777;
+  border-radius: 3px;
+  line-height: 1;
+  transition: color 0.15s, background 0.15s;
+}
+
+.btn-fav-toggle-group:hover:not(:disabled) {
+  color: #444;
+  background: rgba(0,0,0,0.07);
+}
+
+.btn-fav-toggle-group:disabled,
+.btn-fav-delete-group:disabled,
+.btn-fav-delete-fav:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Trash button shown on each favorite item in edit mode */
 .btn-fav-delete-fav {
   flex-shrink: 0;
@@ -2106,32 +2186,61 @@ hr {
   background: rgba(198,40,40,0.1);
 }
 
-/* Animation for removing a favorite item: gap collapses over 200ms */
-#w2ui-favorites .w2ui-node.fav-item-deleting {
-  opacity: 0;
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.2s ease-out, opacity 0.2s ease-out;
-}
-
-/* w2ui-node-group in edit mode: flex row to align input + trash button */
-.w2ui-node-group:has(.fav-group-edit-input) {
+/* w2ui-node-group in edit mode: align editable text with actions */
+.w2ui-node-group:has(.fav-group-edit-input),
+.w2ui-node-group:has(.fav-group-static-text) {
   display: flex;
   align-items: center;
+  gap: 4px;
   padding-right: 4px;
+  min-width: 0;
 }
 
-/* Individual favorite item in edit mode: flex row to align with trash button */
+/* Individual favorite item in edit mode: keep delete button right-aligned */
 #w2ui-favorites .w2ui-node:has(.btn-fav-delete-fav) {
   display: flex;
   align-items: center;
   padding-right: 4px;
 }
 
+#w2ui-favorites .w2ui-node:has(.btn-fav-delete-fav) .w2ui-node-data {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+#w2ui-favorites .w2ui-node:has(.btn-fav-delete-fav) .w2ui-node-text,
+#w2ui-favorites .w2ui-node-group:has(.fav-group-edit-input) .fav-group-edit-input,
+#w2ui-favorites .w2ui-node-group:has(.fav-group-static-text) .fav-group-static-text,
+#w2ui-favorites .w2ui-node-group:has(.fav-group-edit-input) .w2ui-group-text,
+#w2ui-favorites .w2ui-node-group:has(.fav-group-static-text) .w2ui-group-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Trash button aligned to right side of node */
 #w2ui-favorites .w2ui-node .btn-fav-delete-fav {
   margin-left: auto;
   flex-shrink: 0;
+}
+
+#w2ui-favorites .w2ui-node-group .btn-fav-delete-group {
+  margin-left: 0;
+}
+
+#w2ui-favorites .fav-node-pending-delete {
+  background: rgba(211, 47, 47, 0.08);
+}
+
+#w2ui-favorites .fav-node-pending-delete .w2ui-node-text,
+#w2ui-favorites .fav-node-pending-delete .w2ui-group-text,
+#w2ui-favorites .fav-node-pending-delete .fav-group-static-text {
+  color: #b71c1c;
+  text-decoration: line-through;
 }
 
 /* Category folder icons — background set dynamically via JS */
@@ -2189,8 +2298,7 @@ hr {
   border-top: 2px solid #2196F3;
 }
 
-#w2ui-favorites.edit-mode .w2ui-node.w2ui-level-1,
-#w2ui-favorites.edit-mode .w2ui-node-group span{
+#w2ui-favorites.edit-mode .w2ui-node-group > :first-child {
   display: none;
 }
 
