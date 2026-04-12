@@ -38,6 +38,7 @@ Philosophy:
   * Maybe others? Any time one of the "gridded" settings are updated such as Categories and Tabs
 [ ] Update the color inputs to use the w2ui color picker (https://w2ui.com/web/demos/#/fields/8)
 [ ] Update the forms to use more of the standard w2ui elements, see: https://w2ui.com/web/demos/#/form
+[ ] Update the forms to not throw alert popups but instead use inline styling and remarks like a modern webform
 * I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
 * Forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)
 [ ] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline

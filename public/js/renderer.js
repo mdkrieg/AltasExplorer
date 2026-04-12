@@ -804,6 +804,10 @@ function attachEventListeners() {
     await alerts.acknowledgeSelected();
   });
 
+  $('#btn-alerts-select-all').click(function () {
+    alerts.selectAllSummaryAlerts();
+  });
+
   // Alerts configuration: Add new rule
   $('#btn-alerts-rule-add').click(function () {
     alerts.openNewRuleEditor();

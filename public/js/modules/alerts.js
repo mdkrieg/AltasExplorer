@@ -290,7 +290,9 @@ function collectCommonRuleValues($body) {
 
 function updateAcknowledgeButton() {
   const grid = w2ui['alerts-summary-grid'];
+  const hasRecords = !!(grid && grid.records.length > 0);
   const hasSelection = grid && grid.getSelection().length > 0;
+  $('#btn-alerts-select-all').prop('disabled', !hasRecords).css('opacity', hasRecords ? '1' : '0.5');
   $('#btn-alerts-acknowledge').prop('disabled', !hasSelection).css('opacity', hasSelection ? '1' : '0.5');
 }
 
@@ -333,6 +335,21 @@ function sortJsonArrayString(jsonStr) {
   } catch {
     return '[]';
   }
+}
+
+function getNextAlertRuleName(rules) {
+  const existingNames = new Set(
+    (rules || [])
+      .map(rule => String(rule?.name || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  let suffix = 1;
+  while (existingNames.has(`alert ${suffix}`)) {
+    suffix += 1;
+  }
+
+  return `Alert ${suffix}`;
 }
 
 export function updateAlertBadge() {
@@ -390,6 +407,7 @@ export async function loadAlertsSummary() {
     recid: idx + 1,
     _id: alert.id,
     detectedAt: formatTs(alert.created_at),
+    ruleName: alert.rule_name || '—',
     eventType: formatEventType(alert.type),
     filename: alert.filename || '—',
     category: alert.category || '—',
@@ -402,6 +420,7 @@ export async function loadAlertsSummary() {
     show: { header: false, toolbar: false, footer: true },
     columns: [
       { field: 'detectedAt', text: 'Detected', size: '160px', resizable: true, sortable: true },
+      { field: 'ruleName', text: 'Rule', size: '160px', resizable: true, sortable: true },
       { field: 'eventType', text: 'Event', size: '130px', resizable: true, sortable: true },
       { field: 'filename', text: 'File', size: '25%', resizable: true, sortable: true },
       { field: 'category', text: 'Category', size: '15%', resizable: true, sortable: true },
@@ -413,6 +432,14 @@ export async function loadAlertsSummary() {
     onLoad: event => event.preventDefault(),
   });
   w2ui['alerts-summary-grid'].render($('#alerts-summary-grid')[0]);
+  updateAcknowledgeButton();
+}
+
+export function selectAllSummaryAlerts() {
+  const grid = w2ui['alerts-summary-grid'];
+  if (!grid || grid.records.length === 0) return;
+
+  grid.selectAll();
   updateAcknowledgeButton();
 }
 
@@ -455,6 +482,7 @@ export async function loadAlertsHistory() {
   const records = (result.data || []).map((alert, idx) => ({
     recid: idx + 1,
     detectedAt: formatTs(alert.created_at),
+    ruleName: alert.rule_name || '—',
     eventType: formatEventType(alert.type),
     filename: alert.filename || '—',
     category: alert.category || '—',
@@ -468,6 +496,7 @@ export async function loadAlertsHistory() {
     show: { header: false, toolbar: false, footer: true },
     columns: [
       { field: 'detectedAt', text: 'Detected', size: '150px', resizable: true, sortable: true },
+      { field: 'ruleName', text: 'Rule', size: '150px', resizable: true, sortable: true },
       { field: 'eventType', text: 'Event', size: '120px', resizable: true, sortable: true },
       { field: 'filename', text: 'File', size: '18%', resizable: true, sortable: true },
       { field: 'category', text: 'Category', size: '12%', resizable: true, sortable: true },
@@ -494,6 +523,7 @@ export async function loadAlertRules() {
     recid: idx + 1,
     _id: rule.id,
     _raw: rule,
+    name: rule.name || '—',
     categories: summariseList(rule.categories),
     tags: summariseList(rule.tags),
     attributes: summariseAttributes(rule.attributes),
@@ -506,6 +536,7 @@ export async function loadAlertRules() {
     multiSelect: true,
     show: { header: false, toolbar: false, footer: true },
     columns: [
+      { field: 'name', text: 'Name', size: '160px', resizable: true, sortable: true },
       { field: 'categories', text: 'Categories', size: '18%', resizable: true, render: rec => rec.categories },
       { field: 'tags', text: 'Tags', size: '18%', resizable: true, render: rec => rec.tags },
       { field: 'attributes', text: 'Attributes', size: '15%', resizable: true, render: rec => rec.attributes },
@@ -551,9 +582,17 @@ export function closeRuleEditor() {
 
 async function renderAlertRuleEditorForm(rule) {
   const { allCategories, allTags, allAttributes } = await loadRuleDependencies();
+  const rulesResult = await window.electronAPI.getAlertRules();
+  const defaultRuleName = getNextAlertRuleName(rulesResult.success ? rulesResult.data : []);
   const ruleEvents = parseEventList(rule ? rule.events : null);
   const ruleEnabled = rule ? !!rule.enabled : true;
-  let html = buildCommonRuleHtml(rule, allCategories, allTags, allAttributes);
+  const ruleName = rule?.name || defaultRuleName;
+  let html = `<div class="alerts-rule-section">
+    <div class="alerts-rule-section-label">Name <em style="font-weight:normal;color:#888;font-size:10px;">(required)</em></div>
+    <input type="text" id="alert-rule-name" maxlength="120" required value="${escapeHtml(ruleName)}" placeholder="Alert name">
+  </div>`;
+
+  html += buildCommonRuleHtml(rule, allCategories, allTags, allAttributes);
 
   html += `<div class="alerts-rule-section">
     <div class="alerts-rule-section-label">Events <em style="font-weight:normal;color:#888;font-size:10px;">(at least one required)</em></div>
@@ -579,6 +618,13 @@ async function renderAlertRuleEditorForm(rule) {
 
 export async function saveRule() {
   const $body = $('#alerts-rule-editor-body');
+  const name = String($body.find('#alert-rule-name').val() || '').trim();
+  if (!name) {
+    alert('Please enter a rule name.');
+    $body.find('#alert-rule-name').trigger('focus');
+    return;
+  }
+
   const events = $body.find('input[name="rule-event"]:checked').map(function () { return this.value; }).get();
   if (events.length === 0) {
     alert('Please select at least one event type.');
@@ -589,6 +635,7 @@ export async function saveRule() {
   const enabled = $body.find('#rule-enabled').is(':checked');
   const rule = {
     id: editingAlertRule ? editingAlertRule.id : undefined,
+    name,
     ...common,
     events: JSON.stringify(events),
     enabled,
@@ -596,6 +643,17 @@ export async function saveRule() {
 
   const grid = w2ui['alerts-rules-grid'];
   if (grid) {
+    const normalizedName = name.toLowerCase();
+    const nameConflict = grid.records.find(rec => {
+      if (editingAlertRule && rec._id === editingAlertRule.id) return false;
+      return String(rec._raw?.name || '').trim().toLowerCase() === normalizedName;
+    });
+    if (nameConflict) {
+      alert('An alert with that name already exists. Please choose a unique name.');
+      $body.find('#alert-rule-name').trigger('focus');
+      return;
+    }
+
     const sortedEvents = JSON.stringify([...events].sort());
     const duplicate = grid.records.find(rec => {
       if (editingAlertRule && rec._id === editingAlertRule.id) return false;
@@ -614,6 +672,7 @@ export async function saveRule() {
 
   const result = await window.electronAPI.saveAlertRule(rule);
   if (!result.success) {
+    alert(result.error || 'Error saving alert rule.');
     console.error('Error saving alert rule:', result.error);
     return;
   }

@@ -98,6 +98,7 @@ class DatabaseService {
 
       CREATE TABLE IF NOT EXISTS alert_rules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
         categories TEXT NOT NULL DEFAULT 'ANY',
         tags TEXT NOT NULL DEFAULT 'ANY',
         attributes TEXT NOT NULL DEFAULT 'ANY',
@@ -148,6 +149,78 @@ class DatabaseService {
     if (!hasAttributesCol) {
       this.db.exec('ALTER TABLE files ADD COLUMN attributes TEXT');
     }
+
+    const alertRuleCols = this.db.prepare('PRAGMA table_info(alert_rules)').all();
+    const hasAlertRuleNameCol = alertRuleCols.some(col => col.name === 'name');
+    if (!hasAlertRuleNameCol) {
+      this.db.exec('ALTER TABLE alert_rules ADD COLUMN name TEXT');
+    }
+    this.populateMissingAlertRuleNames();
+  }
+
+  normalizeAlertRuleName(name) {
+    return String(name || '').trim();
+  }
+
+  getAlertRuleNameSet(excludeId = null) {
+    const rows = excludeId
+      ? this.db.prepare('SELECT name FROM alert_rules WHERE id != ?').all(excludeId)
+      : this.db.prepare('SELECT name FROM alert_rules').all();
+
+    return new Set(
+      rows
+        .map(row => this.normalizeAlertRuleName(row.name).toLowerCase())
+        .filter(Boolean)
+    );
+  }
+
+  alertRuleNameExists(name, excludeId = null) {
+    const normalizedName = this.normalizeAlertRuleName(name);
+    if (!normalizedName) return false;
+
+    const row = excludeId
+      ? this.db.prepare('SELECT id FROM alert_rules WHERE id != ? AND lower(name) = lower(?) LIMIT 1').get(excludeId, normalizedName)
+      : this.db.prepare('SELECT id FROM alert_rules WHERE lower(name) = lower(?) LIMIT 1').get(normalizedName);
+
+    return !!row;
+  }
+
+  generateUniqueAlertRuleName(excludeId = null) {
+    const existingNames = this.getAlertRuleNameSet(excludeId);
+    let suffix = 1;
+
+    while (existingNames.has(`alert ${suffix}`)) {
+      suffix += 1;
+    }
+
+    return `Alert ${suffix}`;
+  }
+
+  populateMissingAlertRuleNames() {
+    const rows = this.db.prepare('SELECT id, name FROM alert_rules ORDER BY id ASC').all();
+    if (rows.length === 0) return;
+
+    const updateStmt = this.db.prepare('UPDATE alert_rules SET name = ? WHERE id = ?');
+    const existingNames = new Set(
+      rows
+        .map(row => this.normalizeAlertRuleName(row.name).toLowerCase())
+        .filter(Boolean)
+    );
+
+    let suffix = 1;
+    rows.forEach(row => {
+      const currentName = this.normalizeAlertRuleName(row.name);
+      if (currentName) return;
+
+      while (existingNames.has(`alert ${suffix}`)) {
+        suffix += 1;
+      }
+
+      const generatedName = `Alert ${suffix}`;
+      updateStmt.run(generatedName, row.id);
+      existingNames.add(generatedName.toLowerCase());
+      suffix += 1;
+    });
   }
 
   /**
@@ -751,9 +824,10 @@ class DatabaseService {
    */
   getAlertsSummary() {
     const stmt = this.db.prepare(`
-      SELECT a.*, d.dirname
+      SELECT a.*, d.dirname, ar.name AS rule_name
       FROM alerts a
       LEFT JOIN dirs d ON a.dir_id = d.id
+      LEFT JOIN alert_rules ar ON a.rule_id = ar.id
       WHERE a.acknowledged_at IS NULL
       ORDER BY a.created_at DESC
     `);
@@ -765,9 +839,10 @@ class DatabaseService {
    */
   getAlertsHistory() {
     const stmt = this.db.prepare(`
-      SELECT a.*, d.dirname
+      SELECT a.*, d.dirname, ar.name AS rule_name
       FROM alerts a
       LEFT JOIN dirs d ON a.dir_id = d.id
+      LEFT JOIN alert_rules ar ON a.rule_id = ar.id
       WHERE a.acknowledged_at IS NOT NULL
       ORDER BY a.acknowledged_at DESC
     `);
@@ -812,15 +887,26 @@ class DatabaseService {
    */
   saveAlertRule(rule) {
     const { id, categories, tags, attributes, events, enabled } = rule;
+    const providedName = this.normalizeAlertRuleName(rule.name);
+    const name = providedName || (!id ? this.generateUniqueAlertRuleName() : '');
+
+    if (!name) {
+      throw new Error('Alert rule name is required.');
+    }
+
+    if (this.alertRuleNameExists(name, id || null)) {
+      throw new Error(`An alert named "${name}" already exists.`);
+    }
+
     if (id) {
       this.db.prepare(
-        'UPDATE alert_rules SET categories=?, tags=?, attributes=?, events=?, enabled=? WHERE id=?'
-      ).run(categories, tags, attributes, events, enabled ? 1 : 0, id);
+        'UPDATE alert_rules SET name=?, categories=?, tags=?, attributes=?, events=?, enabled=? WHERE id=?'
+      ).run(name, categories, tags, attributes, events, enabled ? 1 : 0, id);
       return { id };
     } else {
       const result = this.db.prepare(
-        'INSERT INTO alert_rules (categories, tags, attributes, events, enabled, created_at) VALUES (?,?,?,?,?,?)'
-      ).run(categories, tags, attributes, events, enabled ? 1 : 0, Date.now());
+        'INSERT INTO alert_rules (name, categories, tags, attributes, events, enabled, created_at) VALUES (?,?,?,?,?,?,?)'
+      ).run(name, categories, tags, attributes, events, enabled ? 1 : 0, Date.now());
       return { id: result.lastInsertRowid };
     }
   }
