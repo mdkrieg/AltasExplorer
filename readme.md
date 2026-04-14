@@ -84,7 +84,7 @@ Manipulation phase:
 * How deep to go on file editing and viewing stuff? A lot can be done with monaco for plaintext files. But do we want to read spreadsheets as well? Perhaps View only for those?
 
 ### Off-the-wall stuff for the future:
-I think these are decent ideas but should only be 
+I think these are decent ideas but should only be considered as add-ins once the app is mature
 [ ] Integrate GrapesJS for "dashboards" functionality
   [ ] Ability to define layouts where files are displayed in custom arrangement
   [ ] ^ incl' ability to make "reports" of what files are missing from paths
