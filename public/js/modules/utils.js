@@ -185,15 +185,67 @@ export function formatHotkeyDisplay(combo) {
  */
 export function getRelativePathFromRoot(rootPath, entryPath) {
   if (!rootPath || !entryPath) return entryPath;
-  
+
   const rootNorm = rootPath.replace(/\\/g, '/').toLowerCase();
   const entryNorm = entryPath.replace(/\\/g, '/').toLowerCase();
-  
+
   if (rootNorm === entryNorm) return '.';
-  
+
   if (entryNorm.startsWith(rootNorm + '/')) {
     return entryPath.substring(rootPath.length + 1);
   }
-  
+
   return entryPath;
+}
+
+/**
+ * Display inline form error message and optionally mark a field as invalid
+ * @param {string} statusId - ID of status/message display div
+ * @param {string} message - Error message to display
+ * @param {string} [fieldId] - Optional ID of input field to mark with w2ui-error class
+ */
+export function showFormError(statusId, message, fieldId = null) {
+  if (fieldId) {
+    const el = document.getElementById(fieldId);
+    if (el) el.classList.add('w2ui-error');
+  }
+  const status = document.getElementById(statusId);
+  if (status) {
+    status.textContent = message;
+    status.style.color = '#c62828';
+    status.style.display = 'block';
+  }
+}
+
+/**
+ * Display inline form success message (auto-hides after 2.5s)
+ * @param {string} statusId - ID of status/message display div
+ * @param {string} message - Success message to display
+ */
+export function showFormSuccess(statusId, message) {
+  const status = document.getElementById(statusId);
+  if (status) {
+    status.textContent = message;
+    status.style.color = '#388e3c';
+    status.style.display = 'block';
+    setTimeout(() => { status.style.display = 'none'; }, 2500);
+  }
+}
+
+/**
+ * Clear all form error styling and status message
+ * @param {string} [formId] - Optional ID of form to clear .w2ui-error classes from
+ * @param {string} statusId - ID of status/message display div to clear
+ */
+export function clearFormStatus(formId, statusId) {
+  if (formId) {
+    document.getElementById(formId)
+      ?.querySelectorAll('.w2ui-error')
+      .forEach(el => el.classList.remove('w2ui-error'));
+  }
+  const status = document.getElementById(statusId);
+  if (status) {
+    status.style.display = 'none';
+    status.textContent = '';
+  }
 }

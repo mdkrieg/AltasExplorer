@@ -3114,3 +3114,25 @@ hr {
   border-color: #bbdefb !important;
   background: #f0f7ff !important;
 }
+
+/* w2field color picker positioning fix */
+/* Parent container needs positioning context for absolute-positioned helpers */
+div > input.w2ui-input {
+  position: relative !important;
+}
+
+div:has(> input.w2ui-input) {
+  position: relative !important;
+}
+
+/* Fix w2field-helper positioning - these are the # symbol and color swatch */
+.w2ui-field-helper {
+  position: absolute !important;
+  top: 50% !important;
+  right: 6px !important;
+  left: auto !important;
+  transform: translateY(-50%) !important;
+  margin: 0 !important;
+  z-index: 10 !important;
+  pointer-events: auto !important;
+}

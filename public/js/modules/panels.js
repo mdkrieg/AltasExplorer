@@ -6,7 +6,7 @@
 import * as sidebar from './sidebar.js';
 import * as utils from './utils.js';
 import * as terminal from './terminal.js';
-import { w2grid, w2ui, w2confirm, w2alert } from './vendor/w2ui.es6.min.js';
+import { w2grid, w2ui, w2confirm, w2alert, w2field } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
 	selectedItemState,
@@ -1076,11 +1076,24 @@ async function openCreateTagModal(panelId, initialName, options = {}) {
 	createTagModalState.addHandler = options.addHandler || null;
 	createTagModalState.afterCreate = options.afterCreate || null;
 	$('#item-tag-create-name').val(initialName || '');
-	$('#item-tag-create-bgColor').val('#efe4b0');
-	$('#item-tag-create-textColor').val('#000000');
+
+	// Set color pickers (w2field stores without #)
+	document.getElementById('item-tag-create-bgColor').value = 'efe4b0';
+	document.getElementById('item-tag-create-textColor').value = '000000';
+	document.getElementById('item-tag-create-bgColor')._w2field?.refresh?.();
+	document.getElementById('item-tag-create-textColor')._w2field?.refresh?.();
+
 	$('#item-tag-create-description').val('');
 	showCreateTagError('');
 	$('#item-tag-create-modal').show();
+
+	// Initialize color pickers if not already done
+	const bgEl = document.getElementById('item-tag-create-bgColor');
+	const textEl = document.getElementById('item-tag-create-textColor');
+	if (bgEl && !bgEl._w2field) {
+		new w2field('color', { el: bgEl });
+		new w2field('color', { el: textEl });
+	}
 
 	$('#btn-item-tag-create-close, #btn-item-tag-create-cancel')
 		.off('click.itemTagCreate')

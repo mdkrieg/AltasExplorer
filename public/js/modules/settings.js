@@ -11,11 +11,12 @@
  */
 
 import * as panels from './panels.js';
-import { w2ui, w2grid, w2confirm, w2alert } from './vendor/w2ui.es6.min.js';
+import { w2ui, w2grid, w2confirm, w2alert, w2field } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
 	loadHotkeysFromStorage
 } from '../renderer.js';
+import { showFormError, showFormSuccess, clearFormStatus } from './utils.js';
 
 let initializedSettingsTabs = new Set();
 let initializedTaggingTabs = new Set();
@@ -226,7 +227,6 @@ export async function initializeBrowserSettingsForm() {
 	$('#browser-checksum-max-concurrent').val(checksumMaxConcurrent);
 
 	await updateHomeDirectoryWarning(homeDirectory);
-	updateRecordHeightPreview();
 	setupBrowserSettingsEventListeners();
 }
 
@@ -247,37 +247,6 @@ export async function updateHomeDirectoryWarning(dirPath) {
 	}
 }
 
-export function updateRecordHeightPreview() {
-	const recordHeight = parseInt($('#browser-record-height').val() || '30');
-
-	if (w2ui['preview-record-height-grid']) {
-		w2ui['preview-record-height-grid'].destroy();
-	}
-
-	const previewRecords = [
-		{ recid: 1, filename: 'example-file-1.pdf', size: '2.4 MB', modified: '2026-03-25' },
-		{ recid: 2, filename: 'project-folder', size: '--', modified: '2026-03-28' },
-		{ recid: 3, filename: 'document.txt', size: '45 KB', modified: '2026-03-20' },
-		{ recid: 4, filename: 'image.jpg', size: '1.8 MB', modified: '2026-03-15' },
-		{ recid: 5, filename: 'archive.zip', size: '156 MB', modified: '2026-03-10' }
-	];
-
-	$('#record-height-preview-grid').w2grid({
-		name: 'preview-record-height-grid',
-		columns: [
-			{ field: 'filename', text: 'Filename', size: '60%', resizable: true },
-			{ field: 'size', text: 'Size', size: '20%', resizable: true },
-			{ field: 'modified', text: 'Modified', size: '20%', resizable: true }
-		],
-		records: previewRecords,
-		recordHeight,
-		show: {
-			header: true,
-			toolbar: false,
-			footer: false
-		}
-	});
-}
 
 function setupBrowserSettingsEventListeners() {
 	$('#browser-background-refresh-enabled').off('change');
@@ -345,10 +314,9 @@ async function saveBrowserSettings() {
 		}
 
 		await updateHomeDirectoryWarning(homeDirectory);
-		updateRecordHeightPreview();
 		panels.applyRecordHeightToAllGrids(recordHeight);
 
-		alert('All browser settings saved successfully');
+		showFormSuccess('browser-settings-status', 'Settings saved.');
 
 		window.electronAPI.startBackgroundRefresh(backgroundRefreshEnabled, backgroundRefreshInterval);
 
@@ -357,7 +325,7 @@ async function saveBrowserSettings() {
 			await panels.navigateToDirectory(state.currentPath, panels.activePanelId);
 		}
 	} catch (err) {
-		alert('Error saving browser settings: ' + err.message);
+		showFormError('browser-settings-status', 'Error: ' + err.message);
 	}
 }
 
@@ -477,6 +445,24 @@ function rgbToHex(rgb) {
 	return `#${r}${g}${b}`;
 }
 
+function initializeColorPickers() {
+	const colorFieldIds = [
+		'form-cat-bgColor',
+		'form-cat-textColor',
+		'form-tag-bgColor',
+		'form-tag-textColor',
+		'item-tag-create-bgColor',
+		'item-tag-create-textColor'
+	];
+
+	colorFieldIds.forEach(id => {
+		const el = document.getElementById(id);
+		if (el && !el._w2field) {
+			new w2field('color', { el });
+		}
+	});
+}
+
 async function initializeCategoriesGrid() {
 	const gridName = 'categories-grid';
 
@@ -571,14 +557,22 @@ async function initializeCategoriesForm() {
 		syncCategoryAutoAssignField($('#form-cat-autoAssignCategory').val() || '');
 	});
 
+	initializeColorPickers();
 	clearCategoryForm();
 }
 
 function populateCategoryForm(record) {
 	categoryFormState.editingName = record.categoryName;
 	$('#form-cat-name').val(record.name);
-	$('#form-cat-bgColor').val(rgbToHex(record.bgColor));
-	$('#form-cat-textColor').val(rgbToHex(record.textColor));
+
+	// Set color pickers (w2field strips the # prefix)
+	let bgColorHex = rgbToHex(record.bgColor).replace('#', '');
+	let textColorHex = rgbToHex(record.textColor).replace('#', '');
+	document.getElementById('form-cat-bgColor').value = bgColorHex;
+	document.getElementById('form-cat-textColor').value = textColorHex;
+	document.getElementById('form-cat-bgColor')._w2field?.refresh?.();
+	document.getElementById('form-cat-textColor')._w2field?.refresh?.();
+
 	$('#form-cat-description').val(record.description || '');
 	$('#form-cat-enableChecksum').prop('checked', record.enableChecksum || false);
 	syncCategoryAutoAssignField(record.autoAssignCategory || '');
@@ -591,8 +585,13 @@ function populateCategoryForm(record) {
 export function clearCategoryForm() {
 	categoryFormState.editingName = null;
 	$('#form-cat-name').val('');
-	$('#form-cat-bgColor').val('#efe4b0');
-	$('#form-cat-textColor').val('#000000');
+
+	// Reset color pickers (w2field stores without #)
+	document.getElementById('form-cat-bgColor').value = 'efe4b0';
+	document.getElementById('form-cat-textColor').value = '000000';
+	document.getElementById('form-cat-bgColor')._w2field?.refresh?.();
+	document.getElementById('form-cat-textColor')._w2field?.refresh?.();
+
 	$('#form-cat-description').val('');
 	$('#form-cat-enableChecksum').prop('checked', false);
 	syncCategoryAutoAssignField('');
@@ -651,13 +650,14 @@ async function updateGridAfterCategorySave(updatedCategory, isNew = false, oldNa
 }
 
 export async function saveCategoryFromForm() {
+	clearFormStatus('categories-form', 'form-cat-status');
 	const name = $('#form-cat-name').val().trim();
 	const bgColorHex = $('#form-cat-bgColor').val();
 	const textColorHex = $('#form-cat-textColor').val();
 	const description = $('#form-cat-description').val().trim();
 
 	if (!name) {
-		alert('Please enter a category name');
+		showFormError('form-cat-status', 'Category name is required.', 'form-cat-name');
 		return;
 	}
 
@@ -689,20 +689,21 @@ export async function saveCategoryFromForm() {
 
 		await updateGridAfterCategorySave(categoryData, isNew, oldName);
 		clearCategoryForm();
-		alert(isNew ? 'Category created successfully!' : 'Category updated successfully!');
+		showFormSuccess('form-cat-status', isNew ? 'Category created.' : 'Category updated.');
 	} catch (err) {
-		alert('Error saving category: ' + err.message);
+		showFormError('form-cat-status', 'Error saving category: ' + err.message);
 	}
 }
 
 export async function deleteCategoryFromForm() {
+	clearFormStatus('categories-form', 'form-cat-status');
 	if (!categoryFormState.editingName) {
-		alert('Please select a category to delete');
+		showFormError('form-cat-status', 'Select a category first.');
 		return;
 	}
 
 	if (categoryFormState.editingName === 'Default') {
-		alert('Cannot delete the Default category');
+		showFormError('form-cat-status', 'The Default category cannot be deleted.');
 		return;
 	}
 
@@ -725,9 +726,9 @@ export async function deleteCategoryFromForm() {
 				}
 			}
 			clearCategoryForm();
-			alert('Category deleted successfully!');
+			showFormSuccess('form-cat-status', 'Category deleted.');
 		} catch (err) {
-			alert('Error deleting category: ' + err.message);
+			showFormError('form-cat-status', 'Error: ' + err.message);
 		}
 	});
 }
@@ -860,6 +861,7 @@ function updateAttrDefaultDropdown() {
 }
 
 export async function saveAttributeFromForm() {
+	clearFormStatus('form', 'form-attr-status');
 	const name = $('#form-attr-name').val().trim();
 	const description = $('#form-attr-description').val().trim();
 	const type = $('#form-attr-type').val();
@@ -873,7 +875,7 @@ export async function saveAttributeFromForm() {
 	}
 
 	if (!name) {
-		alert('Please enter an attribute name.');
+		showFormError('form-attr-status', 'Attribute name is required.', 'form-attr-name');
 		return;
 	}
 
@@ -887,16 +889,17 @@ export async function saveAttributeFromForm() {
 		}
 		await initializeAttributesGrid();
 		clearAttributeForm();
-		alert(attributeFormState.editingName ? 'Attribute updated!' : 'Attribute created!');
+		showFormSuccess('form-attr-status', attributeFormState.editingName ? 'Attribute updated.' : 'Attribute created.');
 		attributeFormState.editingName = null;
 	} catch (err) {
-		alert('Error saving attribute: ' + err.message);
+		showFormError('form-attr-status', 'Error saving attribute: ' + err.message);
 	}
 }
 
 export async function deleteAttributeFromForm() {
+	clearFormStatus('form', 'form-attr-status');
 	if (!attributeFormState.editingName) {
-		alert('Please select an attribute to delete.');
+		showFormError('form-attr-status', 'Select an attribute first.');
 		return;
 	}
 	w2confirm({
@@ -909,9 +912,9 @@ export async function deleteAttributeFromForm() {
 			await window.electronAPI.deleteAttribute(attributeFormState.editingName);
 			await initializeAttributesGrid();
 			clearAttributeForm();
-			alert('Attribute deleted.');
+			showFormSuccess('form-attr-status', 'Attribute deleted.');
 		} catch (err) {
-			alert('Error deleting attribute: ' + err.message);
+			showFormError('form-attr-status', 'Error: ' + err.message);
 		}
 	});
 }
@@ -988,16 +991,28 @@ async function initializeTagsForm() {
 function populateTagForm(record) {
 	tagFormState.editingName = record.tagName;
 	$('#form-tag-name').val(record.name);
-	$('#form-tag-bgColor').val(rgbToHex(record.bgColor));
-	$('#form-tag-textColor').val(rgbToHex(record.textColor));
+
+	// Set color pickers (w2field strips the # prefix)
+	let bgColorHex = rgbToHex(record.bgColor).replace('#', '');
+	let textColorHex = rgbToHex(record.textColor).replace('#', '');
+	document.getElementById('form-tag-bgColor').value = bgColorHex;
+	document.getElementById('form-tag-textColor').value = textColorHex;
+	document.getElementById('form-tag-bgColor')._w2field?.refresh?.();
+	document.getElementById('form-tag-textColor')._w2field?.refresh?.();
+
 	$('#form-tag-description').val(record.description || '');
 }
 
 export function clearTagForm() {
 	tagFormState.editingName = null;
 	$('#form-tag-name').val('');
-	$('#form-tag-bgColor').val('#efe4b0');
-	$('#form-tag-textColor').val('#000000');
+
+	// Reset color pickers (w2field stores without #)
+	document.getElementById('form-tag-bgColor').value = 'efe4b0';
+	document.getElementById('form-tag-textColor').value = '000000';
+	document.getElementById('form-tag-bgColor')._w2field?.refresh?.();
+	document.getElementById('form-tag-textColor')._w2field?.refresh?.();
+
 	$('#form-tag-description').val('');
 	const grid = w2ui['tags-grid'];
 	if (grid) {
@@ -1046,13 +1061,14 @@ async function updateGridAfterTagSave(updatedTag, isNew = false, oldName = null)
 }
 
 export async function saveTagFromForm() {
+	clearFormStatus('tags-form', 'form-tag-status');
 	const name = $('#form-tag-name').val().trim();
 	const bgColorHex = $('#form-tag-bgColor').val();
 	const textColorHex = $('#form-tag-textColor').val();
 	const description = $('#form-tag-description').val().trim();
 
 	if (!name) {
-		alert('Please enter a tag name');
+		showFormError('form-tag-status', 'Tag name is required.', 'form-tag-name');
 		return;
 	}
 
@@ -1076,15 +1092,16 @@ export async function saveTagFromForm() {
 
 		await updateGridAfterTagSave(tagData, isNew, oldName);
 		clearTagForm();
-		alert(isNew ? 'Tag created successfully!' : 'Tag updated successfully!');
+		showFormSuccess('form-tag-status', isNew ? 'Tag created.' : 'Tag updated.');
 	} catch (err) {
-		alert('Error saving tag: ' + err.message);
+		showFormError('form-tag-status', 'Error saving tag: ' + err.message);
 	}
 }
 
 export async function deleteTagFromForm() {
+	clearFormStatus('tags-form', 'form-tag-status');
 	if (!tagFormState.editingName) {
-		alert('Please select a tag to delete');
+		showFormError('form-tag-status', 'Select a tag first.');
 		return;
 	}
 
@@ -1107,9 +1124,9 @@ export async function deleteTagFromForm() {
 				}
 			}
 			clearTagForm();
-			alert('Tag deleted successfully!');
+			showFormSuccess('form-tag-status', 'Tag deleted.');
 		} catch (err) {
-			alert('Error deleting tag: ' + err.message);
+			showFormError('form-tag-status', 'Error: ' + err.message);
 		}
 	});
 }
@@ -1290,11 +1307,12 @@ export async function initializeFileTypesForm() {
 }
 
 export async function saveFileTypeFromForm() {
+	clearFormStatus('form', 'form-ft-status');
 	const pattern = $('#form-ft-pattern').val().trim();
 	const type = $('#form-ft-type').val().trim();
 
 	if (!pattern || !type) {
-		w2alert('Pattern and Type are required.');
+		showFormError('form-ft-status', 'Pattern and Type are required.');
 		return;
 	}
 
@@ -1308,7 +1326,7 @@ export async function saveFileTypeFromForm() {
 				$('#form-ft-open-with').val() || 'none'
 			);
 			if (result && result.error) {
-				w2alert('Error: ' + result.error);
+				showFormError('form-ft-status', 'Error: ' + result.error);
 				return;
 			}
 		} else {
@@ -1319,22 +1337,24 @@ export async function saveFileTypeFromForm() {
 				$('#form-ft-open-with').val() || 'none'
 			);
 			if (result && result.error) {
-				w2alert('Error: ' + result.error);
+				showFormError('form-ft-status', 'Error: ' + result.error);
 				return;
 			}
 		}
 
 		await initializeFileTypesGrid();
 		clearFileTypeForm();
+		showFormSuccess('form-ft-status', 'File type saved.');
 	} catch (err) {
-		w2alert('Error saving file type: ' + err.message);
+		showFormError('form-ft-status', 'Error saving file type: ' + err.message);
 	}
 }
 
 export async function deleteFileTypeFromForm() {
+	clearFormStatus('form', 'form-ft-status');
 	const pattern = fileTypeFormState.editingPattern;
 	if (!pattern) {
-		w2alert('No file type selected.');
+		showFormError('form-ft-status', 'Select a file type first.');
 		return;
 	}
 
@@ -1347,13 +1367,14 @@ export async function deleteFileTypeFromForm() {
 		try {
 			const result = await window.electronAPI.deleteFileType(pattern);
 			if (result && result.error) {
-				w2alert('Error: ' + result.error);
+				showFormError('form-ft-status', 'Error: ' + result.error);
 				return;
 			}
 			await initializeFileTypesGrid();
 			clearFileTypeForm();
+			showFormSuccess('form-ft-status', 'File type deleted.');
 		} catch (err) {
-			w2alert('Error deleting file type: ' + err.message);
+			showFormError('form-ft-status', 'Error: ' + err.message);
 		}
 	});
 }

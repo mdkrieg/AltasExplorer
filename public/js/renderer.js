@@ -622,11 +622,6 @@ function attachEventListeners() {
     await settings.updateHomeDirectoryWarning($(this).val());
   });
 
-  // Browser settings: update preview on recordHeight input change
-  $('#browser-record-height').on('input', function () {
-    settings.updateRecordHeightPreview();
-  });
-
   // Browser Settings - Advanced: reinitialize database button
   $('#btn-dev-reinitialize-db').click(async function () {
     w2confirm({

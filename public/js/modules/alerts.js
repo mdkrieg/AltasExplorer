@@ -10,6 +10,7 @@
 
 import * as panels from './panels.js';
 import { w2ui, w2grid } from './vendor/w2ui.es6.min.js';
+import { showFormError, showFormSuccess, clearFormStatus } from './utils.js';
 
 const EVENT_LABELS = {
   fileAdded: 'File Added',
@@ -621,17 +622,18 @@ async function renderAlertRuleEditorForm(rule) {
 }
 
 export async function saveRule() {
+  clearFormStatus(null, 'alerts-rule-status');
   const $body = $('#alerts-rule-editor-body');
   const name = String($body.find('#alert-rule-name').val() || '').trim();
   if (!name) {
-    alert('Please enter a rule name.');
+    showFormError('alerts-rule-status', 'Rule name is required.', 'alert-rule-name');
     $body.find('#alert-rule-name').trigger('focus');
     return;
   }
 
   const events = $body.find('input[name="rule-event"]:checked').map(function () { return this.value; }).get();
   if (events.length === 0) {
-    alert('Please select at least one event type.');
+    showFormError('alerts-rule-status', 'Select at least one event type.');
     return;
   }
 
@@ -653,7 +655,7 @@ export async function saveRule() {
       return String(rec._raw?.name || '').trim().toLowerCase() === normalizedName;
     });
     if (nameConflict) {
-      alert('An alert with that name already exists. Please choose a unique name.');
+      showFormError('alerts-rule-status', 'An alert with that name already exists.', 'alert-rule-name');
       $body.find('#alert-rule-name').trigger('focus');
       return;
     }
@@ -669,14 +671,14 @@ export async function saveRule() {
         !!existing.enabled === enabled;
     });
     if (duplicate) {
-      alert('A rule with identical settings already exists. Please adjust the rule definition.');
+      showFormError('alerts-rule-status', 'A rule with identical settings already exists.');
       return;
     }
   }
 
   const result = await window.electronAPI.saveAlertRule(rule);
   if (!result.success) {
-    alert(result.error || 'Error saving alert rule.');
+    showFormError('alerts-rule-status', result.error || 'Error saving alert rule.');
     console.error('Error saving alert rule:', result.error);
     return;
   }

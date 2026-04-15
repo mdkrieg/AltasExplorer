@@ -6,6 +6,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "debug:port": "electron . --remote-debugging-port=9222",
+    "debug:cli": "node debug-electron.js",
     "build": "electron-builder",
     "test": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -44,7 +46,8 @@
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^26.0.0",
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "puppeteer": "^24.40.0"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
