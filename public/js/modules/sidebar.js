@@ -1322,7 +1322,7 @@ async function addFavoritesFromSelection() {
   if (grid) {
     const selectedRecids = grid.getSelection();
     dirs = selectedRecids
-      .map(recid => grid.records[recid - 1])
+      .map(recid => grid.records.find(r => r.recid === recid))
       .filter(r => r && r.isFolder && r.path);
   }
 

@@ -300,6 +300,7 @@ function createWindow() {
 
 /**
  * Sync ~/.atlasexplorer/icons → public/assets/icons at startup
+ * Falls back to bundled icons if user directory is empty or missing
  */
 function syncIconAssets() {
   const srcDir = path.join(os.homedir(), '.atlasexplorer', 'icons');
@@ -314,16 +315,26 @@ function syncIconAssets() {
     }
     fsSync.mkdirSync(destDir, { recursive: true });
 
-    if (!fsSync.existsSync(srcDir)) {
-      logger.warn('Icon source directory does not exist:', srcDir);
-      return;
+    // Check if user directory has any icon files
+    let effectiveSrcDir = srcDir;
+    const userDirHasIcons = fsSync.existsSync(srcDir) &&
+      fsSync.readdirSync(srcDir).some(f => /\.(png|svg)$/i.test(f));
+
+    if (!userDirHasIcons) {
+      const bundledDir = icons.resolveBundledIconsDir();
+      if (!bundledDir) {
+        logger.warn('No icon source available; public/assets/icons will be empty');
+        return;
+      }
+      effectiveSrcDir = bundledDir;
+      logger.warn('User icons directory empty or missing; falling back to bundled assets');
     }
 
-    const files = fsSync.readdirSync(srcDir);
+    const files = fsSync.readdirSync(effectiveSrcDir);
     let copied = 0;
     for (const file of files) {
       if (/\.(png|svg)$/i.test(file)) {
-        fsSync.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+        fsSync.copyFileSync(path.join(effectiveSrcDir, file), path.join(destDir, file));
         copied++;
       }
     }

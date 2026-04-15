@@ -1717,7 +1717,7 @@ async function initializeGridForPanel(panelId) {
 				event.preventDefault();
 				event.stopPropagation();
 				if (event.detail.recid) {
-					const record = this.records[event.detail.recid - 1];
+					const record = this.records.find(r => r.recid === event.detail.recid);
 					if (record) {
 						updateSelectedItemFromRecord(record, panelId);
 						openTagConfigModal(record, panelId);
@@ -1733,7 +1733,7 @@ async function initializeGridForPanel(panelId) {
 				event.preventDefault();
 				event.stopPropagation();
 				if (event.detail.recid) {
-					const record = this.records[event.detail.recid - 1];
+					const record = this.records.find(r => r.recid === event.detail.recid);
 					if (record) {
 						openNotesModal(record);
 						return;
@@ -1742,7 +1742,7 @@ async function initializeGridForPanel(panelId) {
 			}
 			
 			if (panelId === 1 && event.detail.recid) {
-				const record = this.records[event.detail.recid - 1];
+				const record = this.records.find(r => r.recid === event.detail.recid);
 				if (record) {
 					if (record.isFolder) {
 						handlePanel1DirectorySelection(record.path, record.filenameRaw || record.filename);
@@ -1755,14 +1755,14 @@ async function initializeGridForPanel(panelId) {
 			}
 
 			if (event.detail.recid) {
-				const record = this.records[event.detail.recid - 1];
+				const record = this.records.find(r => r.recid === event.detail.recid);
 				if (record && getPanelViewType(panelId) !== 'properties') {
 					updateSelectedItemFromRecord(record, panelId);
 				}
 			}
 
 			if (event.detail.column === 0 && event.detail.recid) {
-				const record = this.records[event.detail.recid - 1];
+				const record = this.records.find(r => r.recid === event.detail.recid);
 				if (record && record.isFolder && record.changeState !== 'moved') {
 					openInitialsEditor(record, panelId);
 					event.preventDefault();
@@ -1773,7 +1773,7 @@ async function initializeGridForPanel(panelId) {
 			if (event.detail.recid) {
 				const col = this.columns[event.detail.column];
 				if (col && col.field === 'todo') {
-					const record = this.records[event.detail.recid - 1];
+					const record = this.records.find(r => r.recid === event.detail.recid);
 					if (record && record.todo && record.todo.total > 0) {
 						openTodoModal(record, panelId);
 						event.preventDefault();
@@ -1783,7 +1783,7 @@ async function initializeGridForPanel(panelId) {
 			}
 
 			if (panelId > 1 && panelState[panelId].selectMode && event.detail.recid) {
-				const record = this.records[event.detail.recid - 1];
+				const record = this.records.find(r => r.recid === event.detail.recid);
 				if (record && record.isFolder) {
 					setActivePanelId(panelId);
 					navigateToDirectory(record.path, panelId);
@@ -1791,7 +1791,7 @@ async function initializeGridForPanel(panelId) {
 			}
 		},
 		onDblClick: function (event) {
-			const record = this.records[event.detail.recid - 1];
+			const record = this.records.find(r => r.recid === event.detail.recid);
 			if (record && record.isFolder) {
 				navigateToDirectory(record.path, panelId);
 				return;
@@ -1820,7 +1820,7 @@ async function initializeGridForPanel(panelId) {
 				event.preventDefault();
 				setActivePanelId(panelId);
 				const selectedRecIds = this.getSelection();
-				const selectedRecords = selectedRecIds.map(recid => this.records[recid - 1]);
+				const selectedRecords = selectedRecIds.map(recid => this.records.find(r => r.recid === recid));
 				if (selectedRecords.length === 0) return;
 				const menuItems = await generateW2UIContextMenu(selectedRecords, visiblePanels);
 				const origEvent = event.detail.originalEvent;

@@ -18,6 +18,12 @@
     "directories": {
       "buildResources": "assets"
     },
+    "extraResources": [
+      {
+        "from": "assets/icons",
+        "to": "icons"
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.ico"
