@@ -21,10 +21,26 @@ let page = null;
  */
 async function connect() {
   try {
-    // Find the Electron process and extract the WebSocket URL from port 9222
+    // Discover the WebSocket endpoint from the DevTools protocol
+    const http = require('http');
+    const wsUrl = await new Promise((resolve, reject) => {
+      http.get('http://localhost:9222/json/version', (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data).webSocketDebuggerUrl);
+          } catch (e) {
+            reject(new Error('Failed to parse DevTools response'));
+          }
+        });
+      }).on('error', reject);
+    });
+
     browser = await puppeteer.connect({
-      browserWSEndpoint: 'http://localhost:9222',
+      browserWSEndpoint: wsUrl,
       defaultViewport: null,
+      protocolTimeout: 60000,
     });
 
     // Get the first page (renderer process)
@@ -50,8 +66,9 @@ async function connect() {
 async function screenshot(filename = 'screenshot.png') {
   if (!page) throw new Error('Not connected. Call connect() first.');
 
+  await page.bringToFront();
   const filepath = path.join(process.cwd(), filename);
-  await page.screenshot({ path: filepath, fullPage: true });
+  await page.screenshot({ path: filepath, captureBeyondViewport: false });
   console.log(`✓ Screenshot saved to ${filepath}`);
   return filepath;
 }

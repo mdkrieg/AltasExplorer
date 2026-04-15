@@ -1060,6 +1060,11 @@ hr {
   display: none;
 }
 
+.color-picker-input{
+  padding-left:20px !important;
+  padding-right:26px !important;
+}
+
 #category-divider {
   width: 4px;
   background: #ddd;
@@ -3116,23 +3121,48 @@ hr {
 }
 
 /* w2field color picker positioning fix */
-/* Parent container needs positioning context for absolute-positioned helpers */
-div > input.w2ui-input {
-  position: relative !important;
+/* Wrapper around input + w2ui helpers provides positioning context */
+.color-input-wrapper {
+  position: relative;
+  width: 100%;
 }
 
-div:has(> input.w2ui-input) {
-  position: relative !important;
+.color-input-wrapper input.w2ui-input {
+  width: 100%;
+  box-sizing: border-box;
 }
 
-/* Fix w2field-helper positioning - these are the # symbol and color swatch */
-.w2ui-field-helper {
+/* Hash prefix (#) - left side, vertically centered within the input */
+.color-input-wrapper > .w2ui-field-helper:not(:has(> div)) {
   position: absolute !important;
+  left: 6px !important;
+  right: auto !important;
   top: 50% !important;
-  right: 6px !important;
-  left: auto !important;
   transform: translateY(-50%) !important;
   margin: 0 !important;
-  z-index: 10 !important;
+  padding: 0 !important;
+  height: auto !important;
+  z-index: 1;
+}
+
+/* Color swatch (suffix) - right side, vertically centered within the input */
+.color-input-wrapper > .w2ui-field-helper:has(> div) {
+  position: absolute !important;
+  right: 6px !important;
+  left: auto !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: auto !important;
   pointer-events: auto !important;
+  z-index: 1;
+}
+
+/* Color swatch inner square - reset w2ui's inner positioning since parent is already centered */
+.color-input-wrapper .w2ui-field-helper > div {
+  position: static !important;
+  top: auto !important;
+  transform: none !important;
+  margin: 0 !important;
 }

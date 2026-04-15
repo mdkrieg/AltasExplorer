@@ -460,6 +460,26 @@ function initializeColorPickers() {
 		if (el && !el._w2field) {
 			new w2field('color', { el });
 		}
+		// w2ui sets inline padding with !important — strip it so layout is
+		// controlled uniformly by the stylesheet / natural flow
+		if (el) {
+			el.style.removeProperty('padding-left');
+			el.style.removeProperty('padding-right');
+		}
+		// Wrap the input + w2ui helpers in a positioning container
+		// so the helpers align relative to the input, not the label+input parent
+		if (el && !el.parentElement.classList.contains('color-input-wrapper')) {
+			const wrapper = document.createElement('div');
+			wrapper.className = 'color-input-wrapper';
+			const parent = el.parentElement;
+			// Collect input and its adjacent w2ui-field-helper siblings
+			const siblings = Array.from(parent.children).filter(
+				c => c === el || c.classList.contains('w2ui-field-helper')
+			);
+			// Insert wrapper where the input is
+			parent.insertBefore(wrapper, siblings[0]);
+			siblings.forEach(s => wrapper.appendChild(s));
+		}
 	});
 }
 
@@ -985,6 +1005,7 @@ async function initializeTagsGrid() {
 }
 
 async function initializeTagsForm() {
+	initializeColorPickers();
 	clearTagForm();
 }
 

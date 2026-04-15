@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node -c public/js/modules/panels.js)"
+      "Bash(node -c public/js/modules/panels.js)",
+      "Bash(node debug-electron.js screenshot screenshot.png)",
+      "Bash(node -e ':*)"
     ]
   }
 }

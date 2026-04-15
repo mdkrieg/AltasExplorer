@@ -2,6 +2,8 @@ node_modules/
 dist/
 private/
 public/assets/
+.claude/
+.vscode/
 
 # Logs
 logs
