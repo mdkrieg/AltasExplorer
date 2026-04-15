@@ -7,3 +7,7 @@ public/assets/
 logs
 *.log
 *.code-workspace
+
+# Debug screenshots
+screenshot*.png
+element*.png
