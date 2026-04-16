@@ -121,6 +121,7 @@ function getPanelFilterMenuName(panelId) {
 function hidePanelFilterMenu(panelId) {
 	w2tooltip.hide(getPanelFilterMenuName(panelId));
 	if (panelState[panelId]) {
+		panelState[panelId].reopenFilterMenuField = null;
 		panelState[panelId].filterMenuField = null;
 	}
 }
@@ -342,6 +343,18 @@ function refreshFilterHeaderButtons(panelId) {
 	});
 }
 
+function updateGridColumnHeadersFromFilterState(panelId) {
+	const state = ensureFilterState(panelId);
+	const grid = state?.w2uiGrid;
+	if (!state || !grid) return;
+
+	grid.columns.forEach(column => {
+		if (Object.prototype.hasOwnProperty.call(column, 'headerLabel')) {
+			column.text = getColumnHeaderText(panelId, column.field, column.headerLabel);
+		}
+	});
+}
+
 function buildColumnFilterMenuHtml(panelId, field) {
 	const state = ensureFilterState(panelId);
 	const config = getColumnFilterConfig(panelId, field);
@@ -491,16 +504,24 @@ function initColumnFilterMenuControls(panelId) {
 		button.dataset.filterActionBound = 'true';
 	});
 	overlayEl.querySelectorAll('[data-filter-popup-field]').forEach(input => {
-		if (input.dataset.filterEscapeBound === 'true') return;
+		if (input.dataset.filterKeyboardBound === 'true') return;
 		input.addEventListener('keydown', (event) => {
-			if (event.key !== 'Escape') return;
-			event.preventDefault();
-			event.stopPropagation();
-			const field = input.getAttribute('data-filter-popup-field');
-			if (!field) return;
-			clearFilterField(panelId, field);
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				event.stopPropagation();
+				hidePanelFilterMenu(panelId);
+				return;
+			}
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				event.stopPropagation();
+				const field = input.getAttribute('data-filter-popup-field');
+				if (!field) return;
+				clearFilterField(panelId, field, { reopenMenu: false });
+				hidePanelFilterMenu(panelId);
+			}
 		});
-		input.dataset.filterEscapeBound = 'true';
+		input.dataset.filterKeyboardBound = 'true';
 	});
 }
 
@@ -575,9 +596,14 @@ function openColumnFilterMenu(panelId, field, anchorEl) {
 	}, 0);
 }
 
-function clearFilterField(panelId, field) {
+function clearFilterField(panelId, field, options = {}) {
 	const state = ensureFilterState(panelId);
 	if (!state) return;
+	const { reopenMenu = true } = options;
+	if (!reopenMenu) {
+		state.reopenFilterMenuField = null;
+		state.filterMenuField = null;
+	}
 	if (field === 'filename') state.filterValues.filename = '';
 	if (field === 'type') state.filterValues.type = '';
 	if (field === 'tags') state.filterValues.tags = '';
@@ -600,7 +626,7 @@ function clearFilterField(panelId, field) {
 	if (field.startsWith('attr_')) {
 		state.filterValues.attributes[field.substring(5)] = '';
 	}
-	applyPanelFilters(panelId);
+	applyPanelFilters(panelId, { reopenMenu });
 }
 
 function recordMatchesFilters(record, values) {
@@ -622,11 +648,12 @@ function recordMatchesFilters(record, values) {
 	return true;
 }
 
-function applyPanelFilters(panelId) {
+function applyPanelFilters(panelId, options = {}) {
 	const state = ensureFilterState(panelId);
 	const grid = state?.w2uiGrid;
 	if (!state || !grid) return;
-	const reopenField = state.filterMenuField;
+	const { reopenMenu = true } = options;
+	const reopenField = reopenMenu ? state.filterMenuField : null;
 	state.reopenFilterMenuField = reopenField || null;
 	const selectedRecids = typeof grid.getSelection === 'function' ? grid.getSelection() : [];
 	let records = state.sourceRecords;
@@ -636,6 +663,7 @@ function applyPanelFilters(panelId) {
 	state.filterVisible = hasActiveFilterValues(panelId);
 	grid.records = records;
 	grid.total = records.length;
+	updateGridColumnHeadersFromFilterState(panelId);
 	grid.refresh();
 	const visibleRecids = new Set(records.map(record => record.recid));
 	const visibleSelection = selectedRecids.filter(recid => visibleRecids.has(recid));
@@ -647,6 +675,8 @@ function applyPanelFilters(panelId) {
 	}
 	if (reopenField) {
 		state.filterMenuField = reopenField;
+	} else if (!reopenMenu) {
+		state.filterMenuField = null;
 	}
 	refreshOpenFilterMenu(panelId);
 	state.reopenFilterMenuField = null;
@@ -747,11 +777,21 @@ export function resetAlertCount() {
 	unacknowledgedAlertCount = 0;
 }
 
-function updateGridHeader(panelId, path) {
-	const gridName = `grid-panel-${panelId}`;
-	const headerEl = document.getElementById(`grid_${gridName}_header`);
-	if (!headerEl) return;
 
+function getPanelGrid(panelId) {
+	return panelState[panelId]?.w2uiGrid || null;
+}
+
+function getPanelGridName(panelId) {
+	const grid = getPanelGrid(panelId);
+	return grid?.name || `grid-panel-${panelId}`;
+}
+
+function getPanelGridHeaderElement(panelId) {
+	return document.getElementById(`grid_${getPanelGridName(panelId)}_header`);
+}
+
+function buildGridHeaderHtml(panelId, path) {
 	let buttonsHtml = `
 		<button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
 	`;
@@ -764,7 +804,7 @@ function updateGridHeader(panelId, path) {
 		buttonsHtml += `<button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">-</button>`;
 	}
 
-	const headerHtml = `
+	return `
 		<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 12px; background: #f0f0f0; border-bottom: 1px solid #e0e0e0;">
 			<span class="panel-path" style="font-weight: bold; font-size: 12px; cursor: pointer; user-select: none;">${path}</span>
 			<input class="panel-path-input" type="text" value="${path}" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #2196F3; border-radius: 4px; font-family: inherit; flex: 1; max-width: 60%; margin-right: 8px;">
@@ -774,12 +814,25 @@ function updateGridHeader(panelId, path) {
 		</div>
 	`;
 
+}
+
+function updateGridHeader(panelId, path = panelState[panelId]?.currentPath || '') {
+	const headerHtml = buildGridHeaderHtml(panelId, path);
+	const grid = getPanelGrid(panelId);
+	if (grid) {
+		grid.header = headerHtml;
+	}
+
+	const headerEl = getPanelGridHeaderElement(panelId);
+	if (!headerEl) return;
 	headerEl.innerHTML = headerHtml;
 	attachGridHeaderEventListeners(panelId);
 }
 
 function attachGridHeaderEventListeners(panelId) {
-	const $header = $(`#grid_grid-panel-${panelId}_header`);
+	const headerEl = getPanelGridHeaderElement(panelId);
+	if (!headerEl) return;
+	const $header = $(headerEl);
 
 	$header.find('.panel-path').off('click').on('click', function () {
 		const $path = $(this);
@@ -2220,7 +2273,8 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 }
 
 function setPanelPathValidity(panelId, isValid) {
-	const $path = $(`#panel-${panelId} .panel-path`);
+	const headerEl = getPanelGridHeaderElement(panelId);
+	const $path = headerEl ? $(headerEl).find('.panel-path') : $(`#panel-${panelId} .panel-path`);
 	if (isValid) {
 		$path.css('color', '');
 	} else {
@@ -2264,13 +2318,13 @@ async function initializeGridForPanel(panelId) {
 	const recordHeight = await getRecordHeight();
 	const state = panelState[panelId];
 	const columns = [
-		{ field: 'icon', text: getColumnHeaderText(panelId, 'icon', ''), size: '40px', resizable: false, sortable: false, hideable: false },
-		{ field: 'filename', text: getColumnHeaderText(panelId, 'filename', 'Name'), size: '50%', resizable: true, sortable: true, hideable: false },
-		{ field: 'type', text: getColumnHeaderText(panelId, 'type', 'Type'), size: '80px', resizable: true, sortable: true },
-		{ field: 'size', text: getColumnHeaderText(panelId, 'size', 'Size'), size: '60px', resizable: true, sortable: true, align: 'right' },
-		{ field: 'dateModified', text: getColumnHeaderText(panelId, 'dateModified', 'Date Modified'), size: '150px', resizable: true, sortable: true, hidden: true },
+		{ field: 'icon', headerLabel: '', text: getColumnHeaderText(panelId, 'icon', ''), size: '40px', resizable: false, sortable: false, hideable: false },
+		{ field: 'filename', headerLabel: 'Name', text: getColumnHeaderText(panelId, 'filename', 'Name'), size: '50%', resizable: true, sortable: true, hideable: false },
+		{ field: 'type', headerLabel: 'Type', text: getColumnHeaderText(panelId, 'type', 'Type'), size: '80px', resizable: true, sortable: true },
+		{ field: 'size', headerLabel: 'Size', text: getColumnHeaderText(panelId, 'size', 'Size'), size: '60px', resizable: true, sortable: true, align: 'right' },
+		{ field: 'dateModified', headerLabel: 'Date Modified', text: getColumnHeaderText(panelId, 'dateModified', 'Date Modified'), size: '150px', resizable: true, sortable: true, hidden: true },
 		{
-			field: 'modified', text: getColumnHeaderText(panelId, 'modified', 'Modified'), size: '70px', resizable: true, sortable: true, render: (record) => {
+			field: 'modified', headerLabel: 'Modified', text: getColumnHeaderText(panelId, 'modified', 'Modified'), size: '70px', resizable: true, sortable: true, render: (record) => {
 				if (!record.modified) return '-';
 				const ts = -record.modified;
 				const fullDate = new Date(ts).toLocaleString();
@@ -2278,23 +2332,23 @@ async function initializeGridForPanel(panelId) {
 				return `<span title="${fullDate}" style="cursor: help;">${ago}</span>`;
 			}
 		},
-		{ field: 'dateCreated', text: getColumnHeaderText(panelId, 'dateCreated', 'Date Created'), size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
-		{ field: 'perms', text: getColumnHeaderText(panelId, 'perms', 'Perms'), size: '48px', resizable: true, sortable: true },
-		{ field: 'checksum', text: getColumnHeaderText(panelId, 'checksum', 'Checksum'), size: '70px', resizable: true, sortable: false },
+		{ field: 'dateCreated', headerLabel: 'Date Created', text: getColumnHeaderText(panelId, 'dateCreated', 'Date Created'), size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
+		{ field: 'perms', headerLabel: 'Perms', text: getColumnHeaderText(panelId, 'perms', 'Perms'), size: '48px', resizable: true, sortable: true },
+		{ field: 'checksum', headerLabel: 'Checksum', text: getColumnHeaderText(panelId, 'checksum', 'Checksum'), size: '70px', resizable: true, sortable: false },
 		{
-			field: 'tags', text: getColumnHeaderText(panelId, 'tags', 'Tags'), size: '190px', resizable: true, sortable: false, render: (record) => {
+			field: 'tags', headerLabel: 'Tags', text: getColumnHeaderText(panelId, 'tags', 'Tags'), size: '190px', resizable: true, sortable: false, render: (record) => {
 				return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true">+</button></div>`;
 			}
 		},
 		{
-			field: 'notes', text: getColumnHeaderText(panelId, 'notes', 'Notes'), size: '32px', resizable: false, sortable: false, render: (record) => {
+			field: 'notes', headerLabel: 'Notes', text: getColumnHeaderText(panelId, 'notes', 'Notes'), size: '32px', resizable: false, sortable: false, render: (record) => {
 				return record.hasNotes
 					? `<img src="assets/icons/note-book-icon.svg" class="notes-cell-icon notes-cell-icon-image" title="Notes" data-notes-icon="true">`
 					: '<span class="notes-cell-icon notes-cell-icon-add" title="Add notes" data-notes-icon="true">+</span>';
 			}
 		},
 		{
-			field: 'todo', text: getColumnHeaderText(panelId, 'todo', 'TODO'), size: '60px', resizable: true, sortable: false, render: (record) => {
+			field: 'todo', headerLabel: 'TODO', text: getColumnHeaderText(panelId, 'todo', 'TODO'), size: '60px', resizable: true, sortable: false, render: (record) => {
 				if (!record.todo || record.todo.total === 0) return '';
 				const { completed, total } = record.todo;
 				const cls = completed === total ? 'todo-count todo-count-complete' : 'todo-count todo-count-partial';
@@ -2307,6 +2361,7 @@ async function initializeGridForPanel(panelId) {
 	for (const attrName of attrCols) {
 		columns.push({
 			field: `attr_${attrName}`,
+			headerLabel: attrName,
 			text: getColumnHeaderText(panelId, `attr_${attrName}`, attrName),
 			size: '100px',
 			resizable: true,
@@ -2501,8 +2556,20 @@ async function initializeGridForPanel(panelId) {
 			} else {
 				navigateToDirectory(stateForReload.currentPath, panelId);
 			}
+		},
+		onRefresh: function (event) {
+			const previousOnComplete = event.onComplete;
+			event.onComplete = () => {
+				if (typeof previousOnComplete === 'function') {
+					previousOnComplete.call(this, event);
+				}
+				const currentPath = panelState[panelId]?.currentPath || 'Loading...';
+				updateGridHeader(panelId, currentPath);
+				refreshFilterHeaderButtons(panelId);
+			};
 		}
 	});
+	panelState[panelId].w2uiGrid = w2ui[gridName];
 
 	const $gridContainer = $(`#panel-${panelId} .panel-grid`);
 	w2ui[gridName].render($gridContainer[0]);
@@ -2530,8 +2597,7 @@ async function initializeGridForPanel(panelId) {
 	bindGridFilterControls(panelId);
 	refreshFilterHeaderButtons(panelId);
 
-	updateGridHeader(panelId, 'Loading...');
-	panelState[panelId].w2uiGrid = w2ui[gridName];
+	updateGridHeader(panelId, panelState[panelId].currentPath || 'Loading...');
 }
 
 async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {
@@ -3144,23 +3210,23 @@ export function navigateForward() {
 }
 
 export function activatePathEditMode(panelId) {
-	const $panel = $(`#panel-${panelId}`);
-	const $pathDisplay = $panel.find('.panel-path');
-	const $pathInput = $panel.find('.panel-path-input');
-	const $title = $panel.find('.w2ui-panel-title');
+	const headerEl = getPanelGridHeaderElement(panelId);
+	const $header = headerEl ? $(headerEl) : $(`#panel-${panelId} .w2ui-panel-title`);
+	const $pathDisplay = $header.find('.panel-path');
+	const $pathInput = $header.find('.panel-path-input');
 	const currentPath = panelState[panelId].currentPath;
 	$pathDisplay.hide();
-	$title.addClass('path-input-editing');
+	$header.addClass('path-input-editing');
 	$pathInput.val(currentPath).show().select().focus();
 }
 
 export async function deactivatePathEditMode(panelId, navigateToNewPath = false, newPath = '') {
-	const $panel = $(`#panel-${panelId}`);
-	const $pathDisplay = $panel.find('.panel-path');
-	const $pathInput = $panel.find('.panel-path-input');
-	const $title = $panel.find('.w2ui-panel-title');
+	const headerEl = getPanelGridHeaderElement(panelId);
+	const $header = headerEl ? $(headerEl) : $(`#panel-${panelId} .w2ui-panel-title`);
+	const $pathDisplay = $header.find('.panel-path');
+	const $pathInput = $header.find('.panel-path-input');
 	$pathInput.hide();
-	$title.removeClass('path-input-editing');
+	$header.removeClass('path-input-editing');
 	$pathDisplay.show();
 	if (navigateToNewPath && newPath && newPath !== panelState[panelId].currentPath) {
 		await navigateToDirectory(newPath, panelId);
@@ -3563,8 +3629,8 @@ function shiftPanelDown(panelId) {
 	const $currentGrid = $(`#panel-${panelId} .panel-grid`);
 	if (panelState[panelId].w2uiGrid) {
 		panelState[panelId].w2uiGrid.render($currentGrid[0]);
+		updateGridHeader(panelId, panelState[panelId].currentPath || 'Loading...');
 	}
-	$(`#panel-${panelId} .panel-path`).text(panelState[panelId].currentPath);
 }
 
 function clearPanelState(panelId) {
