@@ -555,6 +555,19 @@ textarea {
   height: 14px;
 }
 
+.attr-value-with-copy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.attr-value-with-copy > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .item-props-notes-section {
   display: flex;
   flex-direction: column;
@@ -2555,19 +2568,38 @@ hr {
   color: #333;
 }
 .btn-copy-value {
-  background: none;
-  border: 1px solid #ddd;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1px solid #d3d7dc;
   border-radius: 3px;
   cursor: pointer;
-  padding: 1px 5px;
+  padding: 1px 6px;
   font-size: 10px;
-  color: #888;
+  line-height: 1.4;
+  color: #52606d;
   flex-shrink: 0;
 }
 .btn-copy-value:hover {
-  background: #f0f0f0;
-  border-color: #aaa;
-  color: #333;
+  background: #f4f7fa;
+  border-color: #aeb7c2;
+  color: #243447;
+}
+
+.grid-attr-copy-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.grid-attr-copy-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .item-props-icon.clickable {
   cursor: pointer;

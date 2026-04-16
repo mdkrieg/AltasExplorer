@@ -29,6 +29,7 @@ class AttributeService {
           if (!attr.type) attr.type = 'String';
           if (attr.default === undefined) attr.default = '';
           if (!attr.options) attr.options = [];
+          if (attr.copyable === undefined) attr.copyable = false;
           attributes[attr.name] = attr;
         }
       }
@@ -43,15 +44,15 @@ class AttributeService {
     return attributes[name] || null;
   }
 
-  createAttribute(name, description = '', type = 'String', defaultValue = '', options = []) {
-    const attr = { name, description, type, default: defaultValue, options };
+  createAttribute(name, description = '', type = 'String', defaultValue = '', options = [], copyable = false) {
+    const attr = { name, description, type, default: defaultValue, options, copyable: Boolean(copyable) };
     const filePath = path.join(ATTRIBUTES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(attr, null, 2));
     return attr;
   }
 
-  updateAttribute(name, description = '', type = 'String', defaultValue = '', options = []) {
-    const attr = { name, description, type, default: defaultValue, options };
+  updateAttribute(name, description = '', type = 'String', defaultValue = '', options = [], copyable = false) {
+    const attr = { name, description, type, default: defaultValue, options, copyable: Boolean(copyable) };
     const filePath = path.join(ATTRIBUTES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(attr, null, 2));
     return attr;

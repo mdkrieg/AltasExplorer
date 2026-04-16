@@ -39,7 +39,7 @@ Philosophy:
   * Browser Settings
   * Alerts and Monitoring Settings
   * Maybe others? Any time one of the "gridded" settings are updated such as Categories and Tabs
-[ ] Update the color inputs to use the w2ui color picker (https://w2ui.com/web/demos/#/fields/8)
+[x] Update the color inputs to use the w2ui color picker (https://w2ui.com/web/demos/#/fields/8)
 [ ] Update the forms to use more of the standard w2ui elements, see: https://w2ui.com/web/demos/#/form
 [ ] Update the forms to not throw alert popups but instead use inline styling and remarks like a modern webform
 [ ] Add option on custom attributes for "copyable" which adds a copy button in the grid to copy its value to clipboard

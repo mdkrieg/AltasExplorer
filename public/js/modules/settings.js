@@ -767,7 +767,9 @@ async function initializeAttributesGrid() {
 		description: attr.description || '',
 		attrName: attr.name,
 		default: attr.default || '',
-		options: Array.isArray(attr.options) ? attr.options.join(', ') : ''
+		options: Array.isArray(attr.options) ? attr.options.join(', ') : '',
+		copyable: Boolean(attr.copyable),
+		copyableLabel: attr.copyable ? 'Yes' : 'No'
 	}));
 
 	w2ui[gridName] = new w2grid({
@@ -776,6 +778,7 @@ async function initializeAttributesGrid() {
 		columns: [
 			{ field: 'name', text: 'Name', size: '120px', resizable: true, sortable: true },
 			{ field: 'type', text: 'Type', size: '80px', resizable: true, sortable: true },
+			{ field: 'copyableLabel', text: 'Copy', size: '60px', resizable: true, sortable: true },
 			{ field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
 		],
 		records,
@@ -802,6 +805,7 @@ function populateAttributeForm(record) {
 	$('#form-attr-name').val(record.name);
 	$('#form-attr-description').val(record.description || '');
 	$('#form-attr-type').val(record.type || 'String');
+	$('#form-attr-copyable').val(record.copyable ? 'yes' : 'no');
 	$('#form-attr-options-list').empty();
 	const options = record.options ? record.options.split(',').map(item => item.trim()).filter(Boolean) : [];
 	options.forEach(option => addAttrOption(option));
@@ -819,6 +823,7 @@ export function clearAttributeForm() {
 	$('#form-attr-description').val('');
 	$('#form-attr-type').val('String');
 	$('#form-attr-default').val('');
+	$('#form-attr-copyable').val('no');
 	$('#form-attr-options-list').empty();
 	updateAttrDefaultDropdown();
 	toggleAttrOptionsSection();
@@ -885,6 +890,7 @@ export async function saveAttributeFromForm() {
 	const name = $('#form-attr-name').val().trim();
 	const description = $('#form-attr-description').val().trim();
 	const type = $('#form-attr-type').val();
+	const copyable = $('#form-attr-copyable').val() === 'yes';
 	let defaultVal;
 	const options = type === 'Selectable' ? getAttrOptionValues() : [];
 
@@ -899,7 +905,7 @@ export async function saveAttributeFromForm() {
 		return;
 	}
 
-	const attrData = { name, description, type, default: defaultVal, options };
+	const attrData = { name, description, type, default: defaultVal, options, copyable };
 
 	try {
 		if (attributeFormState.editingName) {

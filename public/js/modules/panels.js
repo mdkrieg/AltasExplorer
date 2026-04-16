@@ -6,7 +6,7 @@
 import * as sidebar from './sidebar.js';
 import * as utils from './utils.js';
 import * as terminal from './terminal.js';
-import { w2grid, w2ui, w2confirm, w2alert, w2field } from './vendor/w2ui.es6.min.js';
+import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
 	selectedItemState,
@@ -1675,7 +1675,8 @@ async function initializeGridForPanel(panelId) {
 			text: attrName,
 			size: '100px',
 			resizable: true,
-			sortable: true
+			sortable: true,
+			render: (record) => renderGridAttributeCell(record, attrName, state.currentAttrDefinitions?.[attrName])
 		});
 	}
 
@@ -1725,6 +1726,16 @@ async function initializeGridForPanel(panelId) {
 		onClick: function (event) {
 			gridFocusedPanelId = panelId;
 			const originalTarget = event.detail.originalEvent?.target;
+
+			if (originalTarget && originalTarget.closest && originalTarget.closest('[data-copy-value]')) {
+				event.preventDefault();
+				event.stopPropagation();
+				const copyButton = originalTarget.closest('[data-copy-value]');
+				const encodedValue = copyButton.getAttribute('data-copy-value');
+				const copyValue = decodeCopyValue(encodedValue);
+				copyValueToClipboard(copyValue, copyButton);
+				return;
+			}
 
 			if (originalTarget && originalTarget.closest && originalTarget.closest('[data-tag-config-trigger="true"]')) {
 				event.preventDefault();
@@ -1887,10 +1898,12 @@ async function initializeGridForPanel(panelId) {
 
 async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {
 	const state = panelState[panelId];
-	const [settings, tagDefs] = await Promise.all([
+	const [settings, tagDefs, attributeDefs] = await Promise.all([
 		window.electronAPI.getSettings(),
-		window.electronAPI.loadTags()
+		window.electronAPI.loadTags(),
+		window.electronAPI.getAttributesList()
 	]);
+	state.currentAttrDefinitions = Object.fromEntries((attributeDefs || []).map(attr => [attr.name, attr]));
 	const hideDotDirectory = settings.hide_dot_directory || false;
 	const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
 	const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
@@ -2222,6 +2235,70 @@ function formatTimeAgo(timestamp) {
 	const years = Math.floor(diffDay / 365);
 	const remainingDays = diffDay - years * 365;
 	return remainingDays > 0 ? `${years}y${remainingDays}d` : `${years}y`;
+}
+
+function decodeCopyValue(encodedValue) {
+	if (!encodedValue) return '';
+	try {
+		return decodeURIComponent(encodedValue);
+	} catch (_) {
+		return encodedValue;
+	}
+}
+
+function renderCopyValueButton(value, extraClass = '') {
+	if (value === null || value === undefined || value === '') return '';
+	const encodedValue = encodeURIComponent(String(value));
+	return `<button class="btn-copy-value${extraClass}" data-copy-value="${encodedValue}" title="Copy">Copy</button>`;
+}
+
+function showCopySuccessTooltip(anchor) {
+	if (!anchor) return;
+	w2tooltip.show({
+		name: 'copy-success-tooltip',
+		anchor,
+		html: 'Copied',
+		position: 'top|bottom',
+		offsetY: -2,
+		hideOn: ['doc-click']
+	});
+	if (anchor._copyTooltipTimer) {
+		clearTimeout(anchor._copyTooltipTimer);
+	}
+	anchor._copyTooltipTimer = setTimeout(() => {
+		w2tooltip.hide('copy-success-tooltip');
+		anchor._copyTooltipTimer = null;
+	}, 900);
+}
+
+async function copyValueToClipboard(value, anchor) {
+	if (!value) return;
+	try {
+		await navigator.clipboard.writeText(value);
+		showCopySuccessTooltip(anchor);
+	} catch (_) {
+		// Ignore clipboard failures to preserve current behavior.
+	}
+}
+
+function formatCustomAttributeValue(value, type) {
+	if (value === null || value === undefined || value === '') return '';
+	if ((type || '').toLowerCase() === 'yes-no') {
+		if (value === true || value === 'true' || value === 'Yes') return 'Yes';
+		if (value === false || value === 'false' || value === 'No') return 'No';
+	}
+	return String(value);
+}
+
+function renderGridAttributeCell(record, attrName, attrDefinition) {
+	const rawValue = record[`attr_${attrName}`];
+	const displayValue = formatCustomAttributeValue(rawValue, attrDefinition?.type);
+	if (!displayValue) return '';
+	const safeValue = utils.escapeHtml(displayValue);
+	if (!attrDefinition?.copyable) {
+		return `<span title="${safeValue}">${safeValue}</span>`;
+	}
+	return `<div class="grid-attr-copy-cell" title="${safeValue}"><span class="grid-attr-copy-text">${safeValue}</span>${renderCopyValueButton(displayValue, ' grid-copy-value-btn')}</div>`;
 }
 
 function getDateModifiedCell(file, changeState) {
@@ -2842,7 +2919,9 @@ function clearPanelState(panelId) {
 		sectionCollapseState: null,
 		currentItemOpenWith: null,
 		labelsUiState: null,
-		currentItemStats: null
+		currentItemStats: null,
+		currentAttrColumns: [],
+		currentAttrDefinitions: {}
 	};
 
 	window.electronAPI.unregisterWatchedPath(panelId);
@@ -3015,8 +3094,8 @@ export function attachPanelEventListeners(panelId) {
 
 		$panel.find('.item-properties-content').off('click.copyValue').on('click.copyValue', '.btn-copy-value', function (e) {
 			e.stopPropagation();
-			const val = $(this).attr('data-copy-value');
-			if (val) navigator.clipboard.writeText(val).catch(() => { });
+			const val = decodeCopyValue($(this).attr('data-copy-value'));
+			copyValueToClipboard(val, this);
 		});
 
 		$panel.find('.item-properties-content').off('mousedown.labelDismiss').on('mousedown.labelDismiss', function (event) {
@@ -3474,11 +3553,12 @@ export async function updateItemPropertiesPage(panelId) {
 
 		const $stats = $panel.find('.item-props-stats').empty();
 		function statRow(label, value, extraHtml) {
-			return `<div class="stat-row"><span class="stat-label">${label}</span><span class="stat-value stat-value-wrap">${value}${extraHtml || ''}</span></div>`;
+			const safeLabel = utils.escapeHtml(String(label || ''));
+			const safeValue = utils.escapeHtml(String(value || ''));
+			return `<div class="stat-row"><span class="stat-label">${safeLabel}</span><span class="stat-value stat-value-wrap">${safeValue}${extraHtml || ''}</span></div>`;
 		}
 		function copyBtn(value) {
-			const escaped = value.replace(/"/g, '&quot;');
-			return ` <button class="btn-copy-value" data-copy-value="${escaped}" title="Copy">&#x2398;</button>`;
+			return renderCopyValueButton(value, ' item-props-copy-btn');
 		}
 
 		const filenameVal = stats.filename || '';
@@ -3526,10 +3606,11 @@ export async function updateItemPropertiesPage(panelId) {
 					} else {
 						controlHtml = `<input type="text" value="${String(val)}">`;
 					}
-				} else if (type === 'yes-no') {
-					controlHtml = `<span>${val ? 'Yes' : 'No'}</span>`;
 				} else {
-					controlHtml = `<span>${String(val || '')}</span>`;
+					const displayValue = formatCustomAttributeValue(val, attr.type);
+					const safeDisplayValue = utils.escapeHtml(displayValue);
+					const copyHtml = attr.copyable ? renderCopyValueButton(displayValue, ' item-props-copy-btn') : '';
+					controlHtml = `<div class="attr-value-with-copy"><span>${safeDisplayValue}</span>${copyHtml}</div>`;
 				}
 				const $row = $(`<div class="attr-row" data-attr-name="${attr.name}" data-attr-type="${attr.type}"><label>${attr.name}</label>${controlHtml}</div>`);
 				$attrContainer.append($row);
