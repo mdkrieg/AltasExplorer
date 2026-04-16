@@ -95,6 +95,614 @@ function resetAllLabelsUiState() {
 	}
 }
 
+function createDefaultFilterValues() {
+	return {
+		filename: '',
+		type: '',
+		tags: '',
+		perms: '',
+		sizeMinKb: '',
+		sizeMaxKb: '',
+		modifiedFrom: '',
+		modifiedTo: '',
+		createdFrom: '',
+		createdTo: '',
+		notes: '',
+		todo: '',
+		checksum: '',
+		attributes: {}
+	};
+}
+
+function getPanelFilterMenuName(panelId) {
+	return `grid-filter-menu-${panelId}`;
+}
+
+function hidePanelFilterMenu(panelId) {
+	w2tooltip.hide(getPanelFilterMenuName(panelId));
+	if (panelState[panelId]) {
+		panelState[panelId].filterMenuField = null;
+	}
+}
+
+function getFilterAttributeColumns(panelId) {
+	const state = panelState[panelId];
+	if (!state) return [];
+	return state.currentAttrColumns || (state.currentCategory && state.currentCategory.attributes) || [];
+}
+
+function syncFilterAttributeValues(panelId) {
+	const state = panelState[panelId];
+	if (!state) return;
+	if (!state.filterValues) state.filterValues = createDefaultFilterValues();
+	if (!state.filterValues.attributes || typeof state.filterValues.attributes !== 'object') {
+		state.filterValues.attributes = {};
+	}
+	const next = {};
+	for (const attrName of getFilterAttributeColumns(panelId)) {
+		next[attrName] = state.filterValues.attributes[attrName] || '';
+	}
+	state.filterValues.attributes = next;
+}
+
+function ensureFilterState(panelId) {
+	const state = panelState[panelId];
+	if (!state) return null;
+	if (typeof state.filterVisible !== 'boolean') state.filterVisible = false;
+	if (!state.filterValues) state.filterValues = createDefaultFilterValues();
+	if (typeof state.filterMenuField === 'undefined') state.filterMenuField = null;
+	if (!Array.isArray(state.sourceRecords)) state.sourceRecords = [];
+	syncFilterAttributeValues(panelId);
+	return state;
+}
+
+function resetFilterState(panelId) {
+	const state = panelState[panelId];
+	if (!state) return;
+	state.filterVisible = false;
+	state.filterValues = createDefaultFilterValues();
+	state.filterMenuField = null;
+	state.sourceRecords = [];
+	if (state.w2uiGrid) {
+		state.w2uiGrid.searchReset();
+	}
+	hidePanelFilterMenu(panelId);
+}
+
+function parseNumericFilterValue(value) {
+	if (value === '' || value === null || value === undefined) return null;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseFilterDateValue(value, endOfDay = false) {
+	if (!value) return null;
+	const date = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}`);
+	const timestamp = date.getTime();
+	return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function getTagFilterText(tagsJson) {
+	return parseTagNames(tagsJson).join(' ');
+}
+
+function getRecordTextValue(record, key) {
+	const value = record[key];
+	if (value === null || value === undefined) return '';
+	return String(value).trim().toLowerCase();
+}
+
+function matchesTextFilter(record, key, filterValue) {
+	const normalizedFilter = String(filterValue || '').trim().toLowerCase();
+	if (!normalizedFilter) return true;
+	return getRecordTextValue(record, key).includes(normalizedFilter);
+}
+
+function matchesYesNoFilter(isPresent, filterValue) {
+	if (!filterValue) return true;
+	if (filterValue === 'yes') return !!isPresent;
+	if (filterValue === 'no') return !isPresent;
+	return true;
+}
+
+function hasTodoItems(record) {
+	return !!(record?.todo && Number(record.todo.total) > 0);
+}
+
+function hasChecksumValue(record) {
+	return String(record?.checksumValue || '').trim() !== '';
+}
+
+function matchesSizeFilter(record, values) {
+	const minKb = parseNumericFilterValue(values.sizeMinKb);
+	const maxKb = parseNumericFilterValue(values.sizeMaxKb);
+	if (minKb === null && maxKb === null) return true;
+	if (!Number.isFinite(record.sizeBytes)) return false;
+	if (minKb !== null && record.sizeBytes < minKb * 1024) return false;
+	if (maxKb !== null && record.sizeBytes > maxKb * 1024) return false;
+	return true;
+}
+
+function matchesDateFilter(timestamp, fromValue, toValue) {
+	const from = parseFilterDateValue(fromValue, false);
+	const to = parseFilterDateValue(toValue, true);
+	if (from === null && to === null) return true;
+	if (!Number.isFinite(timestamp)) return false;
+	if (from !== null && timestamp < from) return false;
+	if (to !== null && timestamp > to) return false;
+	return true;
+}
+
+function hasActiveFilterValues(panelId) {
+	const state = ensureFilterState(panelId);
+	if (!state) return false;
+	const values = state.filterValues;
+	if (!values) return false;
+	if (values.filename || values.type || values.tags || values.perms || values.sizeMinKb || values.sizeMaxKb || values.modifiedFrom || values.modifiedTo || values.createdFrom || values.createdTo || values.notes || values.todo || values.checksum) {
+		return true;
+	}
+	return Object.values(values.attributes || {}).some(value => String(value || '').trim() !== '');
+}
+
+function isFilterFieldActive(panelId, field) {
+	const state = ensureFilterState(panelId);
+	if (!state) return false;
+	const values = state.filterValues;
+	if (!values) return false;
+	if (field === 'filename') return String(values.filename || '').trim() !== '';
+	if (field === 'type') return String(values.type || '').trim() !== '';
+	if (field === 'tags') return String(values.tags || '').trim() !== '';
+	if (field === 'perms') return String(values.perms || '').trim() !== '';
+	if (field === 'size') return String(values.sizeMinKb || '').trim() !== '' || String(values.sizeMaxKb || '').trim() !== '';
+	if (field === 'modified') return String(values.modifiedFrom || '').trim() !== '' || String(values.modifiedTo || '').trim() !== '';
+	if (field === 'dateCreated') return String(values.createdFrom || '').trim() !== '' || String(values.createdTo || '').trim() !== '';
+	if (field === 'notes') return String(values.notes || '').trim() !== '';
+	if (field === 'todo') return String(values.todo || '').trim() !== '';
+	if (field === 'checksum') return String(values.checksum || '').trim() !== '';
+	if (field.startsWith('attr_')) {
+		const attrName = field.substring(5);
+		return String(values.attributes?.[attrName] || '').trim() !== '';
+	}
+	return false;
+}
+
+function getColumnFilterConfig(panelId, field) {
+	const state = ensureFilterState(panelId);
+	if (!state) return null;
+	const attrDefinitions = state.currentAttrDefinitions || {};
+	const baseConfigs = {
+		filename: { label: 'Name', kind: 'text', key: 'filename', placeholder: 'contains' },
+		type: { label: 'Type', kind: 'text', key: 'type', placeholder: 'contains' },
+		tags: { label: 'Tags', kind: 'text', key: 'tags', placeholder: 'contains' },
+		perms: { label: 'Perms', kind: 'text', key: 'perms', placeholder: 'contains' },
+		size: { label: 'Size', kind: 'range-number', minKey: 'sizeMinKb', maxKey: 'sizeMaxKb', unit: 'KB' },
+		modified: { label: 'Modified', kind: 'range-date', minKey: 'modifiedFrom', maxKey: 'modifiedTo' },
+		dateCreated: { label: 'Date Created', kind: 'range-date', minKey: 'createdFrom', maxKey: 'createdTo' },
+		notes: { label: 'Notes', kind: 'yes-no', key: 'notes' },
+		todo: { label: 'TODO', kind: 'yes-no', key: 'todo' },
+		checksum: { label: 'Checksum', kind: 'yes-no', key: 'checksum' }
+	};
+	if (baseConfigs[field]) return baseConfigs[field];
+	if (field.startsWith('attr_')) {
+		const attrName = field.substring(5);
+		return {
+			label: attrDefinitions[attrName]?.name || attrName,
+			kind: 'text-attr',
+			attrName,
+			placeholder: 'contains'
+		};
+	}
+	return null;
+}
+
+function isColumnFilterable(panelId, field) {
+	return !!getColumnFilterConfig(panelId, field);
+}
+
+function getFilterButtonTitle(panelId, field) {
+	const config = getColumnFilterConfig(panelId, field);
+	return config ? `Filter ${config.label}` : '';
+}
+
+function getHeaderFilterButtonHtml(panelId, field) {
+	if (!isColumnFilterable(panelId, field)) return '';
+	const state = ensureFilterState(panelId);
+	const isActive = isFilterFieldActive(panelId, field);
+	const isOpen = state?.filterMenuField === field;
+	return `<button type="button" class="grid-header-filter-btn${isActive ? ' is-active' : ''}${isOpen ? ' is-open' : ''}" data-panel-id="${panelId}" data-filter-menu-field="${field}" title="${utils.escapeHtml(getFilterButtonTitle(panelId, field))}">f</button>`;
+}
+
+function getColumnHeaderText(panelId, field, label) {
+	const buttonHtml = isColumnFilterable(panelId, field) ? getHeaderFilterButtonHtml(panelId, field) : '';
+	return `<div class="grid-header-filter${buttonHtml ? '' : ' is-static'}"><span class="grid-header-filter-label">${utils.escapeHtml(label || '')}</span>${buttonHtml}</div>`;
+}
+
+function refreshFilterHeaderButtons(panelId) {
+	const state = ensureFilterState(panelId);
+	if (!state) return;
+	const container = document.getElementById(`grid_grid-panel-${panelId}_columns`);
+	if (!container) return;
+	container.querySelectorAll('.grid-header-filter-btn').forEach(button => {
+		const field = button.getAttribute('data-filter-menu-field');
+		button.classList.toggle('is-active', isFilterFieldActive(panelId, field));
+		button.classList.toggle('is-open', state.filterMenuField === field);
+		button.title = getFilterButtonTitle(panelId, field);
+		if (button.dataset.filterBound !== 'true') {
+			button.addEventListener('mousedown', (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+			});
+			button.addEventListener('click', (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+				openColumnFilterMenu(panelId, button.getAttribute('data-filter-menu-field'), button);
+			});
+			button.dataset.filterBound = 'true';
+		}
+	});
+}
+
+function buildColumnFilterMenuHtml(panelId, field) {
+	const state = ensureFilterState(panelId);
+	const config = getColumnFilterConfig(panelId, field);
+	if (!state || !config) return '<div class="grid-filter-menu"></div>';
+	const values = state.filterValues;
+	const active = isFilterFieldActive(panelId, field);
+	let bodyHtml = '';
+	if (config.kind === 'text') {
+		bodyHtml = `
+			<label class="grid-filter-menu-field">
+				<span>${utils.escapeHtml(config.label)} contains</span>
+				<input type="text" data-filter-popup-field="${field}" value="${utils.escapeHtml(values[config.key] || '')}" placeholder="${utils.escapeHtml(config.placeholder)}">
+			</label>
+		`;
+	}
+	if (config.kind === 'text-attr') {
+		bodyHtml = `
+			<label class="grid-filter-menu-field">
+				<span>${utils.escapeHtml(config.label)} contains</span>
+				<input type="text" data-filter-popup-field="${field}" data-filter-popup-attr="${encodeURIComponent(config.attrName)}" value="${utils.escapeHtml(values.attributes?.[config.attrName] || '')}" placeholder="${utils.escapeHtml(config.placeholder)}">
+			</label>
+		`;
+	}
+	if (config.kind === 'range-number') {
+		bodyHtml = `
+			<div class="grid-filter-menu-range">
+				<label class="grid-filter-menu-field">
+					<span>Min ${utils.escapeHtml(config.unit)}</span>
+					<input type="number" min="0" step="1" data-filter-popup-field="${field}" data-filter-popup-key="${config.minKey}" value="${utils.escapeHtml(values[config.minKey] || '')}" placeholder="0">
+				</label>
+				<label class="grid-filter-menu-field">
+					<span>Max ${utils.escapeHtml(config.unit)}</span>
+					<input type="number" min="0" step="1" data-filter-popup-field="${field}" data-filter-popup-key="${config.maxKey}" value="${utils.escapeHtml(values[config.maxKey] || '')}" placeholder="0">
+				</label>
+			</div>
+		`;
+	}
+	if (config.kind === 'range-date') {
+		bodyHtml = `
+			<div class="grid-filter-menu-range">
+				<label class="grid-filter-menu-field">
+					<span>From</span>
+					<input type="date" data-filter-popup-field="${field}" data-filter-popup-key="${config.minKey}" value="${utils.escapeHtml(values[config.minKey] || '')}">
+				</label>
+				<label class="grid-filter-menu-field">
+					<span>To</span>
+					<input type="date" data-filter-popup-field="${field}" data-filter-popup-key="${config.maxKey}" value="${utils.escapeHtml(values[config.maxKey] || '')}">
+				</label>
+			</div>
+		`;
+	}
+	if (config.kind === 'yes-no') {
+		bodyHtml = `
+			<label class="grid-filter-menu-field">
+				<span>${utils.escapeHtml(config.label)} is</span>
+				<select data-filter-popup-field="${field}" data-filter-popup-key="${config.key}">
+					<option value="" ${!values[config.key] ? 'selected' : ''}>Any</option>
+					<option value="yes" ${values[config.key] === 'yes' ? 'selected' : ''}>Yes</option>
+					<option value="no" ${values[config.key] === 'no' ? 'selected' : ''}>No</option>
+				</select>
+			</label>
+		`;
+	}
+	return `
+		<div class="grid-filter-menu" data-panel-id="${panelId}" data-filter-menu-field="${field}">
+			<div class="grid-filter-menu-title">${utils.escapeHtml(config.label)} Filter</div>
+			${bodyHtml}
+			<div class="grid-filter-menu-actions">
+				<button type="button" class="grid-filter-menu-btn" data-filter-menu-action="clear-field" data-panel-id="${panelId}" data-filter-menu-field="${field}" ${active ? '' : 'disabled'}>Clear</button>
+				<button type="button" class="grid-filter-menu-btn" data-filter-menu-action="clear-all" data-panel-id="${panelId}" ${hasActiveFilterValues(panelId) ? '' : 'disabled'}>Clear All</button>
+			</div>
+		</div>
+	`;
+}
+
+function captureFilterMenuFocusState(panelId) {
+	const overlayEl = document.querySelector(`#w2overlay-${getPanelFilterMenuName(panelId)}`);
+	if (!overlayEl) return null;
+	const activeEl = document.activeElement;
+	if (!activeEl || !overlayEl.contains(activeEl)) return null;
+	return {
+		field: activeEl.getAttribute('data-filter-popup-field') || null,
+		key: activeEl.getAttribute('data-filter-popup-key') || null,
+		attr: activeEl.getAttribute('data-filter-popup-attr') || null,
+		tagName: activeEl.tagName || null,
+		selectionStart: typeof activeEl.selectionStart === 'number' ? activeEl.selectionStart : null,
+		selectionEnd: typeof activeEl.selectionEnd === 'number' ? activeEl.selectionEnd : null
+	};
+}
+
+function restoreFilterMenuFocusState(panelId, focusState) {
+	if (!focusState) return;
+	const overlayEl = document.querySelector(`#w2overlay-${getPanelFilterMenuName(panelId)}`);
+	if (!overlayEl) return;
+	let selector = `[data-filter-popup-field="${focusState.field}"]`;
+	if (focusState.key) {
+		selector += `[data-filter-popup-key="${focusState.key}"]`;
+		}
+	if (focusState.attr) {
+		selector += `[data-filter-popup-attr="${focusState.attr}"]`;
+	}
+	const input = overlayEl.querySelector(selector) || overlayEl.querySelector('input, select');
+	if (!input) return;
+	input.focus();
+	if (focusState.selectionStart !== null && focusState.selectionEnd !== null && typeof input.setSelectionRange === 'function') {
+		input.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
+	}
+}
+
+function focusFirstFilterMenuInput(panelId) {
+	const overlayEl = document.querySelector(`#w2overlay-${getPanelFilterMenuName(panelId)}`);
+	if (!overlayEl) return;
+	const firstInput = overlayEl.querySelector('input, select');
+	if (!firstInput) return;
+	firstInput.focus();
+	if (typeof firstInput.select === 'function' && firstInput.type !== 'date' && firstInput.type !== 'number') {
+		firstInput.select();
+	}
+}
+
+function initColumnFilterMenuControls(panelId) {
+	const overlayEl = document.querySelector(`#w2overlay-${getPanelFilterMenuName(panelId)}`);
+	if (!overlayEl) return;
+	if (overlayEl.dataset.filterMenuInitialized !== 'true') {
+		overlayEl.addEventListener('mousedown', (event) => {
+			event.stopPropagation();
+		});
+		overlayEl.addEventListener('click', (event) => {
+			event.stopPropagation();
+		});
+		overlayEl.dataset.filterMenuInitialized = 'true';
+	}
+	overlayEl.querySelectorAll('[data-filter-menu-action]').forEach(button => {
+		if (button.dataset.filterActionBound === 'true') return;
+		button.addEventListener('click', (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			const action = button.getAttribute('data-filter-menu-action');
+			const field = button.getAttribute('data-filter-menu-field');
+			if (action === 'clear-field' && field) {
+				clearFilterField(panelId, field);
+			}
+			if (action === 'clear-all') {
+				clearPanelFilterInputs(panelId);
+			}
+		});
+		button.dataset.filterActionBound = 'true';
+	});
+	overlayEl.querySelectorAll('[data-filter-popup-field]').forEach(input => {
+		if (input.dataset.filterEscapeBound === 'true') return;
+		input.addEventListener('keydown', (event) => {
+			if (event.key !== 'Escape') return;
+			event.preventDefault();
+			event.stopPropagation();
+			const field = input.getAttribute('data-filter-popup-field');
+			if (!field) return;
+			clearFilterField(panelId, field);
+		});
+		input.dataset.filterEscapeBound = 'true';
+	});
+}
+
+function refreshOpenFilterMenu(panelId) {
+	const state = ensureFilterState(panelId);
+	if (!state?.filterMenuField) {
+		refreshFilterHeaderButtons(panelId);
+		return;
+	}
+	const field = state.filterMenuField;
+	const button = document.querySelector(`#grid_grid-panel-${panelId}_columns .grid-header-filter-btn[data-filter-menu-field="${field}"]`);
+	const overlayName = getPanelFilterMenuName(panelId);
+	const overlay = w2tooltip.get(overlayName);
+	const focusState = captureFilterMenuFocusState(panelId);
+	if (!button) {
+		refreshFilterHeaderButtons(panelId);
+		return;
+	}
+	if (overlay?.displayed) {
+		overlay.anchor = button;
+		w2tooltip.update(overlayName, buildColumnFilterMenuHtml(panelId, field));
+		setTimeout(() => {
+			initColumnFilterMenuControls(panelId);
+			restoreFilterMenuFocusState(panelId, focusState);
+		}, 0);
+	} else {
+		openColumnFilterMenu(panelId, field, button);
+		return;
+	}
+	refreshFilterHeaderButtons(panelId);
+}
+
+function openColumnFilterMenu(panelId, field, anchorEl) {
+	const state = ensureFilterState(panelId);
+	if (!state || !anchorEl || !isColumnFilterable(panelId, field)) return;
+	state.filterMenuField = field;
+	w2tooltip.show({
+		name: getPanelFilterMenuName(panelId),
+		anchor: anchorEl,
+		html: buildColumnFilterMenuHtml(panelId, field),
+		class: 'grid-filter-overlay',
+		position: 'bottom|top',
+		align: 'left',
+		arrowSize: 10,
+		hideOn: ['doc-click'],
+		maxWidth: 360,
+		onShow: () => {
+			setTimeout(() => {
+				initColumnFilterMenuControls(panelId);
+				focusFirstFilterMenuInput(panelId);
+			}, 0);
+		},
+		onUpdate: () => {
+			setTimeout(() => {
+				initColumnFilterMenuControls(panelId);
+			}, 0);
+		},
+		onHide: () => {
+			if (panelState[panelId]) {
+				if (panelState[panelId].reopenFilterMenuField === field) {
+					return;
+				}
+				panelState[panelId].filterMenuField = null;
+			}
+			refreshFilterHeaderButtons(panelId);
+		}
+	});
+	refreshFilterHeaderButtons(panelId);
+	setTimeout(() => {
+		initColumnFilterMenuControls(panelId);
+		focusFirstFilterMenuInput(panelId);
+	}, 0);
+}
+
+function clearFilterField(panelId, field) {
+	const state = ensureFilterState(panelId);
+	if (!state) return;
+	if (field === 'filename') state.filterValues.filename = '';
+	if (field === 'type') state.filterValues.type = '';
+	if (field === 'tags') state.filterValues.tags = '';
+	if (field === 'perms') state.filterValues.perms = '';
+	if (field === 'size') {
+		state.filterValues.sizeMinKb = '';
+		state.filterValues.sizeMaxKb = '';
+	}
+	if (field === 'modified') {
+		state.filterValues.modifiedFrom = '';
+		state.filterValues.modifiedTo = '';
+	}
+	if (field === 'dateCreated') {
+		state.filterValues.createdFrom = '';
+		state.filterValues.createdTo = '';
+	}
+	if (field === 'notes') state.filterValues.notes = '';
+	if (field === 'todo') state.filterValues.todo = '';
+	if (field === 'checksum') state.filterValues.checksum = '';
+	if (field.startsWith('attr_')) {
+		state.filterValues.attributes[field.substring(5)] = '';
+	}
+	applyPanelFilters(panelId);
+}
+
+function recordMatchesFilters(record, values) {
+	if (!matchesTextFilter(record, 'filenameText', values.filename)) return false;
+	if (!matchesTextFilter(record, 'typeRaw', values.type)) return false;
+	if (!matchesTextFilter(record, 'tagsText', values.tags)) return false;
+	if (!matchesTextFilter(record, 'permsText', values.perms)) return false;
+	if (!matchesSizeFilter(record, values)) return false;
+	if (!matchesDateFilter(record.modifiedTimestamp, values.modifiedFrom, values.modifiedTo)) return false;
+	if (!matchesDateFilter(record.dateCreatedTimestamp, values.createdFrom, values.createdTo)) return false;
+	if (!matchesYesNoFilter(record.hasNotes, values.notes)) return false;
+	if (!matchesYesNoFilter(hasTodoItems(record), values.todo)) return false;
+	if (!matchesYesNoFilter(hasChecksumValue(record), values.checksum)) return false;
+	for (const [attrName, attrValue] of Object.entries(values.attributes || {})) {
+		if (!matchesTextFilter(record, `attr_${attrName}`, attrValue)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function applyPanelFilters(panelId) {
+	const state = ensureFilterState(panelId);
+	const grid = state?.w2uiGrid;
+	if (!state || !grid) return;
+	const reopenField = state.filterMenuField;
+	state.reopenFilterMenuField = reopenField || null;
+	const selectedRecids = typeof grid.getSelection === 'function' ? grid.getSelection() : [];
+	let records = state.sourceRecords;
+	if (hasActiveFilterValues(panelId)) {
+		records = state.sourceRecords.filter(record => recordMatchesFilters(record, state.filterValues));
+	}
+	state.filterVisible = hasActiveFilterValues(panelId);
+	grid.records = records;
+	grid.total = records.length;
+	grid.refresh();
+	const visibleRecids = new Set(records.map(record => record.recid));
+	const visibleSelection = selectedRecids.filter(recid => visibleRecids.has(recid));
+	if (typeof grid.selectNone === 'function') {
+		grid.selectNone();
+	}
+	if (visibleSelection.length > 0 && typeof grid.select === 'function') {
+		grid.select(...visibleSelection);
+	}
+	if (reopenField) {
+		state.filterMenuField = reopenField;
+	}
+	refreshOpenFilterMenu(panelId);
+	state.reopenFilterMenuField = null;
+	grid.resize();
+}
+
+function setPanelSourceRecords(panelId, records) {
+	const state = ensureFilterState(panelId);
+	if (!state) return;
+	state.sourceRecords = Array.isArray(records) ? records : [];
+	applyPanelFilters(panelId);
+}
+
+function appendPanelSourceRecords(panelId, records) {
+	if (!records || records.length === 0) return;
+	const state = ensureFilterState(panelId);
+	if (!state) return;
+	state.sourceRecords.push(...records);
+	if (state.filterVisible) {
+		applyPanelFilters(panelId);
+		return;
+	}
+	const grid = state.w2uiGrid;
+	if (!grid) return;
+	grid.add(records);
+	refreshFilterHeaderButtons(panelId);
+}
+
+function clearPanelFilterInputs(panelId) {
+	const state = ensureFilterState(panelId);
+	if (!state) return;
+	state.filterValues = createDefaultFilterValues();
+	syncFilterAttributeValues(panelId);
+	applyPanelFilters(panelId);
+}
+function bindGridFilterControls(panelId) {
+	const selector = `#w2overlay-${getPanelFilterMenuName(panelId)} [data-filter-popup-field]`;
+	$(document)
+		.off(`input.grid-filter-popup-${panelId}`, selector)
+		.off(`change.grid-filter-popup-${panelId}`, selector)
+		.on(`input.grid-filter-popup-${panelId} change.grid-filter-popup-${panelId}`, selector, function () {
+			const state = ensureFilterState(panelId);
+			if (!state) return;
+			const key = this.dataset.filterPopupKey;
+			const attrName = this.dataset.filterPopupAttr ? decodeURIComponent(this.dataset.filterPopupAttr) : null;
+			if (attrName) {
+				state.filterValues.attributes[attrName] = this.value;
+			} else if (key) {
+				state.filterValues[key] = this.value;
+			} else if (this.dataset.filterPopupField) {
+				state.filterValues[this.dataset.filterPopupField] = this.value;
+			}
+			applyPanelFilters(panelId);
+		});
+}
+
 function updateSelectedItemFromRecord(record, panelId) {
 	const nextPath = record ? record.path : null;
 	const nextFilename = record ? (record.filenameRaw || record.filename) : null;
@@ -590,20 +1198,33 @@ function syncRecordTags(record, tagNames) {
 	const tagsRaw = tagNames.length > 0 ? JSON.stringify(tagNames) : null;
 	record.tagsRaw = tagsRaw;
 	record.tags = renderTagBadges(tagsRaw, tagDefs);
+	record.tagsText = getTagFilterText(tagsRaw);
 
 	if (selectedItemState.record && selectedItemState.record.path === record.path && selectedItemState.record.isFolder === record.isFolder) {
 		selectedItemState.record.tagsRaw = tagsRaw;
 		selectedItemState.record.tags = record.tags;
 	}
 
-	for (const state of Object.values(panelState)) {
+	for (const [panelKey, state] of Object.entries(panelState)) {
 		const grid = state.w2uiGrid;
+		if (Array.isArray(state.sourceRecords)) {
+			const cachedRecord = state.sourceRecords.find(candidate => candidate.path === record.path && candidate.isFolder === record.isFolder);
+			if (cachedRecord) {
+				cachedRecord.tagsRaw = tagsRaw;
+				cachedRecord.tags = renderTagBadges(tagsRaw, tagDefs);
+				cachedRecord.tagsText = getTagFilterText(tagsRaw);
+			}
+		}
 		if (!grid || !Array.isArray(grid.records)) continue;
 		const gridRecord = grid.records.find(candidate => candidate.path === record.path && candidate.isFolder === record.isFolder);
 		if (!gridRecord) continue;
 		gridRecord.tagsRaw = tagsRaw;
 		gridRecord.tags = renderTagBadges(tagsRaw, tagDefs);
+		gridRecord.tagsText = getTagFilterText(tagsRaw);
 		grid.refreshRow(gridRecord.recid);
+		if (state.filterVisible) {
+			applyPanelFilters(Number(panelKey));
+		}
 	}
 }
 
@@ -1206,6 +1827,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 		}
 
 		const className = getRowClassName(folder.changeState);
+		const permsText = formatPerms(folder.perms);
 		records.push({
 			recid: state.recidCounter++,
 			icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`, className),
@@ -1215,7 +1837,9 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
 			modified: -new Date(folder.dateModified).getTime(),
 			perms: applyClass(getPermsCell(folder), className),
+			permsText,
 			checksum: applyClass('—', className),
+			checksumValue: null,
 			tags: renderTagBadges(folder.tags || null, tagDefs),
 			tagsRaw: folder.tags || null,
 			type: applyClass(folder.changeState === 'moved' ? '' : (cat ? cat.name || '' : ''), className),
@@ -1238,6 +1862,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 
 		if (file.changeState === 'permError') {
 			const iconSvg = '<img src="assets/icons/file-question.png" style="width: 20px; height: 20px; object-fit: contain;">';
+			const permsText = formatPerms(file.perms);
 			records.push({
 				recid: state.recidCounter++,
 				icon: applyClass(iconSvg, className),
@@ -1250,6 +1875,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 				dateCreated: '—',
 				dateCreatedRaw: null,
 				perms: applyClass(getPermsCell(file), className),
+				permsText,
 				checksum: applyClass('—', className),
 				checksumStatus: null,
 				checksumValue: null,
@@ -1275,6 +1901,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 		const matchedFt = matchFileType(file.filename);
 		const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
 		const ftType = matchedFt ? matchedFt.type : '';
+		const permsText = formatPerms(file.perms);
 		const iconSvg = file.changeState === 'moved'
 			? '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">'
 			: `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
@@ -1291,6 +1918,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			dateCreated: file.dateCreated ? new Date(file.dateCreated).toLocaleDateString() : '-',
 			dateCreatedRaw: file.dateCreated,
 			perms: applyClass(getPermsCell(file), className),
+			permsText,
 			checksum: checksumCell,
 			checksumStatus: file.checksumStatus || null,
 			checksumValue: file.checksumValue || null,
@@ -1324,9 +1952,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 
 function addRecordsToGrid(records, panelId) {
 	if (!records || records.length === 0) return;
-	const grid = panelState[panelId].w2uiGrid;
-	if (!grid) return;
-	grid.add(records);
+	appendPanelSourceRecords(panelId, records);
 }
 
 async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, token, tagDefs = {}, hideDotDotDirectory = false, showFolderNameWithDotEntries = false) {
@@ -1497,6 +2123,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		}
 
 		const state = panelState[panelId];
+		ensureFilterState(panelId);
 		if (state.scanInProgress) {
 			state.scanCancelled = true;
 			state.pendingDirs = [];
@@ -1504,6 +2131,9 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		const previousPath = state.currentPath;
 		state.currentPath = normalizedPath;
+		if (normalizedPath !== previousPath) {
+			resetFilterState(panelId);
+		}
 		if (normalizedPath !== previousPath) {
 			state.depth = 0;
 			const depthInput = document.getElementById(`depth-input-${panelId}`);
@@ -1601,6 +2231,7 @@ function setPanelPathValidity(panelId, isValid) {
 function showMissingDirectoryRecord(panelId) {
 	const grid = panelState[panelId].w2uiGrid;
 	if (!grid) return;
+	panelState[panelId].sourceRecords = [];
 	grid.records = [{
 		recid: 1,
 		icon: '-',
@@ -1624,6 +2255,7 @@ export async function initializeAllGrids() {
 
 async function initializeGridForPanel(panelId) {
 	const gridName = `grid-panel-${panelId}`;
+	hidePanelFilterMenu(panelId);
 
 	if (w2ui && w2ui[gridName]) {
 		w2ui[gridName].destroy();
@@ -1632,13 +2264,13 @@ async function initializeGridForPanel(panelId) {
 	const recordHeight = await getRecordHeight();
 	const state = panelState[panelId];
 	const columns = [
-		{ field: 'icon', text: '', size: '40px', resizable: false, sortable: false, hideable: false },
-		{ field: 'filename', text: 'Name', size: '50%', resizable: true, sortable: true, hideable: false },
-		{ field: 'type', text: 'Type', size: '80px', resizable: true, sortable: true },
-		{ field: 'size', text: 'Size', size: '60px', resizable: true, sortable: true, align: 'right' },
-		{ field: 'dateModified', text: 'Date Modified', size: '150px', resizable: true, sortable: true, hidden: true },
+		{ field: 'icon', text: getColumnHeaderText(panelId, 'icon', ''), size: '40px', resizable: false, sortable: false, hideable: false },
+		{ field: 'filename', text: getColumnHeaderText(panelId, 'filename', 'Name'), size: '50%', resizable: true, sortable: true, hideable: false },
+		{ field: 'type', text: getColumnHeaderText(panelId, 'type', 'Type'), size: '80px', resizable: true, sortable: true },
+		{ field: 'size', text: getColumnHeaderText(panelId, 'size', 'Size'), size: '60px', resizable: true, sortable: true, align: 'right' },
+		{ field: 'dateModified', text: getColumnHeaderText(panelId, 'dateModified', 'Date Modified'), size: '150px', resizable: true, sortable: true, hidden: true },
 		{
-			field: 'modified', text: 'Modified', size: '70px', resizable: true, sortable: true, render: (record) => {
+			field: 'modified', text: getColumnHeaderText(panelId, 'modified', 'Modified'), size: '70px', resizable: true, sortable: true, render: (record) => {
 				if (!record.modified) return '-';
 				const ts = -record.modified;
 				const fullDate = new Date(ts).toLocaleString();
@@ -1646,23 +2278,23 @@ async function initializeGridForPanel(panelId) {
 				return `<span title="${fullDate}" style="cursor: help;">${ago}</span>`;
 			}
 		},
-		{ field: 'dateCreated', text: 'Date Created', size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
-		{ field: 'perms', text: 'Perms', size: '48px', resizable: true, sortable: true },
-		{ field: 'checksum', text: 'Checksum', size: '70px', resizable: true, sortable: false },
+		{ field: 'dateCreated', text: getColumnHeaderText(panelId, 'dateCreated', 'Date Created'), size: '150px', resizable: true, sortable: true, hidden: !state.showDateCreated },
+		{ field: 'perms', text: getColumnHeaderText(panelId, 'perms', 'Perms'), size: '48px', resizable: true, sortable: true },
+		{ field: 'checksum', text: getColumnHeaderText(panelId, 'checksum', 'Checksum'), size: '70px', resizable: true, sortable: false },
 		{
-			field: 'tags', text: 'Tags', size: '190px', resizable: true, sortable: false, render: (record) => {
+			field: 'tags', text: getColumnHeaderText(panelId, 'tags', 'Tags'), size: '190px', resizable: true, sortable: false, render: (record) => {
 				return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true">+</button></div>`;
 			}
 		},
 		{
-			field: 'notes', text: 'Notes', size: '32px', resizable: false, sortable: false, render: (record) => {
+			field: 'notes', text: getColumnHeaderText(panelId, 'notes', 'Notes'), size: '32px', resizable: false, sortable: false, render: (record) => {
 				return record.hasNotes
 					? `<img src="assets/icons/note-book-icon.svg" class="notes-cell-icon notes-cell-icon-image" title="Notes" data-notes-icon="true">`
 					: '<span class="notes-cell-icon notes-cell-icon-add" title="Add notes" data-notes-icon="true">+</span>';
 			}
 		},
 		{
-			field: 'todo', text: 'TODO', size: '60px', resizable: true, sortable: false, render: (record) => {
+			field: 'todo', text: getColumnHeaderText(panelId, 'todo', 'TODO'), size: '60px', resizable: true, sortable: false, render: (record) => {
 				if (!record.todo || record.todo.total === 0) return '';
 				const { completed, total } = record.todo;
 				const cls = completed === total ? 'todo-count todo-count-complete' : 'todo-count todo-count-partial';
@@ -1675,7 +2307,7 @@ async function initializeGridForPanel(panelId) {
 	for (const attrName of attrCols) {
 		columns.push({
 			field: `attr_${attrName}`,
-			text: attrName,
+			text: getColumnHeaderText(panelId, `attr_${attrName}`, attrName),
 			size: '100px',
 			resizable: true,
 			sortable: true,
@@ -1895,6 +2527,9 @@ async function initializeGridForPanel(panelId) {
 			}
 		});
 
+	bindGridFilterControls(panelId);
+	refreshFilterHeaderButtons(panelId);
+
 	updateGridHeader(panelId, 'Loading...');
 	panelState[panelId].w2uiGrid = w2ui[gridName];
 }
@@ -1970,19 +2605,31 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 		}
 
 		const className = getRowClassName(folder.changeState);
+		const permsText = formatPerms(folder.perms);
 		records.push({
 			recid: recordId++,
 			icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`, className),
 			filename: applyClass(folder.displayFilename || folder.filename, className),
 			filenameRaw: folder.filename,
+			filenameText: folder.displayFilename || folder.filename,
 			type: applyClass(folder.changeState === 'moved' ? '' : (category ? category.name || '' : ''), className),
+			typeRaw: folder.changeState === 'moved' ? '' : (category ? category.name || '' : ''),
 			size: applyClass('-', className),
+			sizeBytes: null,
 			dateModified: applyClass(new Date(folder.dateModified).toLocaleString(), className),
 			modified: -new Date(folder.dateModified).getTime(),
+			modifiedTimestamp: new Date(folder.dateModified).getTime(),
+			dateModifiedRaw: folder.dateModified,
+			dateCreated: '-',
+			dateCreatedRaw: null,
+			dateCreatedTimestamp: null,
 			perms: applyClass(getPermsCell(folder), className),
+			permsText,
 			checksum: applyClass('—', className),
+			checksumValue: null,
 			tags: renderTagBadges(folder.tags || null, tagDefs),
 			tagsRaw: folder.tags || null,
+			tagsText: getTagFilterText(folder.tags || null),
 			isFolder: true,
 			path: folder.path,
 			changeState: folder.changeState,
@@ -2010,24 +2657,32 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 		const className = getRowClassName(file.changeState);
 		if (file.changeState === 'permError') {
 			const iconSvg = '<img src="assets/icons/file-question.png" style="width: 20px; height: 20px; object-fit: contain;">';
+			const permsText = formatPerms(file.perms);
 			records.push({
 				recid: recordId++,
 				icon: applyClass(iconSvg, className),
 				filename: applyClass(file.displayFilename || file.filename, className),
 				filenameRaw: file.filename,
+				filenameText: file.displayFilename || file.filename,
 				type: applyClass('', className),
+				typeRaw: '',
 				size: applyClass('—', className),
+				sizeBytes: null,
 				dateModified: applyClass('—', className),
 				modified: null,
+				modifiedTimestamp: null,
 				dateModifiedRaw: null,
 				dateCreated: '—',
 				dateCreatedRaw: null,
+				dateCreatedTimestamp: null,
 				perms: applyClass(getPermsCell(file), className),
+				permsText,
 				checksum: applyClass('—', className),
 				checksumStatus: null,
 				checksumValue: null,
 				tags: '',
 				tagsRaw: null,
+				tagsText: '',
 				isFolder: false,
 				path: file.path,
 				changeState: 'permError',
@@ -2047,6 +2702,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 		const matchedFt = matchFileType(file.filename);
 		const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
 		const ftType = matchedFt ? matchedFt.type : '';
+		const permsText = formatPerms(file.perms);
 		const iconSvg = file.changeState === 'moved'
 			? '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">'
 			: `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
@@ -2056,19 +2712,26 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			icon: applyClass(iconSvg, className),
 			filename: applyClass(file.displayFilename || file.filename, className),
 			filenameRaw: file.filename,
+			filenameText: file.displayFilename || file.filename,
 			type: applyClass(file.changeState === 'moved' ? '' : ftType, className),
+			typeRaw: file.changeState === 'moved' ? '' : ftType,
 			size: applyClass(utils.formatBytes(file.size), className),
+			sizeBytes: Number.isFinite(file.size) ? file.size : null,
 			dateModified: dateModifiedContent,
 			modified: -new Date(file.dateModified).getTime(),
+			modifiedTimestamp: new Date(file.dateModified).getTime(),
 			dateModifiedRaw: file.dateModified,
 			dateCreated: file.dateCreated ? new Date(file.dateCreated).toLocaleDateString() : '-',
 			dateCreatedRaw: file.dateCreated,
+			dateCreatedTimestamp: file.dateCreated ? new Date(file.dateCreated).getTime() : null,
 			perms: applyClass(getPermsCell(file), className),
+			permsText,
 			checksum: checksumCell,
 			checksumStatus: file.checksumStatus || null,
 			checksumValue: file.checksumValue || null,
 			tags: renderTagBadges(file.tags || null, tagDefs),
 			tagsRaw: file.tags || null,
+			tagsText: getTagFilterText(file.tags || null),
 			isFolder: false,
 			path: file.path,
 			changeState: file.changeState,
@@ -2099,8 +2762,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 
 	const grid = state.w2uiGrid;
 	if (grid) {
-		grid.clear();
-		grid.add(records);
+		setPanelSourceRecords(panelId, records);
 	}
 }
 
@@ -2906,6 +3568,7 @@ function shiftPanelDown(panelId) {
 }
 
 function clearPanelState(panelId) {
+	hidePanelFilterMenu(panelId);
 	panelState[panelId] = {
 		currentPath: '',
 		w2uiGrid: null,
@@ -2926,6 +3589,10 @@ function clearPanelState(panelId) {
 		currentItemOpenWith: null,
 		labelsUiState: null,
 		currentItemStats: null,
+		filterVisible: false,
+		filterValues: null,
+		filterMenuField: null,
+		sourceRecords: [],
 		currentAttrColumns: [],
 		currentAttrDefinitions: {}
 	};
