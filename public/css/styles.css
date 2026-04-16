@@ -2338,9 +2338,29 @@ hr {
   background: rgba(198,40,40,0.1);
 }
 
+/* Rename button shown on each group in edit mode */
+.btn-fav-rename-group {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px 4px;
+  font-size: 13px;
+  color: #888;
+  border-radius: 3px;
+  line-height: 1;
+  margin-left: 2px;
+  transition: color 0.15s, background 0.15s;
+}
+.btn-fav-rename-group:hover {
+  color: #1565C0;
+  background: rgba(21,101,192,0.1);
+}
+
 /* w2ui-node-group in edit mode: align editable text with actions */
 .w2ui-node-group:has(.fav-group-edit-input),
-.w2ui-node-group:has(.fav-group-static-text) {
+.w2ui-node-group:has(.fav-group-static-text),
+.w2ui-node-group:has(.btn-fav-rename-group) {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2362,11 +2382,17 @@ hr {
   min-width: 0;
 }
 
+/* Reset float-based margin on node-text; it causes a gap in flex layout */
+#w2ui-favorites .w2ui-node:has(.btn-fav-delete-fav) .w2ui-node-data .w2ui-node-text {
+  margin-left: 0;
+}
+
 #w2ui-favorites .w2ui-node:has(.btn-fav-delete-fav) .w2ui-node-text,
 #w2ui-favorites .w2ui-node-group:has(.fav-group-edit-input) .fav-group-edit-input,
 #w2ui-favorites .w2ui-node-group:has(.fav-group-static-text) .fav-group-static-text,
 #w2ui-favorites .w2ui-node-group:has(.fav-group-edit-input) .w2ui-group-text,
-#w2ui-favorites .w2ui-node-group:has(.fav-group-static-text) .w2ui-group-text {
+#w2ui-favorites .w2ui-node-group:has(.fav-group-static-text) .w2ui-group-text,
+#w2ui-favorites .w2ui-node-group:has(.btn-fav-rename-group) .w2ui-group-text {
   min-width: 0;
   flex: 1;
   overflow: hidden;

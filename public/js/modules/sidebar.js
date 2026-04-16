@@ -25,6 +25,7 @@ let favoritesContextMenuTarget = null;
 let favIconMap = {};
 let favEditMode = false;
 let favoritesEditSnapshot = null;
+let favRefreshDecorateTimer = null;
 let sidebarCollapsed = false;
 const SIDEBAR_COLLAPSED_WIDTH = 50;
 const SIDEBAR_EXPANDED_MIN_WIDTH = 150;
@@ -241,24 +242,42 @@ function decorateFavoritesEditMode() {
           groupEl.appendChild(staticText);
         }
       }
-    } else if (!groupEl.querySelector('.fav-group-edit-input')) {
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = node.text;
-      input.className = 'fav-group-edit-input';
-      input.dataset.nodeId = nodeId;
-      input.addEventListener('click', e => e.stopPropagation());
-      input.addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-          void exitFavoritesEditMode({ saveChanges: true });
-        }
+    } else if (!groupEl.querySelector('.fav-group-edit-input') && !groupEl.querySelector('.btn-fav-rename-group')) {
+      // Add rename button; input is created on demand when clicked
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'btn-fav-rename-group';
+      renameBtn.innerHTML = '&#9998;';
+      renameBtn.title = 'Rename group';
+      renameBtn.dataset.nodeId = nodeId;
+      renameBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (node.pendingDelete || node.pendingDeleteInherited) return;
+        const textEl = groupEl.querySelector('.w2ui-group-text');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = node.text;
+        input.className = 'fav-group-edit-input';
+        input.dataset.nodeId = nodeId;
+        input.addEventListener('click', ev => ev.stopPropagation());
+        input.addEventListener('keydown', ev => {
+          if (ev.key === 'Enter') {
+            void exitFavoritesEditMode({ saveChanges: true });
+          }
+          ev.stopPropagation();
+        });
+        if (textEl) {
+          textEl.replaceWith(input);
+        } else {
+          groupEl.insertBefore(input, renameBtn);
+        }
+        renameBtn.remove();
+        input.focus();
+        input.select();
       });
-
       if (existingTextEl) {
-        existingTextEl.replaceWith(input);
+        existingTextEl.after(renameBtn);
       } else {
-        groupEl.appendChild(input);
+        groupEl.appendChild(renameBtn);
       }
     }
 
@@ -348,7 +367,7 @@ function syncSidebarCollapsedUi() {
 
   if (sidebarCollapsed) {
     if (favEditMode) {
-      void exitFavoritesEditMode();
+      void exitFavoritesEditMode({ saveChanges: false });
     }
     $sidebar.addClass('sidebar-collapsed');
     $('#btn-sidebar-collapse').html('&#10095;').attr('title', 'Expand sidebar');
@@ -684,7 +703,8 @@ async function initializeFavoritesSidebar() {
           await addFavoritesFromSelection();
           return;
         }
-        // Navigate to directory on click
+        // Navigate to directory on click (not in edit mode)
+        if (favEditMode) return;
         const node = w2uiFavoritesSidebar.get(event.target);
         if (node && node.path && !node.disabled) {
           await navigateToDirectory(node.path, 1);
@@ -699,8 +719,19 @@ async function initializeFavoritesSidebar() {
           showFavoritesContextMenu(event.clientX, event.clientY, node.group ? 'group' : 'item');
         }
       },
+      onRefresh(event) {
+        if (!favEditMode) return;
+        const orig = event.onComplete;
+        event.onComplete = () => {
+          if (orig) orig.call(this, event);
+          clearTimeout(favRefreshDecorateTimer);
+          favRefreshDecorateTimer = setTimeout(() => {
+            if (favEditMode) decorateFavoritesEditMode();
+          }, 0);
+        };
+      },
       onDragStart(event) {
-        if (event.detail.node.id.startsWith("empty-")) {
+        if (!favEditMode || event.detail.node.id.startsWith("empty-")) {
           event.preventDefault()
         }
       },
@@ -747,6 +778,11 @@ async function initializeFavoritesSidebar() {
       }
     });
 
+    // Disable any (empty) placeholder nodes that were loaded from saved state
+    visitFavoriteNodes(w2uiFavoritesSidebar.nodes, node => {
+      if (node.id?.startsWith('empty-')) w2uiFavoritesSidebar.disable(node.id);
+    });
+
     applyFavoriteTooltips();
     applyFavoritesHeaderState();
 
@@ -780,7 +816,7 @@ async function convertFavoritesToW2UINodes(favorites, groupPath = []) {
         icon: 'fav-icon-group',
         group: true,
         expanded: !fav.collapsed,
-        nodes: groupNodes
+        nodes: groupNodes.length > 0 ? groupNodes : [{ id: `empty-${nodeId}`, text: '(empty)' }]
       });
     } else {
       // Fetch the category-styled folder icon for this path
@@ -1221,10 +1257,6 @@ function enterFavoritesEditMode() {
   favEditMode = true;
   $("#w2ui-favorites").addClass('edit-mode');
 
-  // Disable dragging of items while in edit mode to prevent conflicts with renaming and deleting
-  setFavoriteItemsDisabled(true);
-  w2uiFavoritesSidebar.reorder = false;
-
   if (!w2uiFavoritesSidebar.get('edit-AddGroup')) {
     w2uiFavoritesSidebar.add([
       { id: 'edit-AddGroup', text: 'Add Group', icon: 'w2ui-icon-plus' },
@@ -1276,13 +1308,9 @@ async function exitFavoritesEditMode({ saveChanges = true } = {}) {
   container.querySelectorAll('.btn-fav-delete-group').forEach(trashBtn => trashBtn.remove());
   container.querySelectorAll('.btn-fav-delete-fav').forEach(trashBtn => trashBtn.remove());
   container.querySelectorAll('.btn-fav-toggle-group').forEach(toggleBtn => toggleBtn.remove());
+  container.querySelectorAll('.btn-fav-rename-group').forEach(renameBtn => renameBtn.remove());
 
   w2uiFavoritesSidebar.remove('edit-AddGroup', 'edit-AddFav');
-
-  // Re-enable dragging of items after exiting edit mode
-  setFavoriteItemsDisabled(false);
-  w2uiFavoritesSidebar.unlock();
-  w2uiFavoritesSidebar.reorder = true;
 
   if (saveChanges) {
     await persistW2UINodes();
