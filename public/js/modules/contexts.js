@@ -385,7 +385,10 @@ async function handleContextMenuClick(event, panelId) {
 	if (menuItemId.startsWith('acknowledge-orphan-')) {
 		const orphanId = parseInt(menuItemId.replace('acknowledge-orphan-', ''));
 		try {
-			const result = await window.electronAPI.acknowledgeOrphan(orphanId);
+			const orphanRecord = selectedRecords.find(record => record.orphan_id === orphanId);
+			const result = orphanRecord?.orphan_type === 'dir'
+				? await window.electronAPI.acknowledgeDirOrphan(orphanId)
+				: await window.electronAPI.acknowledgeOrphan(orphanId);
 			if (result.success) {
 				const state = panelState[activePanelId];
 				await panels.navigateToDirectory(state.currentPath, activePanelId);
@@ -401,7 +404,9 @@ async function handleContextMenuClick(event, panelId) {
 		const orphanRecords = selectedRecords.filter(record => record.orphan_id);
 		try {
 			for (const record of orphanRecords) {
-				const result = await window.electronAPI.acknowledgeOrphan(record.orphan_id);
+				const result = record.orphan_type === 'dir'
+					? await window.electronAPI.acknowledgeDirOrphan(record.orphan_id)
+					: await window.electronAPI.acknowledgeOrphan(record.orphan_id);
 				if (!result.success) {
 					alert(`Error removing orphan ${record.filename}: ${result.error}`);
 					break;

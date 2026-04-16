@@ -13,11 +13,18 @@ import { w2ui, w2grid } from './vendor/w2ui.es6.min.js';
 import { showFormError, showFormSuccess, clearFormStatus } from './utils.js';
 
 const EVENT_LABELS = {
+  INITIAL: 'INITIAL',
   fileAdded: 'File Added',
   fileRemoved: 'File Removed',
   fileRenamed: 'File Renamed',
   fileModified: 'File Modified',
   fileChanged: 'File Changed',
+  dirSeen: 'Directory Seen',
+  dirOpened: 'Directory Opened',
+  dirObserved: 'Directory Observed',
+  dirAdded: 'Directory Added',
+  dirMoved: 'Directory Moved',
+  dirOrphaned: 'Directory Orphaned',
 };
 
 const ALL_EVENT_TYPES = Object.keys(EVENT_LABELS);
@@ -605,7 +612,7 @@ async function renderAlertRuleEditorForm(rule) {
       ${ALL_EVENT_TYPES.map(eventType => `
         <label>
           <input type="checkbox" name="rule-event" value="${eventType}" ${ruleEvents.includes(eventType) ? 'checked' : ''}>
-          ${EVENT_LABELS[eventType]}
+          <span${eventType === 'INITIAL' ? ' title="INITIAL only applies to the first scan of a directory and the items discovered during that initial scan."' : ''}>${EVENT_LABELS[eventType]}</span>
         </label>`).join('')}
     </div>
   </div>`;
@@ -894,6 +901,8 @@ export async function loadMonitoringSettings() {
   $('#alerts-settings-scheduler-interval').val(settings.monitoring_scheduler_interval || 15);
   $('#alerts-settings-max-dirs-per-pass').val(settings.monitoring_max_dirs_per_pass || 10);
   $('#alerts-settings-inter-scan-delay').val(settings.monitoring_inter_scan_delay_ms || 50);
+  $('#alerts-settings-observation-dead-time-value').val(settings.monitoring_observation_dead_time_value || 1);
+  $('#alerts-settings-observation-dead-time-unit').val(settings.monitoring_observation_dead_time_unit || 'hours');
 }
 
 export async function saveMonitoringSettings() {
@@ -902,15 +911,20 @@ export async function saveMonitoringSettings() {
     let schedulerInterval = parseInt($('#alerts-settings-scheduler-interval').val() || '15', 10);
     let maxDirsPerPass = parseInt($('#alerts-settings-max-dirs-per-pass').val() || '10', 10);
     let interScanDelay = parseInt($('#alerts-settings-inter-scan-delay').val() || '50', 10);
+    let observationDeadTimeValue = parseInt($('#alerts-settings-observation-dead-time-value').val() || '1', 10);
+    const observationDeadTimeUnit = ($('#alerts-settings-observation-dead-time-unit').val() || 'hours').trim();
 
     if (Number.isNaN(schedulerInterval) || schedulerInterval < 5) schedulerInterval = 5;
     if (Number.isNaN(maxDirsPerPass) || maxDirsPerPass < 1) maxDirsPerPass = 1;
     if (Number.isNaN(interScanDelay) || interScanDelay < 0) interScanDelay = 0;
+    if (Number.isNaN(observationDeadTimeValue) || observationDeadTimeValue < 1) observationDeadTimeValue = 1;
 
     settings.monitoring_enabled = $('#alerts-settings-monitoring-enabled').is(':checked');
     settings.monitoring_scheduler_interval = schedulerInterval;
     settings.monitoring_max_dirs_per_pass = maxDirsPerPass;
     settings.monitoring_inter_scan_delay_ms = interScanDelay;
+    settings.monitoring_observation_dead_time_value = observationDeadTimeValue;
+    settings.monitoring_observation_dead_time_unit = ['minutes', 'hours', 'days'].includes(observationDeadTimeUnit) ? observationDeadTimeUnit : 'hours';
 
     const result = await window.electronAPI.saveSettings(settings);
     if (!result || result.success === false) {

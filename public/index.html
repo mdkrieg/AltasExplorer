@@ -1113,6 +1113,19 @@
               </div>
             </div>
 
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="font-weight: bold; font-size: 13px;">No-Change Observation Dead Time</div>
+              <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <input id="alerts-settings-observation-dead-time-value" type="number" min="1" max="999" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 100px;">
+                <select id="alerts-settings-observation-dead-time-unit" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; min-width: 120px;">
+                  <option value="minutes">minutes</option>
+                  <option value="hours">hours</option>
+                  <option value="days">days</option>
+                </select>
+                <span style="color: #666; font-size: 12px;">minimum time before logging another no-change directory observation</span>
+              </div>
+            </div>
+
             <div style="display: flex; gap: 10px; align-items: center; padding-top: 8px; border-top: 1px solid #eee;">
               <button id="btn-alerts-settings-save" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save Settings</button>
               <span style="color: #666; font-size: 12px;">Changes apply to the monitoring scheduler immediately.</span>

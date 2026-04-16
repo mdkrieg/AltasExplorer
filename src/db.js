@@ -55,16 +55,29 @@ class DatabaseService {
         UNIQUE(inode, dir_id)
       );
 
+      CREATE TABLE IF NOT EXISTS dir_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dir_id INTEGER NOT NULL,
+        eventType TEXT NOT NULL,
+        changeValue TEXT NOT NULL,
+        detectedAt INTEGER NOT NULL,
+        acknowledgedAt INTEGER,
+        FOREIGN KEY (dir_id) REFERENCES dirs(id)
+      );
+
       CREATE TABLE IF NOT EXISTS file_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         inode TEXT NOT NULL,
         dir_id INTEGER NOT NULL,
         file_id INTEGER NOT NULL,
+        dir_history_id INTEGER,
+        eventType TEXT NOT NULL DEFAULT 'legacy',
         changeValue TEXT NOT NULL,
         detectedAt INTEGER,
         acknowledgedAt INTEGER,
         FOREIGN KEY (dir_id) REFERENCES dirs(id),
-        FOREIGN KEY (file_id) REFERENCES files(id)
+        FOREIGN KEY (file_id) REFERENCES files(id),
+        FOREIGN KEY (dir_history_id) REFERENCES dir_history(id)
       );
 
       CREATE TABLE IF NOT EXISTS orphans (
@@ -73,6 +86,18 @@ class DatabaseService {
         dir_id INTEGER NOT NULL,
         name TEXT NOT NULL,
         new_dir_id INTEGER,
+        FOREIGN KEY (dir_id) REFERENCES dirs(id),
+        FOREIGN KEY (new_dir_id) REFERENCES dirs(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS dir_orphans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        parent_dir_id INTEGER NOT NULL,
+        dir_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        new_dir_id INTEGER,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (parent_dir_id) REFERENCES dirs(id),
         FOREIGN KEY (dir_id) REFERENCES dirs(id),
         FOREIGN KEY (new_dir_id) REFERENCES dirs(id)
       );
@@ -124,8 +149,11 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_dirs_last_observed_at ON dirs(last_observed_at);
       CREATE INDEX IF NOT EXISTS idx_files_dir_id ON files(dir_id);
       CREATE INDEX IF NOT EXISTS idx_files_inode ON files(inode);
+      CREATE INDEX IF NOT EXISTS idx_dir_history_dir_id ON dir_history(dir_id);
       CREATE INDEX IF NOT EXISTS idx_file_history_inode ON file_history(inode);
       CREATE INDEX IF NOT EXISTS idx_file_history_dir_id ON file_history(dir_id);
+      CREATE INDEX IF NOT EXISTS idx_file_history_dir_history_id ON file_history(dir_history_id);
+      CREATE INDEX IF NOT EXISTS idx_dir_orphans_parent_dir_id ON dir_orphans(parent_dir_id);
       CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged_at ON alerts(acknowledged_at);
     `;
 
@@ -148,6 +176,16 @@ class DatabaseService {
     const hasAttributesCol = fileCols.some(col => col.name === 'attributes');
     if (!hasAttributesCol) {
       this.db.exec('ALTER TABLE files ADD COLUMN attributes TEXT');
+    }
+
+    const fileHistoryCols = this.db.prepare('PRAGMA table_info(file_history)').all();
+    const hasDirHistoryIdCol = fileHistoryCols.some(col => col.name === 'dir_history_id');
+    if (!hasDirHistoryIdCol) {
+      this.db.exec('ALTER TABLE file_history ADD COLUMN dir_history_id INTEGER');
+    }
+    const hasEventTypeCol = fileHistoryCols.some(col => col.name === 'eventType');
+    if (!hasEventTypeCol) {
+      this.db.exec("ALTER TABLE file_history ADD COLUMN eventType TEXT NOT NULL DEFAULT 'legacy'");
     }
 
     const alertRuleCols = this.db.prepare('PRAGMA table_info(alert_rules)').all();
@@ -271,6 +309,10 @@ class DatabaseService {
     return stmt.get(dirname);
   }
 
+  getDirectoryByInode(inode) {
+    return this.db.prepare('SELECT * FROM dirs WHERE inode = ? LIMIT 1').get(inode);
+  }
+
   getParentDirectoryId(dirname) {
     const parentPath = path.dirname(dirname);
     if (!parentPath || parentPath === dirname) {
@@ -315,6 +357,11 @@ class DatabaseService {
   updateDirectoryObservation(dirname, source, observedAt = Date.now()) {
     const stmt = this.db.prepare('UPDATE dirs SET last_observed_at = ?, last_observed_source = ? WHERE dirname = ?');
     return stmt.run(observedAt, source || null, dirname);
+  }
+
+  updateDirectoryPath(dirId, dirname, parentId = null) {
+    const stmt = this.db.prepare('UPDATE dirs SET dirname = ?, parent_id = ? WHERE id = ?');
+    return stmt.run(dirname, parentId, dirId);
   }
 
   updateDirectoryParent(dirname, parentId) {
@@ -382,6 +429,10 @@ class DatabaseService {
       SELECT * FROM files WHERE dir_id = ? AND filename = ?
     `);
     return stmt.get(dir_id, filename);
+  }
+
+  getDirectoryChildren(parentDirId) {
+    return this.db.prepare('SELECT * FROM dirs WHERE parent_id = ? ORDER BY dirname ASC').all(parentDirId);
   }
 
   /**
@@ -649,7 +700,7 @@ class DatabaseService {
    * Allowed keys: filename, dateModified, filesizeBytes, checksumValue, checksumStatus, dirname, category, status
    */
   validateChangeValue(changeValue) {
-    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'dirname', 'category', 'status', 'mode'];
+    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'dirname', 'category', 'status', 'mode', 'previousFilename', 'source', 'hasChanges', 'fileChanges', 'dirChanges', 'newPath', 'oldPath', 'parentDirname'];
     
     // Check if it's valid JSON
     let obj;
@@ -679,25 +730,83 @@ class DatabaseService {
     return obj;
   }
 
+  validateDirHistoryChangeValue(changeValue) {
+    const ALLOWED_KEYS = ['dirname', 'source', 'hasChanges', 'fileChanges', 'dirChanges', 'status', 'category', 'oldPath', 'newPath', 'parentDirname'];
+
+    let obj;
+    try {
+      obj = typeof changeValue === 'string' ? JSON.parse(changeValue) : changeValue;
+    } catch (err) {
+      throw new Error(`Invalid JSON in dir history changeValue: ${err.message}`);
+    }
+
+    const keys = Object.keys(obj || {});
+    for (const key of keys) {
+      if (!ALLOWED_KEYS.includes(key)) {
+        throw new Error(`Invalid key in dir history changeValue: ${key}. Allowed keys: ${ALLOWED_KEYS.join(', ')}`);
+      }
+    }
+
+    if (keys.length === 0) {
+      throw new Error('dir history changeValue cannot be empty');
+    }
+
+    return obj;
+  }
+
+  insertDirHistory(dirId, eventType, changeValue, detectedAt = Date.now()) {
+    const validatedChange = this.validateDirHistoryChangeValue(changeValue);
+    const changeValueJson = typeof changeValue === 'string' ? changeValue : JSON.stringify(validatedChange);
+
+    return this.db.prepare(`
+      INSERT INTO dir_history (dir_id, eventType, changeValue, detectedAt)
+      VALUES (?, ?, ?, ?)
+    `).run(dirId, eventType, changeValueJson, detectedAt);
+  }
+
+  getDirectoryHistory(dirId) {
+    return this.db.prepare(`
+      SELECT * FROM dir_history WHERE dir_id = ? ORDER BY detectedAt DESC, id DESC
+    `).all(dirId);
+  }
+
+  getLatestDirectoryHistory(dirId) {
+    return this.db.prepare(`
+      SELECT * FROM dir_history WHERE dir_id = ? ORDER BY detectedAt DESC, id DESC LIMIT 1
+    `).get(dirId);
+  }
+
+  getLatestDirectoryObservation(dirId) {
+    return this.db.prepare(`
+      SELECT *
+      FROM dir_history
+      WHERE dir_id = ? AND eventType = 'dirOpened'
+      ORDER BY detectedAt DESC, id DESC
+      LIMIT 1
+    `).get(dirId);
+  }
+
   /**
    * Insert a file history record
    * @param {string} inode - File inode
    * @param {number} dir_id - Directory ID
    * @param {number} file_id - File ID (foreign key to files table)
+   * @param {string} eventType - Event type identifier
    * @param {object|string} changeValue - JSON object or string with file metadata/changes
+   * @param {number|null} dirHistoryId - Optional linked directory history row
    * @returns {object} Insert result with lastID
    */
-  insertFileHistory(inode, dir_id, file_id, changeValue) {
+  insertFileHistory(inode, dir_id, file_id, eventType, changeValue, dirHistoryId = null) {
     // Validate and stringify changeValue if needed
     const validatedChange = this.validateChangeValue(changeValue);
     const changeValueJson = typeof changeValue === 'string' ? changeValue : JSON.stringify(validatedChange);
 
     const stmt = this.db.prepare(`
-      INSERT INTO file_history (inode, dir_id, file_id, changeValue, detectedAt)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO file_history (inode, dir_id, file_id, dir_history_id, eventType, changeValue, detectedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
-    return stmt.run(inode, dir_id, file_id, changeValueJson, Date.now());
+    return stmt.run(inode, dir_id, file_id, dirHistoryId, eventType, changeValueJson, Date.now());
   }
 
   /**
@@ -718,11 +827,16 @@ class DatabaseService {
    * @param {string} inode - File inode
    * @returns {object|null} Most recent history record
    */
-  getLatestFileHistory(inode) {
-    const stmt = this.db.prepare(`
-      SELECT * FROM file_history WHERE inode = ? ORDER BY detectedAt DESC LIMIT 1
-    `);
-    return stmt.get(inode);
+  getLatestFileHistory(inode, dirId = null) {
+    if (dirId === null || typeof dirId === 'undefined') {
+      return this.db.prepare(`
+        SELECT * FROM file_history WHERE inode = ? ORDER BY detectedAt DESC, id DESC LIMIT 1
+      `).get(inode);
+    }
+
+    return this.db.prepare(`
+      SELECT * FROM file_history WHERE inode = ? AND dir_id = ? ORDER BY detectedAt DESC, id DESC LIMIT 1
+    `).get(inode, dirId);
   }
 
   /**
@@ -730,11 +844,25 @@ class DatabaseService {
    * @param {string} inode - File inode
    * @returns {array} Array of history records
    */
-  getFileHistory(inode) {
-    const stmt = this.db.prepare(`
-      SELECT * FROM file_history WHERE inode = ? ORDER BY detectedAt DESC
-    `);
-    return stmt.all(inode);
+  getFileHistory(inode, dirId = null) {
+    if (dirId === null || typeof dirId === 'undefined') {
+      return this.db.prepare(`
+        SELECT * FROM file_history WHERE inode = ? ORDER BY detectedAt DESC, id DESC
+      `).all(inode);
+    }
+
+    return this.db.prepare(`
+      SELECT * FROM file_history WHERE inode = ? AND dir_id = ? ORDER BY detectedAt DESC, id DESC
+    `).all(inode, dirId);
+  }
+
+  findDirectoryInOtherParents(inode, excludeParentId) {
+    return this.db.prepare(`
+      SELECT *
+      FROM dirs
+      WHERE inode = ? AND COALESCE(parent_id, -1) != COALESCE(?, -1)
+      LIMIT 1
+    `).get(inode, excludeParentId);
   }
 
   /**
@@ -802,6 +930,29 @@ class DatabaseService {
       SELECT * FROM orphans WHERE dir_id = ?
     `);
     return stmt.all(dir_id);
+  }
+
+  createDirOrphan(parentDirId, dirId, name) {
+    return this.db.prepare(`
+      INSERT INTO dir_orphans (parent_dir_id, dir_id, name, new_dir_id, created_at)
+      VALUES (?, ?, ?, NULL, ?)
+    `).run(parentDirId, dirId, name, Date.now());
+  }
+
+  updateDirOrphanNewLocation(orphanId, newDirId) {
+    return this.db.prepare(`
+      UPDATE dir_orphans SET new_dir_id = ? WHERE id = ?
+    `).run(newDirId, orphanId);
+  }
+
+  deleteDirOrphan(orphanId) {
+    return this.db.prepare('DELETE FROM dir_orphans WHERE id = ?').run(orphanId);
+  }
+
+  getDirOrphans(parentDirId) {
+    return this.db.prepare(`
+      SELECT * FROM dir_orphans WHERE parent_dir_id = ?
+    `).all(parentDirId);
   }
 
   // ============================================

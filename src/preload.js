@@ -157,6 +157,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getExifData: (filePath) => ipcRenderer.invoke('get-exif-data', filePath),
   
   // File history operations
+  getItemHistory: (item) => ipcRenderer.invoke('get-item-history', item),
   getFileHistory: (inode) => ipcRenderer.invoke('get-file-history', inode),
   getFileRecordByPath: (filePath) => ipcRenderer.invoke('get-file-record-by-path', { filePath }),
 
@@ -185,6 +186,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),
+
+  acknowledgeDirOrphan: (orphanId) => ipcRenderer.invoke('acknowledge-dir-orphan', orphanId),
 
   // Background refresh (backend-driven)
   startBackgroundRefresh: (enabled, interval) => ipcRenderer.invoke('start-background-refresh', { enabled, interval }),

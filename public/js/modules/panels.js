@@ -1224,8 +1224,9 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			changeState: folder.changeState,
 			inode: folder.inode,
 			initials: folder.initials || null,
-			dir_id: null,
+			dir_id: folder.dir_id || null,
 			orphan_id: folder.orphan_id || null,
+			orphan_type: folder.orphan_id ? 'dir' : null,
 			new_dir_id: folder.new_dir_id || null,
 			hasNotes: folder.hasNotes || false,
 			todo: folder.todoCounts || null
@@ -1261,6 +1262,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 				inode: file.inode,
 				dir_id: file.dir_id || null,
 				orphan_id: null,
+				orphan_type: null,
 				new_dir_id: null,
 				hasNotes: file.hasNotes || false,
 				todo: file.todoCounts || null
@@ -1301,6 +1303,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			inode: file.inode,
 			dir_id: file.dir_id || null,
 			orphan_id: file.orphan_id || null,
+			orphan_type: file.orphan_id ? 'file' : null,
 			new_dir_id: file.new_dir_id || null,
 			hasNotes: file.hasNotes || false,
 			todo: file.todoCounts || null
@@ -1985,8 +1988,9 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			changeState: folder.changeState,
 			inode: folder.inode,
 			initials: folder.initials || null,
-			dir_id: null,
+			dir_id: folder.dir_id || null,
 			orphan_id: folder.orphan_id || null,
+			orphan_type: folder.orphan_id ? 'dir' : null,
 			new_dir_id: folder.new_dir_id || null,
 			hasNotes: folder.hasNotes || false,
 			todo: folder.todoCounts || null
@@ -2030,6 +2034,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 				inode: file.inode,
 				dir_id: file.dir_id || null,
 				orphan_id: null,
+				orphan_type: null,
 				new_dir_id: null,
 				hasNotes: file.hasNotes || false,
 				todo: file.todoCounts || null
@@ -2070,6 +2075,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			inode: file.inode,
 			dir_id: file.dir_id || null,
 			orphan_id: file.orphan_id || null,
+			orphan_type: file.orphan_id ? 'file' : null,
 			new_dir_id: file.new_dir_id || null,
 			hasNotes: file.hasNotes || false,
 			todo: file.todoCounts || null
@@ -3674,7 +3680,11 @@ export async function updateItemPropertiesPage(panelId) {
 		applyCollapseState('history', $historySection);
 		const $historyTable = $panel.find('.item-props-history-table').empty();
 		try {
-			const historyResult = await window.electronAPI.getFileHistory(stats.inode);
+			const historyResult = await window.electronAPI.getItemHistory({
+				isDirectory: !!stats.isDirectory,
+				inode: stats.inode,
+				dirId: stats.dir_id || null
+			});
 			if (historyResult && historyResult.success && historyResult.data && historyResult.data.length > 0) {
 				const completeState = buildCompleteFileState(historyResult.data, selectedItemState.record);
 				const historyRows = formatHistoryData(historyResult.data, completeState);

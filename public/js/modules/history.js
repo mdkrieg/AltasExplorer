@@ -6,6 +6,23 @@
 import * as utils from './utils.js';
 import { w2ui } from './vendor/w2ui.es6.min.js';
 
+const EVENT_LABELS = {
+  INITIAL: 'INITIAL',
+  dirSeen: 'Directory Seen',
+  dirOpened: 'Directory Opened',
+  dirObserved: 'Directory Observed',
+  dirAdded: 'Directory Added',
+  dirMoved: 'Directory Moved',
+  dirOrphaned: 'Directory Orphaned',
+  dirManual: 'Directory Manual Event',
+  fileAdded: 'File Added',
+  fileRemoved: 'File Removed',
+  fileRenamed: 'File Renamed',
+  fileModified: 'File Modified',
+  fileChanged: 'File Changed',
+  categoryChanged: 'Category Changed'
+};
+
 export function hideHistoryModal() {
   $('#history-modal').hide();
   if (w2ui['history-grid']) {
@@ -15,10 +32,14 @@ export function hideHistoryModal() {
 
 export async function openHistoryModal(selectedRecord) {
   try {
-    const result = await window.electronAPI.getFileHistory(selectedRecord.inode);
+    const result = await window.electronAPI.getItemHistory({
+      isDirectory: !!selectedRecord.isFolder,
+      inode: selectedRecord.inode,
+      dirId: selectedRecord.dir_id || null
+    });
 
     if (!result.success) {
-      alert('Error loading file history: ' + result.error);
+      alert('Error loading history: ' + result.error);
       return;
     }
 
@@ -58,52 +79,13 @@ export async function openHistoryModal(selectedRecord) {
 }
 
 export function formatHistoryData(historyRecords, fullState) {
-  const keyPriority = {
-    dirname: 0,
-    category: 0,
-    checksumValue: 1,
-    filename: 2,
-    dateModified: 3,
-    size: 4,
-    filesizeBytes: 4,
-    status: 5
-  };
-
-  return historyRecords.map((record, index) => {
-    let changeKeyDisplay = '-';
-
-    try {
-      if (index === historyRecords.length - 1) {
-        changeKeyDisplay = 'INITIAL';
-      } else {
-        const parsed = typeof record.changeValue === 'string'
-          ? JSON.parse(record.changeValue)
-          : record.changeValue;
-
-        if (parsed && typeof parsed === 'object') {
-          const sortedKeys = Object.keys(parsed).sort((left, right) => {
-            const priorityLeft = keyPriority[left] ?? 999;
-            const priorityRight = keyPriority[right] ?? 999;
-            return priorityLeft - priorityRight;
-          });
-
-          if (sortedKeys.length > 0) {
-            changeKeyDisplay = sortedKeys[0];
-          }
-        }
-      }
-    } catch {
-      changeKeyDisplay = '-';
-    }
-
-    return {
+  return historyRecords.map((record, index) => ({
       recid: index + 1,
       detectedAt: record.detectedAt ? new Date(record.detectedAt).toLocaleString() : '-',
-      changeValue: changeKeyDisplay,
+      changeValue: EVENT_LABELS[record.eventType] || record.eventType || '-',
       path: fullState.path || '-',
       _rawData: record
-    };
-  });
+    }));
 }
 
 export function buildCompleteFileState(historyRecords, selectedRecord) {

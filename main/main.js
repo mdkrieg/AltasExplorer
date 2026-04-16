@@ -726,7 +726,8 @@ ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName, 
       if (dirEntry) {
         const dotFile = db.getFileByInode(dirEntry.inode, dirEntry.id);
         if (dotFile) {
-          db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, { category: categoryName });
+          const dirHistoryId = createStandaloneDirHistory(dirEntry, 'category-assignment', 0, 1, 'categoryChanged');
+          db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, 'categoryChanged', { category: categoryName }, dirHistoryId);
         }
       }
     } catch (histErr) {
@@ -754,7 +755,8 @@ ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryNam
           if (dirEntry) {
             const dotFile = db.getFileByInode(dirEntry.inode, dirEntry.id);
             if (dotFile) {
-              db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, { category: categoryName });
+                const dirHistoryId = createStandaloneDirHistory(dirEntry, 'category-assignment', 0, 1, 'categoryChanged');
+                db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, 'categoryChanged', { category: categoryName }, dirHistoryId);
             }
           }
         } catch (histErr) {
@@ -1929,6 +1931,96 @@ function doesEventMatchRules(rules, eventType, category, dirTagsJson, fileAttrib
   return null;
 }
 
+function getObservationSource(isManualNavigation, isBackgroundRefresh, options = {}) {
+  return options.observationSource || (isManualNavigation ? 'manual' : isBackgroundRefresh ? 'background-refresh' : 'scan');
+}
+
+function getMonitoringObservationDeadTimeMs() {
+  const settings = categories.getSettings();
+  const value = Math.max(1, Number(settings.monitoring_observation_dead_time_value) || 1);
+  const unit = settings.monitoring_observation_dead_time_unit || 'hours';
+
+  switch (unit) {
+    case 'minutes':
+      return value * 60 * 1000;
+    case 'days':
+      return value * 24 * 60 * 60 * 1000;
+    case 'hours':
+    default:
+      return value * 60 * 60 * 1000;
+  }
+}
+
+function ensureDirectoryRecord(dirPath, inode, categoryName = 'Default') {
+  const existingByPath = db.getDirectory(dirPath);
+  if (existingByPath) {
+    db.upsertDirectory(
+      dirPath,
+      inode,
+      existingByPath.category || categoryName,
+      existingByPath.description || null,
+      existingByPath.initials || null,
+      existingByPath.parent_id,
+      existingByPath.category_force || 0
+    );
+    db.updateDirectoryParent(dirPath, db.getParentDirectoryId(dirPath));
+    return { dir: db.getDirectory(dirPath), isNew: false, movedFrom: null };
+  }
+
+  const existingByInode = db.getDirectoryByInode(inode);
+  if (existingByInode) {
+    const parentId = db.getParentDirectoryId(dirPath);
+    const previousPath = existingByInode.dirname;
+    db.updateDirectoryPath(existingByInode.id, dirPath, parentId);
+    return { dir: db.getDirectory(dirPath), isNew: true, movedFrom: previousPath };
+  }
+
+  const dirId = db.getOrCreateDirectory(dirPath, inode, categoryName);
+  db.updateDirectoryParent(dirPath, db.getParentDirectoryId(dirPath));
+  return { dir: db.getDirById(dirId), isNew: true, movedFrom: null };
+}
+
+function recordDirectoryObservation(dirEntry, eventType, source, hasChanges, fileChanges, dirChanges) {
+  const detectedAt = Date.now();
+  const latestObservation = db.getLatestDirectoryHistory(dirEntry.id);
+  const deadTimeMs = getMonitoringObservationDeadTimeMs();
+  let shouldInsert = true;
+
+  if (!hasChanges && latestObservation && deadTimeMs > 0) {
+    shouldInsert = (detectedAt - latestObservation.detectedAt) >= deadTimeMs;
+  }
+
+  db.updateDirectoryObservation(dirEntry.dirname, source, detectedAt);
+
+  if (!shouldInsert) {
+    return { id: null, detectedAt };
+  }
+
+  const result = db.insertDirHistory(dirEntry.id, eventType, {
+    dirname: path.basename(dirEntry.dirname),
+    source,
+    hasChanges,
+    fileChanges,
+    dirChanges,
+    status: hasChanges ? 'changed' : (eventType === 'dirOpened' ? 'opened' : eventType === 'dirSeen' ? 'seen' : 'observed')
+  }, detectedAt);
+
+  return { id: result.lastInsertRowid, detectedAt };
+}
+
+function createStandaloneDirHistory(dirEntry, source, fileChanges = 1, dirChanges = 0, status = 'manual') {
+  const result = db.insertDirHistory(dirEntry.id, 'dirManual', {
+    dirname: path.basename(dirEntry.dirname),
+    source,
+    hasChanges: true,
+    fileChanges,
+    dirChanges,
+    status
+  });
+
+  return result.lastInsertRowid;
+}
+
 /**
  * Core scan logic (shared by IPC handler and background refresh timer)
  */
@@ -1957,14 +2049,13 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     // Get category for this directory
     const category = categories.getCategoryForDirectory(normalizedPath);
     const categoryName = category ? category.name : 'Default';
+    const observationSource = getObservationSource(isManualNavigation, isBackgroundRefresh, options);
 
     // Create or get the directory entry (returns dir_id)
-    const dirId = db.getOrCreateDirectory(normalizedPath, dirInode, categoryName);
-    db.updateDirectoryParent(normalizedPath, db.getParentDirectoryId(normalizedPath));
-    db.updateDirectoryObservation(
-      normalizedPath,
-      options.observationSource || (isManualNavigation ? 'manual' : isBackgroundRefresh ? 'background-refresh' : 'scan')
-    );
+    const currentDirInfo = ensureDirectoryRecord(normalizedPath, dirInode, categoryName);
+    const dirId = currentDirInfo.dir.id;
+    const initialObservation = !db.getLatestDirectoryObservation(dirId);
+    const currentDirEventType = isManualNavigation ? 'dirOpened' : 'dirObserved';
 
     // Load alert rules once for this scan pass
     let alertRules = [];
@@ -2002,6 +2093,11 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     // Read all filesystem entries (folders + files)
     const entries = fs.readDirectory(normalizedPath, ignoreFilenames);
     const entriesWithChanges = [];
+    const pendingMissingFiles = [];
+    const pendingMissingDirs = [];
+    const pendingPermErrorEntries = [];
+    const existingChildDirs = db.getDirectoryChildren(dirId);
+    const childDirMap = new Map(existingChildDirs.map(child => [child.id, child]));
 
     for (const entry of entries) {
       // Permission error entries: always persist in DB; hide from renderer on
@@ -2022,15 +2118,12 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
 
         const permErrFileRecord = db.getFileByInode(entry.inode, dirId);
         if (permErrFileRecord && (!existingPermErr || existingPermErr.mode !== permErrMode)) {
-          try {
-            db.insertFileHistory(entry.inode, dirId, permErrFileRecord.id, {
-              filename: entry.filename,
-              status: 'permError',
-              mode: permErrMode
-            });
-          } catch (err) {
-            logger.error(`Error recording permission history for ${entry.filename}:`, err.message);
-          }
+          pendingPermErrorEntries.push({
+            inode: entry.inode,
+            filename: entry.filename,
+            fileId: permErrFileRecord.id,
+            mode: permErrMode
+          });
         }
 
         dbFileMap.delete(entry.inode);
@@ -2101,18 +2194,16 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         // Mark as processed
         dbFileMap.delete(entry.inode);
       } else {
-        // For directories, only mark as new if the directory itself is new (not in dirs table)
-        const existingDir = db.getDirectory(entry.path);
+        const subDirCategory = categories.getCategoryForDirectory(entry.path);
+        const subDirCategoryName = subDirCategory ? subDirCategory.name : 'Default';
+        const subDirInfo = ensureDirectoryRecord(entry.path, entry.inode, subDirCategoryName);
+        const existingDir = subDirInfo.dir;
         let changeState = 'unchanged';
 
-        if (!existingDir) {
-          // New directory - create entry in dirs table
+        if (subDirInfo.isNew) {
           changeState = 'new';
-          db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
         }
-        db.updateDirectoryParent(entry.path, db.getParentDirectoryId(entry.path));
-        // Note: Don't check for existing dot files to determine changeState - subdirectories'
-        // dot files are stored in their own directory entry (different dir_id), not in parent
+        childDirMap.delete(existingDir.id);
 
         entriesWithChanges.push({
           ...entry,
@@ -2125,8 +2216,172 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             if (!existingDir) return null;
             const dotFile = db.getFileByFilename(existingDir.id, '.');
             return (dotFile && dotFile.attributes) ? dotFile.attributes : null;
-          })()
+          })(),
+          dir_id: existingDir.id
         });
+      }
+    }
+
+    // Process missing files: check for moves vs orphans
+    const orphanedEntries = [];
+    for (const [inode, dbFile] of dbFileMap) {
+      try {
+        if (dbFile.filename === '.') {
+          continue;
+        }
+
+        const movedFileRecord = db.findInodeInOtherDirectories(inode, dirId);
+
+        if (movedFileRecord) {
+          const newDirId = movedFileRecord.dir_id_match;
+          const orphanResult = db.createOrphan(dirId, dbFile.filename, inode);
+          const orphanId = orphanResult.lastInsertRowid || orphanResult.lastID;
+          db.updateOrphanNewLocation(orphanId, newDirId);
+
+          orphanedEntries.push({
+            inode,
+            filename: dbFile.filename,
+            isDirectory: false,
+            size: dbFile.size,
+            dateModified: dbFile.dateModified,
+            dateCreated: dbFile.dateCreated,
+            mode: dbFile.mode ?? null,
+            path: path.join(dirPath, dbFile.filename),
+            changeState: 'moved',
+            orphan_id: orphanId,
+            new_dir_id: newDirId,
+            dir_id: dirId
+          });
+          logger.info(`File ${dbFile.filename} detected as moved from ${dirPath}`);
+        } else {
+          const orphanResult = db.createOrphan(dirId, dbFile.filename, inode);
+          const orphanId = orphanResult.lastInsertRowid || orphanResult.lastID;
+
+          orphanedEntries.push({
+            inode,
+            filename: dbFile.filename,
+            isDirectory: false,
+            size: dbFile.size,
+            dateModified: dbFile.dateModified,
+            dateCreated: dbFile.dateCreated,
+            mode: dbFile.mode ?? null,
+            path: path.join(dirPath, dbFile.filename),
+            changeState: 'orphan',
+            orphan_id: orphanId,
+            new_dir_id: null,
+            dir_id: dirId
+          });
+          pendingMissingFiles.push({ inode, dbFile });
+          logger.info(`File ${dbFile.filename} marked as orphan in ${dirPath}`);
+        }
+      } catch (err) {
+        logger.error(`Error processing missing file ${dbFile.filename}:`, err.message);
+      }
+    }
+
+    for (const childDir of childDirMap.values()) {
+      try {
+        const movedDirRecord = db.findDirectoryInOtherParents(childDir.inode, dirId);
+        if (movedDirRecord) {
+          const orphanResult = db.createDirOrphan(dirId, childDir.id, path.basename(childDir.dirname));
+          const orphanId = orphanResult.lastInsertRowid || orphanResult.lastID;
+          db.updateDirOrphanNewLocation(orphanId, movedDirRecord.id);
+
+          entriesWithChanges.push({
+            inode: childDir.inode,
+            filename: path.basename(childDir.dirname),
+            isDirectory: true,
+            size: 0,
+            dateModified: dirStats.dateModified,
+            dateCreated: dirStats.dateCreated,
+            mode: null,
+            path: childDir.dirname,
+            changeState: 'moved',
+            dir_id: childDir.id,
+            initials: childDir.initials || null,
+            tags: db.getTagsForDirectoryId(childDir.id),
+            attributes: db.getAttributesForDirectoryId(childDir.id),
+            orphan_id: orphanId,
+            new_dir_id: movedDirRecord.id
+          });
+
+          pendingMissingDirs.push({
+            childDir,
+            eventType: 'dirMoved',
+            orphanId,
+            newDirId: movedDirRecord.id
+          });
+        } else {
+          const orphanResult = db.createDirOrphan(dirId, childDir.id, path.basename(childDir.dirname));
+          const orphanId = orphanResult.lastInsertRowid || orphanResult.lastID;
+
+          entriesWithChanges.push({
+            inode: childDir.inode,
+            filename: path.basename(childDir.dirname),
+            isDirectory: true,
+            size: 0,
+            dateModified: dirStats.dateModified,
+            dateCreated: dirStats.dateCreated,
+            mode: null,
+            path: childDir.dirname,
+            changeState: 'orphan',
+            dir_id: childDir.id,
+            initials: childDir.initials || null,
+            tags: db.getTagsForDirectoryId(childDir.id),
+            attributes: db.getAttributesForDirectoryId(childDir.id),
+            orphan_id: orphanId,
+            new_dir_id: null
+          });
+
+          pendingMissingDirs.push({
+            childDir,
+            eventType: 'dirOrphaned',
+            orphanId,
+            newDirId: null
+          });
+        }
+      } catch (err) {
+        logger.error(`Error processing missing directory ${childDir.dirname}:`, err.message);
+      }
+    }
+
+    entriesWithChanges.push(...orphanedEntries);
+
+    const changedFileEntries = entriesWithChanges.filter(entry => !entry.isDirectory && entry.changeState !== 'unchanged');
+    const changedDirEntries = entriesWithChanges.filter(entry => entry.isDirectory && entry.filename !== '.' && entry.changeState !== 'unchanged');
+    const hasChanges = changedFileEntries.length > 0 || changedDirEntries.length > 0;
+    const currentObservation = recordDirectoryObservation(
+      currentDirInfo.dir,
+      currentDirEventType,
+      observationSource,
+      hasChanges,
+      changedFileEntries.length,
+      changedDirEntries.length
+    );
+    const currentDirHistoryId = currentObservation.id;
+
+    if (currentObservation.id) {
+      try {
+        const currentDirAttrsJson = db.getAttributesForDirectoryId(dirId);
+        const dirRule = doesEventMatchRules(alertRules, currentDirEventType, categoryName, dirTagsJson, currentDirAttrsJson);
+        if (dirRule) {
+          db.insertAlert(dirRule.id, currentObservation.id, currentDirEventType, path.basename(normalizedPath), categoryName, dirId, dirInode, null, null);
+          alertsCreated++;
+        }
+      } catch (alertErr) {
+        logger.error(`Error creating ${currentDirEventType} alert for ${normalizedPath}:`, alertErr.message);
+      }
+    }
+
+    for (const permErrEntry of pendingPermErrorEntries) {
+      try {
+        db.insertFileHistory(permErrEntry.inode, dirId, permErrEntry.fileId, 'fileModified', {
+          filename: permErrEntry.filename,
+          status: 'permError',
+          mode: permErrEntry.mode
+        }, currentDirHistoryId);
+      } catch (err) {
+        logger.error(`Error recording permission history for ${permErrEntry.filename}:`, err.message);
       }
     }
 
@@ -2134,6 +2389,10 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     for (const entry of entriesWithChanges) {
       // Permission error entries are persisted earlier in the scan loop.
       if (entry.changeState === 'permError') continue;
+
+      if (entry.changeState === 'moved' || entry.changeState === 'orphan') {
+        continue;
+      }
 
       if (!entry.isDirectory) {
         const dbFile = existingDbFiles.find(f => f.inode === entry.inode);
@@ -2158,25 +2417,24 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
 
         // Track file changes in file_history
         if (!dbFile) {
-          // First encounter: store all file metadata
+          const eventType = initialObservation ? 'INITIAL' : 'fileAdded';
           try {
-            db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
+            db.insertFileHistory(entry.inode, dirId, fileRecord.id, eventType, {
               filename: entry.filename,
               dateModified: entry.dateModified,
               filesizeBytes: entry.size,
               mode: entry.mode ?? null
-            });
+            }, currentDirHistoryId);
           } catch (err) {
             logger.error(`Error recording file history for new file ${entry.filename}:`, err.message);
           }
-          // Alert: fileAdded
           try {
-            const addedRule = doesEventMatchRules(alertRules, 'fileAdded', categoryName, dirTagsJson, entry.attributes || null);
+            const addedRule = doesEventMatchRules(alertRules, eventType, categoryName, dirTagsJson, entry.attributes || null);
             if (addedRule) {
-              db.insertAlert(addedRule.id, null, 'fileAdded', entry.filename, categoryName, dirId, entry.inode, null, null);
+              db.insertAlert(addedRule.id, null, eventType, entry.filename, categoryName, dirId, entry.inode, null, null);
               alertsCreated++;
             }
-          } catch (alertErr) { logger.error(`Error creating fileAdded alert for ${entry.filename}:`, alertErr.message); }
+          } catch (alertErr) { logger.error(`Error creating ${eventType} alert for ${entry.filename}:`, alertErr.message); }
         } else {
           const modeChanged = (dbFile.mode ?? null) !== (entry.mode ?? null);
           const dateChanged = dbFile.dateModified !== entry.dateModified;
@@ -2187,7 +2445,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             if (modeChanged) historyPayload.mode = entry.mode ?? null;
 
             try {
-              db.insertFileHistory(entry.inode, dirId, fileRecord.id, historyPayload);
+              db.insertFileHistory(entry.inode, dirId, fileRecord.id, 'fileModified', historyPayload, currentDirHistoryId);
             } catch (err) {
               logger.error(`Error recording file history for ${entry.filename}:`, err.message);
             }
@@ -2205,10 +2463,10 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           // Alert: fileRenamed
           if (entry.wasRenamed) {
             try {
-              const renameHistResult = db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
+              const renameHistResult = db.insertFileHistory(entry.inode, dirId, fileRecord.id, 'fileRenamed', {
                 filename: entry.filename,
                 previousFilename: entry.previousFilename
-              });
+              }, currentDirHistoryId);
               const renameRule = doesEventMatchRules(alertRules, 'fileRenamed', categoryName, dirTagsJson, entry.attributes || null);
               if (renameRule) {
                 db.insertAlert(renameRule.id, renameHistResult.lastInsertRowid, 'fileRenamed', entry.filename, categoryName, dirId, entry.inode, entry.previousFilename, entry.filename);
@@ -2228,9 +2486,9 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           if (prevStatus === 'calculated' || prevStatus === 'error') {
             try {
               db.updateFileChecksum(entry.inode, dirId, null, 'untracked');
-              db.insertFileHistory(entry.inode, dirId, fileRecord.id, {
+              db.insertFileHistory(entry.inode, dirId, fileRecord.id, 'fileModified', {
                 checksumStatus: 'untracked'
-              });
+              }, currentDirHistoryId);
             } catch (err) {
               logger.error(`Error marking checksum untracked for ${entry.filename}:`, err.message);
             }
@@ -2246,19 +2504,9 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           // 'manual' means the user explicitly requested a one-off calculation; preserve it.
         }
       } else {
-        // Handle subdirectory dot entries
-        const existingDir = db.getDirectory(entry.path);
-        let subDirId;
-        if (!existingDir) {
-          // New subdirectory - create entry in dirs table
-          subDirId = db.getOrCreateDirectory(entry.path, entry.inode, 'Default');
-        } else {
-          // Get existing directory's ID
-          subDirId = existingDir.id;
-        }
-        
+        const subDirId = entry.dir_id;
         const subDirCategory = categories.getCategoryForDirectory(entry.path) || category;
-        
+
         // Create or update dot placeholder file for directory with its own dir_id
         db.upsertFile({
           inode: entry.inode,
@@ -2274,111 +2522,93 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         const dotFileRecord = db.getFileByInode(entry.inode, subDirId);
         if (dotFileRecord) {
           try {
-            // Only insert history if this is actually a NEW directory (first time in dirs table)
-            if (!existingDir) {
-              // First time seeing this directory - record it in history
-              db.insertFileHistory(entry.inode, subDirId, dotFileRecord.id, {
+            if (entry.changeState === 'new') {
+              const dirEventType = initialObservation ? 'dirSeen' : 'dirAdded';
+              db.insertDirHistory(subDirId, dirEventType, {
                 dirname: path.basename(entry.path),
-                category: subDirCategory ? subDirCategory.name : 'Default'
+                category: subDirCategory ? subDirCategory.name : 'Default',
+                parentDirname: path.basename(normalizedPath),
+                source: observationSource,
+                hasChanges: true,
+                fileChanges: 0,
+                dirChanges: 1,
+                status: dirEventType === 'dirSeen' ? 'seen' : 'added'
               });
+
+              const subDirTagsJson = db.getTagsForDirectoryId(subDirId);
+              const subDirAttrsJson = db.getAttributesForDirectoryId(subDirId);
+              const dirRule = doesEventMatchRules(
+                alertRules,
+                dirEventType,
+                subDirCategory ? subDirCategory.name : 'Default',
+                subDirTagsJson,
+                subDirAttrsJson
+              );
+              if (dirRule) {
+                db.insertAlert(dirRule.id, null, dirEventType, path.basename(entry.path), subDirCategory ? subDirCategory.name : 'Default', subDirId, entry.inode, null, null);
+                alertsCreated++;
+              }
             }
           } catch (err) {
             logger.error(`Error recording directory history for ${entry.path}:`, err.message);
           }
         }
-        
-        // Mark as processed
-        dbFileMap.delete(entry.inode);
       }
     }
 
-    // Process missing files: check for moves vs orphans
-    const orphanedEntries = [];
-    for (const [inode, dbFile] of dbFileMap) {
+    for (const missingFile of pendingMissingFiles) {
       try {
-        // Skip "." entries - they represent the directory itself and should be ignored
-        if (dbFile.filename === '.') {
-          continue;
-        }
-        
-        // Check if this inode exists in another directory (i.e., file moved)
-        const movedFileRecord = db.findInodeInOtherDirectories(inode, dirId);
-        
-        if (movedFileRecord) {
-          // File moved to another directory
-          const newDirId = movedFileRecord.dir_id_match;
-          
-          // Create orphan record to track the move
-          const orphanResult = db.createOrphan(dirId, dbFile.filename, inode);
-          const orphanId = orphanResult.lastID;
-          
-          // Update orphan with the new location
-          db.updateOrphanNewLocation(orphanId, newDirId);
-          
-          // Add to entries as 'moved' so it displays with special icon
-          orphanedEntries.push({
-            inode: inode,
-            filename: dbFile.filename,
-            isDirectory: false,
-            size: dbFile.size,
-            dateModified: dbFile.dateModified,
-            dateCreated: dbFile.dateCreated,
-            mode: dbFile.mode ?? null,
-            path: path.join(dirPath, dbFile.filename),
-            changeState: 'moved',
-            orphan_id: orphanId,
-            new_dir_id: newDirId
-          });
-          
-          logger.info(`File ${dbFile.filename} detected as moved from ${dirPath}`);
-        } else {
-          // File not found anywhere - it's orphaned/deleted
-          
-          // Create orphan record
-          const orphanResult = db.createOrphan(dirId, dbFile.filename, inode);
-          const orphanId = orphanResult.lastID;
-          
-          // Record deletion in history before marking as orphan
-          try {
-            db.insertFileHistory(inode, dirId, dbFile.id, {
-              filename: dbFile.filename,
-              status: 'orphan'
-            });
-          } catch (err) {
-            logger.error(`Error recording orphan history for ${dbFile.filename}:`, err.message);
-          }
-          // Alert: fileRemoved
-          try {
-            const removedRule = doesEventMatchRules(alertRules, 'fileRemoved', categoryName, dirTagsJson, null);
-            if (removedRule) {
-              db.insertAlert(removedRule.id, null, 'fileRemoved', dbFile.filename, categoryName, dirId, inode, null, null);
-              alertsCreated++;
-            }
-          } catch (alertErr) { logger.error(`Error creating fileRemoved alert for ${dbFile.filename}:`, alertErr.message); }
+        db.insertFileHistory(missingFile.inode, dirId, missingFile.dbFile.id, 'fileRemoved', {
+          filename: missingFile.dbFile.filename,
+          status: 'orphan'
+        }, currentDirHistoryId);
 
-          // Add to entries as 'orphan' so it displays as red text
-          orphanedEntries.push({
-            inode: inode,
-            filename: dbFile.filename,
-            isDirectory: false,
-            size: dbFile.size,
-            dateModified: dbFile.dateModified,
-            dateCreated: dbFile.dateCreated,
-            mode: dbFile.mode ?? null,
-            path: path.join(dirPath, dbFile.filename),
-            changeState: 'orphan',
-            orphan_id: orphanId
-          });
-          
-          logger.info(`File ${dbFile.filename} marked as orphan in ${dirPath}`);
+        const removedRule = doesEventMatchRules(alertRules, 'fileRemoved', categoryName, dirTagsJson, null);
+        if (removedRule) {
+          db.insertAlert(removedRule.id, null, 'fileRemoved', missingFile.dbFile.filename, categoryName, dirId, missingFile.inode, null, null);
+          alertsCreated++;
         }
       } catch (err) {
-        logger.error(`Error processing missing file ${dbFile.filename}:`, err.message);
+        logger.error(`Error processing missing file ${missingFile.dbFile.filename}:`, err.message);
       }
     }
 
-    // Add orphaned entries to the entries list
-    entriesWithChanges.push(...orphanedEntries);
+    for (const missingDir of pendingMissingDirs) {
+      try {
+        const childCategory = categories.getCategoryForDirectory(missingDir.childDir.dirname);
+        const childCategoryName = childCategory ? childCategory.name : 'Default';
+        const dirTags = db.getTagsForDirectoryId(missingDir.childDir.id);
+        const dirAttrs = db.getAttributesForDirectoryId(missingDir.childDir.id);
+        db.insertDirHistory(missingDir.childDir.id, missingDir.eventType, {
+          dirname: path.basename(missingDir.childDir.dirname),
+          source: observationSource,
+          hasChanges: true,
+          fileChanges: 0,
+          dirChanges: 1,
+          oldPath: missingDir.childDir.dirname,
+          newPath: missingDir.newDirId ? (db.getDirById(missingDir.newDirId)?.dirname || null) : null,
+          status: missingDir.eventType === 'dirMoved' ? 'moved' : 'orphaned'
+        });
+
+        const dirRule = doesEventMatchRules(alertRules, missingDir.eventType, childCategoryName, dirTags, dirAttrs);
+        if (dirRule) {
+          db.insertAlert(
+            dirRule.id,
+            null,
+            missingDir.eventType,
+            path.basename(missingDir.childDir.dirname),
+            childCategoryName,
+            missingDir.childDir.id,
+            missingDir.childDir.inode,
+            missingDir.eventType === 'dirMoved' ? missingDir.childDir.dirname : null,
+            missingDir.newDirId ? (db.getDirById(missingDir.newDirId)?.dirname || null) : null
+          );
+          alertsCreated++;
+        }
+      } catch (err) {
+        logger.error(`Error recording directory event for ${missingDir.childDir.dirname}:`, err.message);
+      }
+    }
 
     // Add the "." current directory entry to the results
     // (it's stored in DB but not in filesystem, so we need to add it manually)
@@ -2397,6 +2627,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         perms: dirStats.perms || { read: true, write: false },
         path: dirPath,
         changeState: 'unchanged',
+        dir_id: dirId,
         initials: dirRecord ? (dirRecord.initials || null) : null,
         tags: dotFileRecord.tags || null,
         attributes: dotFileRecord.attributes || null,
@@ -2472,9 +2703,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       }
     }
 
-    // Count entries with actual changes (not 'unchanged')
     const changedEntries = entriesWithChanges.filter(e => e.changeState !== 'unchanged');
-    const hasChanges = changedEntries.length > 0;
 
     // Log if browsing to a new directory (manual navigation) or if there are actual changes
     if (isManualNavigation || hasChanges) {
@@ -2542,10 +2771,11 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
           ? categories.getCategoryResolutionForDirectory(dirRecord.dirname).categoryName
           : 'Default';
         if (fileRecord) {
-          const historyResult = db.insertFileHistory(inode, dirId, fileRecord.id, {
+          const dirHistoryId = dirRecord ? createStandaloneDirHistory(dirRecord, isManual ? 'manual-checksum' : 'checksum', 1, 0, 'checksumChanged') : null;
+          const historyResult = db.insertFileHistory(inode, dirId, fileRecord.id, 'fileChanged', {
             checksumValue: result.value,
             checksumStatus: storedStatus
-          });
+          }, dirHistoryId);
           // Only alert on actual content changes (not first-time initialization)
           if (existingChecksum !== null) {
             try {
@@ -2644,13 +2874,14 @@ ipcMain.handle('update-file-modification-date', (event, { dirPath, inode, newDat
 
     // Record the acknowledgement in file_history
     try {
-      db.insertFileHistory(inode, dir.id, file.id, {
+      const dirHistoryId = createStandaloneDirHistory(dir, 'acknowledgement', 1, 0, 'acknowledged');
+      db.insertFileHistory(inode, dir.id, file.id, 'fileModified', {
         filename: file.filename,
         dateModified: newDateModified
-      });
+      }, dirHistoryId);
 
       // Get the newly inserted record to set acknowledgedAt
-      const latestHistory = db.getLatestFileHistory(inode);
+      const latestHistory = db.getLatestFileHistory(inode, dir.id);
       if (latestHistory) {
         db.updateFileHistoryAcknowledgement(latestHistory.id);
       }
@@ -2800,6 +3031,31 @@ ipcMain.handle('stop-active-monitoring', () => {
 });
 
 /**
+ * Item History: Get history records for a file or directory
+ */
+ipcMain.handle('get-item-history', (event, item) => {
+  try {
+    if (item && item.isDirectory) {
+      if (!item.dirId) {
+        return { success: false, error: 'Directory ID is required for directory history.' };
+      }
+      const history = db.getDirectoryHistory(item.dirId);
+      return { success: true, data: history };
+    }
+
+    if (!item || !item.inode) {
+      return { success: false, error: 'File inode is required for file history.' };
+    }
+
+    const history = db.getFileHistory(item.inode, item.dirId || null);
+    return { success: true, data: history };
+  } catch (err) {
+    logger.error('Error retrieving item history:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * File History: Get all history records for a file by inode
  */
 ipcMain.handle('get-file-history', (event, inode) => {
@@ -2821,6 +3077,16 @@ ipcMain.handle('acknowledge-orphan', (event, orphanId) => {
     return { success: true };
   } catch (err) {
     logger.error(`Error acknowledging orphan ${orphanId}:`, err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('acknowledge-dir-orphan', (event, orphanId) => {
+  try {
+    db.deleteDirOrphan(orphanId);
+    return { success: true };
+  } catch (err) {
+    logger.error(`Error acknowledging directory orphan ${orphanId}:`, err.message);
     return { success: false, error: err.message };
   }
 });
