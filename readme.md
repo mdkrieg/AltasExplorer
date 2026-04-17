@@ -30,7 +30,8 @@ Philosophy:
 [x] If I set an alert to ANY/ANY - File Added. I get alerts when I first browse a folder. INITIAL events should always be considered a separate thing
 
 ### ROADMAP:
-[ ] Search and Filter, make it so that if I start typing it will start searching by name automatically. Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
+[ ] Search and Filter, make it so that if I start typing it will start searching by name automatically.
+[x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
 [ ] Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need
 [-] CTRL + Enter to do same as double click in grid --- nvm, change this:
   [ ] Enter browses dirs in same folders, opens Item Properties in modal for files
@@ -42,13 +43,13 @@ Philosophy:
 [x] Update the color inputs to use the w2ui color picker (https://w2ui.com/web/demos/#/fields/8)
 [ ] Update the forms to use more of the standard w2ui elements, see: https://w2ui.com/web/demos/#/form
 [ ] Update the forms to not throw alert popups but instead use inline styling and remarks like a modern webform
-[ ] Add option on custom attributes for "copyable" which adds a copy button in the grid to copy its value to clipboard
+[x] Add option on custom attributes for "copyable" which adds a copy button in the grid to copy its value to clipboard
 [ ] Add a "pin" to Item Properties that prevents it from updating to the selected item
 * I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
 * Forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)
 * Would it be possible to have a global hotkey (fires even without focus) that opens an always-on-top popup which offers a list of every path of all currently open directories and all favorites?
 [ ] LOCAL FAVORITES - instead of links, the user can populate local favorites. I'm thinking this should be in notes.txt - possibly without any special directive but anything that is a valid path gets shown in the sidebar when the user is browsing that dir.
-[ ] TODOs in notes get aggregated
+[x] TODOs in notes get aggregated
 [ ] Copy as Path in context menu (there is a perfect demo for this: https://w2ui.com/web/demos/#/grid/36)
 [-] Tags in notes (and monaco autocomplete)
   [ ] Doesn't seem like these get promoted to the item, perhaps this broke at some point?

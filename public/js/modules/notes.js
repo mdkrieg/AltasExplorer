@@ -10,6 +10,23 @@ import { panelState, setFileEditMode, setSelectedItemState } from '../renderer.j
 let monacoLoaded = false;
 export let monacoEditor = null;
 
+// Intercept all anchor clicks in the renderer. Runs in capture phase so it
+// fires before any child handler and cannot be suppressed by the DOM tree.
+//   http/https hrefs  → forwarded to the OS default browser via IPC
+//   all other non-'#' → silently blocked (javascript:, data:, relative paths, etc.)
+//   '#' fragments     → allowed through unchanged (in-page anchors)
+document.addEventListener('click', (e) => {
+  const anchor = e.target.closest('a[href]');
+  if (!anchor) return;
+  const href = anchor.getAttribute('href');
+  if (!href || href.startsWith('#')) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (/^https?:\/\//i.test(href)) {
+    window.electronAPI.openExternalLink(href).catch(() => {});
+  }
+}, true);
+
 let notesModalEditor = null;
 let notesModalEditMode = false;
 let notesModalContext = null;

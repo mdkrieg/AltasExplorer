@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, ipcMain, nativeImage, Menu, globalShortcut } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, nativeImage, Menu, globalShortcut, shell, session } = require('electron');
 const path = require('path');
 const os = require('os');
 const fsSync = require('fs');
@@ -272,6 +272,20 @@ function createWindow() {
     const indexPath = path.join(__dirname, '..', 'public', 'index.html');
     logger.info('Loading index from:', indexPath);
     mainWindow.loadFile(indexPath);
+
+    // Block in-page navigation away from the local file (e.g. a link click inside rendered markdown)
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      if (!url.startsWith('file://')) {
+        logger.warn('[SECURITY] Blocked navigation to:', url);
+        event.preventDefault();
+      }
+    });
+
+    // Block target="_blank" and any other attempt to open a new window
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      logger.warn('[SECURITY] Blocked new-window open for:', url);
+      return { action: 'deny' };
+    });
 
     mainWindow.webContents.on('crashed', () => {
       logger.error('Renderer process crashed');
@@ -1837,6 +1851,41 @@ ipcMain.handle('run-custom-action-in-terminal', async (event, { actionId, filePa
 });
 
 /**
+ * Open an http/https URL in the OS default web browser.
+ * Only http: and https: are accepted — all other schemes are rejected.
+ */
+ipcMain.handle('open-external-link', async (event, url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+    logger.warn('[SECURITY] Rejected open-external-link for invalid URL:', url);
+    return { success: false, error: 'Only http and https URLs are permitted' };
+  }
+  try {
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error opening external link:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Open a file in its default OS application.
+ */
+ipcMain.handle('open-in-default-app', async (event, filePath) => {
+  try {
+    const resolved = path.resolve(String(filePath));
+    if (!fsSync.existsSync(resolved)) {
+      return { success: false, error: `File not found: ${resolved}` };
+    }
+    const result = await shell.openPath(resolved);
+    return result === '' ? { success: true } : { success: false, error: result };
+  } catch (err) {
+    logger.error('Error opening file in default app:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * File picker dialog (used by Custom Actions settings form)
  */
 ipcMain.handle('pick-file', async (event, { filters, defaultPath } = {}) => {
@@ -3259,6 +3308,45 @@ app.on('ready', () => {
   Menu.setApplicationMenu(null);
   initialize();
   createWindow();
+
+  // ── Session-level network firewall ──────────────────────────────────────────
+  // Block ALL outbound HTTP/HTTPS/WebSocket requests at the Chromium network
+  // layer. This fires below the renderer, so it cannot be bypassed by any JS
+  // running in the page — regardless of how it was injected.
+  session.defaultSession.webRequest.onBeforeRequest(
+    { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
+    (details, callback) => {
+      logger.warn('[SECURITY] Blocked external request:', details.url);
+      callback({ cancel: true });
+    }
+  );
+
+  // ── Content-Security-Policy injection ───────────────────────────────────────
+  // Inject a strict CSP on every file:// response so that even if an injected
+  // <script> tag somehow survives markdown sanitization it cannot execute.
+  //   script-src 'self'      → only loaded .js files from public/; blocks inline
+  //                             scripts, data: and blob: script sources entirely
+  //   style-src unsafe-inline → required by w2ui and Monaco (inject inline styles)
+  //   img-src data:           → required by w2ui/Monaco icon data URIs
+  //   connect-src 'none'      → second-layer ban on fetch/XHR/WebSocket
+  const cspValue = [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'none'"
+  ].join('; ');
+
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ['file:///*'] },
+    (details, callback) => {
+      const headers = Object.assign({}, details.responseHeaders, {
+        'Content-Security-Policy': [cspValue]
+      });
+      callback({ responseHeaders: headers });
+    }
+  );
 
   // Register dev tools shortcuts since menu bar is hidden
   globalShortcut.register('F12', () => {

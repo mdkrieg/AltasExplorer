@@ -121,8 +121,10 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 	}
 
 	if (!isMultiSelect && fileCount > 0) {
+		contextMenu.push({ id: 'open-in-default-app', text: 'Open', icon: 'fa fa-external-link' });
 		const filePanels = availablePanels.filter(panelNumber => panelNumber > 1);
 		if (filePanels.length > 0) {
+			addSeparator(contextMenu);
 			contextMenu.push({
 				id: 'open-in',
 				text: 'Open In',
@@ -485,6 +487,19 @@ async function handleContextMenuClick(event, panelId) {
 			}
 		} catch (err) {
 			alert('Error removing tag: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'open-in-default-app') {
+		const record = selectedRecords[0];
+		if (!record || record.isFolder) return;
+		try {
+			const result = await window.electronAPI.openInDefaultApp(record.path);
+			if (result && !result.success) {
+				w2alert(`<b>Could not open file</b><br><br>${result.error}`, 'Open Failed');
+			}
+		} catch (err) {
+			console.error('Error opening file in default app:', err);
 		}
 	}
 

@@ -1549,6 +1549,7 @@ hr {
 /* File Change State Styles */
 .file-new {
   color: #00F;
+  line-height: inherit;
 }
 
 .file-date-modified {
