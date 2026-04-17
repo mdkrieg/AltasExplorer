@@ -150,6 +150,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   normalizeTodoSection: (sectionContent) => ipcRenderer.invoke('normalize-todo-section', sectionContent),
   updateTodoItems: (sectionContent, updates) => ipcRenderer.invoke('update-todo-items', { sectionContent, updates }),
 
+  // TODO aggregation (sidebar TODO section)
+  getTodoAggregates: (opts) => ipcRenderer.invoke('get-todo-aggregates', opts || {}),
+  refreshTodoAggregate: (notesPath, dirId) => ipcRenderer.invoke('refresh-todo-aggregate', { notesPath, dirId }),
+  refreshTodoAggregates: () => ipcRenderer.invoke('refresh-todo-aggregates'),
+  onTodoAggregatesChanged: (callback) => ipcRenderer.on('todo-aggregates-changed', () => callback()),
+
   // Markdown rendering via IPC
   renderMarkdown: (content) => ipcRenderer.invoke('render-markdown', content),
 

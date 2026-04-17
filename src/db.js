@@ -144,6 +144,31 @@ class DatabaseService {
         created_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS todo_notes_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dir_id INTEGER NOT NULL,
+        notes_path TEXT NOT NULL UNIQUE,
+        mtime_ms INTEGER,
+        content_hash TEXT,
+        last_scanned_at INTEGER,
+        FOREIGN KEY (dir_id) REFERENCES dirs(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS todo_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        notes_file_id INTEGER NOT NULL,
+        section_key TEXT NOT NULL,
+        group_label TEXT NOT NULL DEFAULT '',
+        group_index INTEGER NOT NULL DEFAULT 0,
+        item_index INTEGER NOT NULL,
+        level INTEGER NOT NULL DEFAULT 0,
+        text TEXT NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0,
+        line_start INTEGER,
+        text_hash TEXT NOT NULL,
+        FOREIGN KEY (notes_file_id) REFERENCES todo_notes_files(id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_dirs_dirname ON dirs(dirname);
       CREATE INDEX IF NOT EXISTS idx_dirs_parent_id ON dirs(parent_id);
       CREATE INDEX IF NOT EXISTS idx_dirs_last_observed_at ON dirs(last_observed_at);
@@ -155,6 +180,9 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_file_history_dir_history_id ON file_history(dir_history_id);
       CREATE INDEX IF NOT EXISTS idx_dir_orphans_parent_dir_id ON dir_orphans(parent_dir_id);
       CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged_at ON alerts(acknowledged_at);
+      CREATE INDEX IF NOT EXISTS idx_todo_items_notes_file ON todo_items(notes_file_id);
+      CREATE INDEX IF NOT EXISTS idx_todo_items_group_label ON todo_items(group_label);
+      CREATE INDEX IF NOT EXISTS idx_todo_items_completed ON todo_items(completed);
     `;
 
     this.db.exec(schema);
@@ -1130,6 +1158,84 @@ class DatabaseService {
   setFileAttributes(inode, dir_id, attributes) {
     const json = attributes && Object.keys(attributes).length > 0 ? JSON.stringify(attributes) : null;
     this.db.prepare('UPDATE files SET attributes = ? WHERE inode = ? AND dir_id = ?').run(json, inode, dir_id);
+  }
+
+  // ============================================
+  // TODO Aggregation
+  // ============================================
+
+  getTodoNotesFile(notesPath) {
+    return this.db.prepare('SELECT * FROM todo_notes_files WHERE notes_path = ?').get(notesPath);
+  }
+
+  getAllTodoNotesFiles() {
+    return this.db.prepare('SELECT * FROM todo_notes_files ORDER BY notes_path ASC').all();
+  }
+
+  upsertTodoNotesFile(notesPath, dirId, mtimeMs, contentHash) {
+    const now = Date.now();
+    const existing = this.getTodoNotesFile(notesPath);
+    if (existing) {
+      this.db.prepare(`
+        UPDATE todo_notes_files SET dir_id = ?, mtime_ms = ?, content_hash = ?, last_scanned_at = ? WHERE id = ?
+      `).run(dirId, mtimeMs, contentHash, now, existing.id);
+      return existing.id;
+    }
+    const result = this.db.prepare(`
+      INSERT INTO todo_notes_files (dir_id, notes_path, mtime_ms, content_hash, last_scanned_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(dirId, notesPath, mtimeMs, contentHash, now);
+    return result.lastInsertRowid;
+  }
+
+  deleteTodoNotesFileByPath(notesPath) {
+    const row = this.getTodoNotesFile(notesPath);
+    if (!row) return;
+    this.db.prepare('DELETE FROM todo_items WHERE notes_file_id = ?').run(row.id);
+    this.db.prepare('DELETE FROM todo_notes_files WHERE id = ?').run(row.id);
+  }
+
+  replaceTodoItems(notesFileId, items) {
+    const del = this.db.prepare('DELETE FROM todo_items WHERE notes_file_id = ?');
+    const ins = this.db.prepare(`
+      INSERT INTO todo_items
+        (notes_file_id, section_key, group_label, group_index, item_index, level, text, completed, line_start, text_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const tx = this.db.transaction((fileId, rows) => {
+      del.run(fileId);
+      for (const r of rows) {
+        ins.run(
+          fileId,
+          r.section_key,
+          r.group_label || '',
+          r.group_index || 0,
+          r.item_index,
+          r.level || 0,
+          r.text,
+          r.completed ? 1 : 0,
+          r.line_start ?? null,
+          r.text_hash
+        );
+      }
+    });
+    tx(notesFileId, items);
+  }
+
+  getTodoAggregates({ includeCompleted = true } = {}) {
+    const whereCompleted = includeCompleted ? '' : 'WHERE ti.completed = 0';
+    return this.db.prepare(`
+      SELECT
+        ti.id, ti.notes_file_id, ti.section_key, ti.group_label, ti.group_index,
+        ti.item_index, ti.level, ti.text, ti.completed, ti.line_start, ti.text_hash,
+        tnf.notes_path, tnf.dir_id,
+        d.dirname AS dirname
+      FROM todo_items ti
+      JOIN todo_notes_files tnf ON ti.notes_file_id = tnf.id
+      LEFT JOIN dirs d ON tnf.dir_id = d.id
+      ${whereCompleted}
+      ORDER BY ti.group_label ASC, tnf.notes_path ASC, ti.section_key ASC, ti.group_index ASC, ti.item_index ASC
+    `).all();
   }
 
   close() {

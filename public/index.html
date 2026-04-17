@@ -41,8 +41,31 @@
         <img src="assets/icons/tag.svg" style="width: 16px; height: 16px; pointer-events: none;">
       </button>
     </div>
-    <!-- W2UI Favorites Sidebar -->
-    <div id="w2ui-favorites" style="flex: 1; overflow: hidden; border-top: 1px solid #ddd;"></div>
+    <!-- Stackable sidebar sections -->
+    <div id="sidebar-sections" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-top: 1px solid #ddd; min-height: 0;">
+      <!-- Favorites Section -->
+      <div class="sidebar-section" data-section="favorites">
+        <div class="sidebar-section-header">
+          <button class="sidebar-section-chevron" data-section-toggle="favorites" title="Expand/collapse">&#9660;</button>
+          <span class="sidebar-section-label sidebar-section-label-full">FAVORITES</span>
+          <span class="sidebar-section-label sidebar-section-label-short">FAV</span>
+          <button id="btn-favorites-cancel" class="sidebar-section-action btn-favorites-edit btn-favorites-cancel" title="Discard changes" aria-label="Discard changes"><span class="fav-cancel-icon" aria-hidden="true"></span></button>
+          <button id="btn-favorites-edit" class="sidebar-section-action btn-favorites-edit" title="Edit favorites">&#9998;</button>
+        </div>
+        <div id="w2ui-favorites" class="sidebar-section-body"></div>
+      </div>
+      <!-- TODO Section -->
+      <div class="sidebar-section collapsed" data-section="todos">
+        <div class="sidebar-section-header">
+          <button class="sidebar-section-chevron" data-section-toggle="todos" title="Expand/collapse">&#9654;</button>
+          <span class="sidebar-section-label sidebar-section-label-full">TODO</span>
+          <span class="sidebar-section-label sidebar-section-label-short">TODO</span>
+          <button class="sidebar-section-action btn-todos-show-completed" title="Show completed items" aria-pressed="false">&#10003;</button>
+          <button class="sidebar-section-action btn-todos-refresh" title="Refresh TODOs">&#x21BB;</button>
+        </div>
+        <div id="sidebar-todos-body" class="sidebar-section-body"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Panel Container (will be rendered into w2layout's main panel) -->

@@ -15,6 +15,7 @@ const icons = require('../src/icons');
 const checksum = require('../src/checksum');
 const attributes = require('../src/attributes');
 const notesParser = require('../src/notesParser');
+const todoAggregator = require('../src/todoAggregator');
 const customActions = require('../src/customActions');
 const { execFile } = require('child_process');
 const { dialog } = require('electron');
@@ -351,6 +352,12 @@ function initialize() {
   logger.info('Initializing application');
   syncIconAssets();
   db.initialize();
+  try {
+    const result = todoAggregator.refreshAll();
+    logger.info(`TODO aggregator: refreshed ${result.changed}/${result.total} notes.txt files at startup`);
+  } catch (err) {
+    logger.error('TODO aggregator startup refresh failed:', err.message);
+  }
   reconfigureActiveMonitoring();
   runMonitoringPass().catch(err => {
     logger.error('Initial active monitoring pass failed:', err.message);
@@ -1441,6 +1448,67 @@ ipcMain.handle('parse-todo-section', async (event, sectionContent) => {
     return notesParser.parseTodoBlocks(sectionContent);
   } catch (err) {
     logger.error('Error parsing TODO section:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * TODO Aggregator: Get aggregated TODO data for the sidebar.
+ * Shape: [ { groupLabel, sources: [ { notesPath, dirId, sectionKey, sourceDisplayName, items: [...] } ] } ]
+ */
+ipcMain.handle('get-todo-aggregates', async (event, opts = {}) => {
+  try {
+    return todoAggregator.getAggregates(opts);
+  } catch (err) {
+    logger.error('Error getting TODO aggregates:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * TODO Aggregator: Refresh a single notes.txt file (e.g. after a modal save).
+ */
+ipcMain.handle('refresh-todo-aggregate', async (event, { notesPath, dirId }) => {
+  try {
+    let resolvedDirId = dirId;
+    if (resolvedDirId == null && notesPath) {
+      const sep = notesPath.includes('\\') ? '\\' : '/';
+      const dirname = notesPath.substring(0, notesPath.lastIndexOf(sep));
+      const existingRow = db.getTodoNotesFile(notesPath);
+      if (existingRow) {
+        resolvedDirId = existingRow.dir_id;
+      } else {
+        const dirRow = db.getDirectory(dirname);
+        if (dirRow) resolvedDirId = dirRow.id;
+      }
+    }
+    if (resolvedDirId == null) {
+      logger.warn(`refresh-todo-aggregate: could not resolve dir_id for ${notesPath}`);
+      return { changed: false, notesFileId: null };
+    }
+    const result = todoAggregator.ensureAndRefresh(notesPath, resolvedDirId);
+    if (result.changed && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('todo-aggregates-changed');
+    }
+    return result;
+  } catch (err) {
+    logger.error(`Error refreshing TODO aggregate for ${notesPath}: ${err.message}`);
+    throw err;
+  }
+});
+
+/**
+ * TODO Aggregator: Refresh every known notes.txt (user-triggered refresh).
+ */
+ipcMain.handle('refresh-todo-aggregates', async () => {
+  try {
+    const result = todoAggregator.refreshAll();
+    if (result.changed > 0 && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('todo-aggregates-changed');
+    }
+    return result;
+  } catch (err) {
+    logger.error('Error refreshing all TODO aggregates:', err.message);
     throw err;
   }
 });
@@ -2640,6 +2708,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     let filesWithNotes = new Set();
     let localNotesContent = '';
     let localNotesSections = {};
+    let localNotesFilePath = null;
     try {
       const notesFilePath = path.join(normalizedPath, 'notes.txt');
       if (fsSync.existsSync(notesFilePath)) {
@@ -2647,6 +2716,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         localNotesSections = notesParser.parseNotesFileSections(notesContent);
 
         localNotesContent = notesContent;
+        localNotesFilePath = notesFilePath;
 
         const headersArray = notesParser.extractAllHeaders(localNotesContent);
         filesWithNotes = new Set(headersArray);
@@ -2654,6 +2724,29 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       }
     } catch (err) {
       logger.warn(`Error reading notes for directory ${normalizedPath}:`, err.message);
+    }
+
+    // Opportunistically refresh the TODO aggregation row for this directory's notes.txt.
+    // Reuses the content already in memory so there is no extra file read.
+    if (localNotesFilePath) {
+      try {
+        const aggResult = todoAggregator.ensureAndRefresh(localNotesFilePath, dirId, { contentOverride: localNotesContent });
+        if (aggResult.changed && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('todo-aggregates-changed');
+        }
+      } catch (err) {
+        logger.warn(`todoAggregator.ensureAndRefresh failed for ${localNotesFilePath}: ${err.message}`);
+      }
+    } else {
+      // If a previous scan had a notes.txt row but the file is gone, drop it.
+      const notesFilePath = path.join(normalizedPath, 'notes.txt');
+      const existing = db.getTodoNotesFile(notesFilePath);
+      if (existing) {
+        db.deleteTodoNotesFileByPath(notesFilePath);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('todo-aggregates-changed');
+        }
+      }
     }
 
     // Add hasNotes and todoCounts fields to each entry

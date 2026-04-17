@@ -457,9 +457,118 @@ export async function initializeSidebar() {
     // Initialize W2UI favorites sidebar
     await initializeFavoritesSidebar();
 
+    // Initialize stackable sidebar sections (expand/collapse + persistence)
+    initializeSidebarSections();
+
     console.log('Sidebar initialized');
   } catch (err) {
     console.error('Error initializing sidebar:', err);
+  }
+}
+
+// ── Stackable Sidebar Sections ────────────────────────────────────────────
+
+const SECTION_EXPAND_CALLBACKS = new Map();
+
+/**
+ * Register a callback to run whenever a section transitions to expanded.
+ * Used by module-specific renderers (e.g. TODO) to lazily populate on expand.
+ */
+export function onSidebarSectionExpanded(sectionName, callback) {
+  SECTION_EXPAND_CALLBACKS.set(sectionName, callback);
+}
+
+function getExpandedSectionsSet() {
+  if (!(sidebarState.expandedSections instanceof Set)) {
+    sidebarState.expandedSections = new Set(Array.isArray(sidebarState.expandedSections) ? sidebarState.expandedSections : ['favorites']);
+  }
+  return sidebarState.expandedSections;
+}
+
+async function persistExpandedSections() {
+  try {
+    const settings = await window.electronAPI.getSettings();
+    settings.sidebarExpandedSections = Array.from(getExpandedSectionsSet());
+    await window.electronAPI.saveSettings(settings);
+  } catch (err) {
+    console.warn('Failed to persist expanded sections:', err);
+  }
+}
+
+async function loadExpandedSectionsFromSettings() {
+  try {
+    const settings = await window.electronAPI.getSettings();
+    const stored = settings.sidebarExpandedSections;
+    if (Array.isArray(stored)) {
+      sidebarState.expandedSections = new Set(stored);
+    } else {
+      sidebarState.expandedSections = new Set(['favorites']);
+    }
+  } catch (err) {
+    sidebarState.expandedSections = new Set(['favorites']);
+  }
+}
+
+function applySectionCollapsedState(section) {
+  const name = section.dataset.section;
+  const expanded = getExpandedSectionsSet().has(name);
+  section.classList.toggle('collapsed', !expanded);
+  const chevron = section.querySelector('.sidebar-section-chevron');
+  if (chevron) chevron.innerHTML = expanded ? '&#9660;' : '&#9654;';
+}
+
+async function toggleSidebarSection(sectionName) {
+  const expanded = getExpandedSectionsSet();
+  const wasExpanded = expanded.has(sectionName);
+
+  if (wasExpanded) {
+    // Favorites: exit edit mode before collapsing so we don't leave stray edit UI.
+    if (sectionName === 'favorites' && favEditMode) {
+      await exitFavoritesEditMode({ saveChanges: true });
+    }
+    expanded.delete(sectionName);
+  } else {
+    expanded.add(sectionName);
+  }
+
+  const section = document.querySelector(`.sidebar-section[data-section="${sectionName}"]`);
+  if (section) applySectionCollapsedState(section);
+
+  await persistExpandedSections();
+
+  if (!wasExpanded) {
+    const cb = SECTION_EXPAND_CALLBACKS.get(sectionName);
+    if (cb) {
+      try { await cb(); } catch (err) { console.warn(`Section ${sectionName} expand callback failed:`, err); }
+    }
+  }
+}
+
+async function initializeSidebarSections() {
+  await loadExpandedSectionsFromSettings();
+
+  const container = document.getElementById('sidebar-sections');
+  if (!container) return;
+
+  container.querySelectorAll('.sidebar-section').forEach(applySectionCollapsedState);
+
+  container.addEventListener('click', (e) => {
+    const toggleEl = e.target.closest('[data-section-toggle]');
+    if (!toggleEl) return;
+    const header = e.target.closest('.sidebar-section-header');
+    if (!header) return;
+    e.stopPropagation();
+    const sectionName = toggleEl.dataset.sectionToggle;
+    if (sectionName) void toggleSidebarSection(sectionName);
+  });
+
+  // Fire expand callbacks for any sections that start expanded (e.g. TODO) so they
+  // populate on app start without requiring a user click.
+  for (const sectionName of getExpandedSectionsSet()) {
+    const cb = SECTION_EXPAND_CALLBACKS.get(sectionName);
+    if (cb) {
+      try { await cb(); } catch (err) { console.warn(`Section ${sectionName} expand callback failed:`, err); }
+    }
   }
 }
 
@@ -686,10 +795,10 @@ async function initializeFavoritesSidebar() {
     console.log('Initializing W2UI favorites sidebar with', nodes.length, 'nodes');
 
     // Initialize w2ui sidebar using the w2sidebar class
+    // (The favorites header row lives outside the w2ui container now — see index.html.)
     w2uiFavoritesSidebar = new w2sidebar({
       box: '#w2ui-favorites',
       name: 'favorites-sidebar',
-      topHTML: `<div class="favorites-header"><span class="favorites-label favorites-label-full">FAVORITES</span><span class="favorites-label favorites-label-short">FAV</span><button id="btn-favorites-cancel" class="btn-favorites-edit btn-favorites-cancel" title="Discard changes" aria-label="Discard changes"><span class="fav-cancel-icon" aria-hidden="true"></span></button><button id="btn-favorites-edit" class="btn-favorites-edit" title="Edit favorites">&#9998;</button></div>`,
       reorder: true,
       nodes: nodes,
       onClick: async (event) => {
@@ -767,16 +876,21 @@ async function initializeFavoritesSidebar() {
       }
     });
 
-    // Attach edit button handler using event delegation
-    document.getElementById('w2ui-favorites').addEventListener('click', async (e) => {
-      if (e.target.closest('#btn-favorites-cancel')) {
-        await exitFavoritesEditMode({ saveChanges: false });
-        return;
-      }
-      if (e.target.closest('#btn-favorites-edit')) {
-        await toggleFavoritesEditMode();
-      }
-    });
+    // Attach edit button handler using event delegation on the favorites section header
+    const favoritesSection = document.querySelector('.sidebar-section[data-section="favorites"]');
+    if (favoritesSection) {
+      favoritesSection.addEventListener('click', async (e) => {
+        if (e.target.closest('#btn-favorites-cancel')) {
+          e.stopPropagation();
+          await exitFavoritesEditMode({ saveChanges: false });
+          return;
+        }
+        if (e.target.closest('#btn-favorites-edit')) {
+          e.stopPropagation();
+          await toggleFavoritesEditMode();
+        }
+      });
+    }
 
     // Disable any (empty) placeholder nodes that were loaded from saved state
     visitFavoriteNodes(w2uiFavoritesSidebar.nodes, node => {
@@ -1256,6 +1370,7 @@ function enterFavoritesEditMode() {
 
   favEditMode = true;
   $("#w2ui-favorites").addClass('edit-mode');
+  $('.sidebar-section[data-section="favorites"]').addClass('edit-mode');
 
   if (!w2uiFavoritesSidebar.get('edit-AddGroup')) {
     w2uiFavoritesSidebar.add([
@@ -1273,6 +1388,7 @@ async function exitFavoritesEditMode({ saveChanges = true } = {}) {
 
   favEditMode = false;
   $("#w2ui-favorites").removeClass('edit-mode');
+  $('.sidebar-section[data-section="favorites"]').removeClass('edit-mode');
 
   const container = document.getElementById('w2ui-favorites');
   if (!container) return;

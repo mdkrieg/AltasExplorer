@@ -693,6 +693,14 @@ async function saveTodo() {
       newContent: content
     });
     await window.electronAPI.writeFileContent(notesFilePath, newFullContent);
+
+    // Refresh the sidebar TODO aggregate for this notes file.
+    // dirId is looked up in main from the notes path, so we can omit it here.
+    try {
+      await window.electronAPI.refreshTodoAggregate(notesFilePath, null);
+    } catch (aggErr) {
+      console.warn('TODO: aggregate refresh failed', aggErr);
+    }
   } catch (err) {
     console.error('TODO: failed to write notes file', err);
     closeTodoModal();

@@ -27,6 +27,7 @@ import * as notes from './modules/notes.js';
 import * as alerts from './modules/alerts.js';
 import * as settings from './modules/settings.js';
 import * as todos from './modules/todos.js';
+import * as sidebarTodos from './modules/sidebarTodos.js';
 import * as terminal from './modules/terminal.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
@@ -74,7 +75,8 @@ const SIDEBAR_COLLAPSED_WIDTH = 50;
 export let sidebarState = {
   expandedPaths: new Set(),
   selectedPath: null,
-  drives: []
+  drives: [],
+  expandedSections: new Set(['favorites'])
 };
 
 let panelDividerState = {
@@ -162,6 +164,9 @@ async function initialize() {
     });
 
     await panels.initializeAllGrids();
+    // Register sidebar section callbacks BEFORE initializeSidebar() so that
+    // sections expanded on startup fire their populate callbacks.
+    sidebarTodos.initSidebarTodos();
     await sidebar.initializeSidebar();
     sidebar.handleSidebarLayoutResize(w2layoutInstance.get('left').size);
 
