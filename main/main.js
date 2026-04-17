@@ -2753,6 +2753,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     let dirNotesFilePath;
     let dirNotesContent;
     let directoryNotes;
+    let todoAggChanged = false;
     for (const entry of entriesWithChanges) {
       if (entry.isDirectory) {
         // For directories, check if it has directory-level notes
@@ -2768,6 +2769,16 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
               dirNotesContent = '';
             }
             directoryNotes = notesParser.extractDirectoryNotes(dirNotesContent);
+
+            // Opportunistically feed child notes.txt into the TODO aggregator
+            if (dirNotesContent && entry.dir_id) {
+              try {
+                const childAgg = todoAggregator.ensureAndRefresh(dirNotesFilePath, entry.dir_id, { contentOverride: dirNotesContent });
+                if (childAgg.changed) todoAggChanged = true;
+              } catch (err) {
+                logger.warn(`todoAggregator child refresh failed for ${dirNotesFilePath}: ${err.message}`);
+              }
+            }
           } else {
             directoryNotes = '';
             dirNotesContent = '';
@@ -2794,6 +2805,10 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         const fileTodoCounts = notesParser.countTodoItems(fileSection);
         entry.todoCounts = fileTodoCounts.total > 0 ? fileTodoCounts : null;
       }
+    }
+
+    if (todoAggChanged && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('todo-aggregates-changed');
     }
 
     const changedEntries = entriesWithChanges.filter(e => e.changeState !== 'unchanged');
