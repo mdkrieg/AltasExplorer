@@ -595,6 +595,7 @@ function populateCategoryForm(record) {
 
 	$('#form-cat-description').val(record.description || '');
 	$('#form-cat-enableChecksum').prop('checked', record.enableChecksum || false);
+	$('#form-cat-displayMode').val(record.displayMode || 'details');
 	syncCategoryAutoAssignField(record.autoAssignCategory || '');
 	const selectedAttrs = record.attributes || [];
 	$('#form-cat-attributes').find('input[type="checkbox"]').each(function () {
@@ -614,6 +615,7 @@ export function clearCategoryForm() {
 
 	$('#form-cat-description').val('');
 	$('#form-cat-enableChecksum').prop('checked', false);
+	$('#form-cat-displayMode').val('details');
 	syncCategoryAutoAssignField('');
 	$('#form-cat-attributes').find('input[type="checkbox"]').prop('checked', false);
 
@@ -694,6 +696,7 @@ export async function saveCategoryFromForm() {
 			description,
 			autoAssignCategory: $('#form-cat-autoAssignCategory').val() || null,
 			enableChecksum: $('#form-cat-enableChecksum').prop('checked'),
+			displayMode: $('#form-cat-displayMode').val() || 'details',
 			attributes: selectedAttributes
 		};
 

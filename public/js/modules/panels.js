@@ -791,6 +791,10 @@ function getPanelGridHeaderElement(panelId) {
 	return document.getElementById(`grid_${getPanelGridName(panelId)}_header`);
 }
 
+function getPanelHeaderElement(panelId) {
+	return document.querySelector(`#panel-${panelId} .panel-header`);
+}
+
 function buildGridHeaderHtml(panelId, path) {
 	let buttonsHtml = `
 		<button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
@@ -831,6 +835,88 @@ function updateGridHeader(panelId, path = panelState[panelId]?.currentPath || ''
 
 function attachGridHeaderEventListeners(panelId) {
 	const headerEl = getPanelGridHeaderElement(panelId);
+	if (!headerEl) return;
+	const $header = $(headerEl);
+
+	$header.find('.panel-path').off('click').on('click', function () {
+		const $path = $(this);
+		const $input = $header.find('.panel-path-input');
+		$path.hide();
+		$input.show().select().focus();
+	});
+
+	$header.find('.panel-path-input').off('keydown blur').on('keydown', function (e) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			const newPath = $(this).val().trim();
+			const $path = $header.find('.panel-path');
+			const $input = $(this);
+			$input.hide();
+			$path.show();
+			if (newPath && newPath !== panelState[panelId].currentPath) {
+				navigateToDirectory(newPath, panelId);
+			}
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			$(this).hide();
+			$header.find('.panel-path').show();
+		}
+	}).on('blur', function () {
+		$(this).hide();
+		$header.find('.panel-path').show();
+	});
+
+	$header.find('.btn-panel-parent').off('click').on('click', function () {
+		setActivePanelId(panelId);
+		const state = panelState[panelId];
+		if (state.currentPath && state.currentPath.length > 3) {
+			const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
+			if (parentPath.length >= 2) {
+				navigateToDirectory(parentPath, panelId);
+			}
+		}
+	});
+
+	$header.find('.btn-panel-refresh').off('click').on('click', async function () {
+		setActivePanelId(panelId);
+		await navigateToDirectory(panelState[panelId].currentPath, panelId);
+	});
+
+	if (panelId === 1) {
+		$header.find('.btn-panel-settings').off('click').on('click', function () {
+			setActivePanelId(panelId);
+			showSettingsModal();
+		});
+
+		$header.find('#btn-add-panel').off('click').on('click', function () {
+			if (visiblePanels < 4) {
+				visiblePanels++;
+				const newPanelId = visiblePanels;
+				$(`#panel-${newPanelId}`).show();
+				attachPanelEventListeners(newPanelId);
+				updatePanelLayout();
+			}
+		});
+	}
+
+	if (panelId > 1) {
+		$header.find('.btn-panel-remove').off('click').on('click', function () {
+			removePanel(panelId);
+		});
+	}
+}
+
+function updatePanelHeader(panelId, path = panelState[panelId]?.currentPath || '') {
+	const headerEl = getPanelHeaderElement(panelId);
+	if (!headerEl) return;
+	const headerHtml = buildGridHeaderHtml(panelId, path);
+	headerEl.innerHTML = headerHtml;
+	headerEl.classList.add('active');
+	attachPanelHeaderEventListeners(panelId);
+}
+
+function attachPanelHeaderEventListeners(panelId) {
+	const headerEl = getPanelHeaderElement(panelId);
 	if (!headerEl) return;
 	const $header = $(headerEl);
 
@@ -2203,8 +2289,13 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		if (!directoryExists) {
 			state.currentCategory = null;
 			setPanelPathValidity(panelId, false);
+			// Show grid (not gallery) for missing directory placeholder
+			const $panelMissing = $(`#panel-${panelId}`);
+			$panelMissing.find('.panel-landing-page').hide();
+			$panelMissing.find('.panel-gallery').removeClass('active');
+			$panelMissing.find('.panel-grid').show();
 			showMissingDirectoryRecord(panelId);
-			updateGridHeader(panelId, normalizedPath);
+			updatePanelHeader(panelId, normalizedPath);
 			return;
 		}
 
@@ -2235,13 +2326,28 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		const entries = scanResult.success ? scanResult.entries : [];
 		const depth = panelState[panelId].depth || 0;
-		if (depth > 0) {
+		const isGallery = category && category.displayMode === 'gallery';
+
+		// Show the appropriate view container
+		const $panel = $(`#panel-${panelId}`);
+		$panel.find('.panel-landing-page').hide();
+		if (isGallery) {
+			$panel.find('.panel-grid').hide();
+			$panel.find('.panel-gallery').addClass('active');
+		} else {
+			$panel.find('.panel-gallery').removeClass('active');
+			$panel.find('.panel-grid').show();
+		}
+
+		if (isGallery) {
+			await populateGalleryView(entries, category, panelId);
+		} else if (depth > 0) {
 			await scanDirectoryTreeStreaming(normalizedPath, depth, panelId);
 		} else {
 			await populateFileGrid(entries, category, panelId);
 		}
 
-		updateGridHeader(panelId, normalizedPath);
+		updatePanelHeader(panelId, normalizedPath);
 		const gridToResize = panelState[panelId].w2uiGrid;
 		if (gridToResize) {
 			requestAnimationFrame(() => {
@@ -2258,11 +2364,13 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		if (category && category.enableChecksum) {
 			const grid = panelState[panelId].w2uiGrid;
-			const filesToChecksum = grid.records.filter(r => !r.isFolder && r.changeState === 'checksumPending');
-			if (filesToChecksum.length > 0) {
-				const queueIdle = !state.checksumQueue || state.checksumCancelled || state.checksumQueueIndex >= state.checksumQueue.length;
-				if (queueIdle) {
-					startChecksumQueue(filesToChecksum, panelId, dirPath);
+			if (grid) {
+				const filesToChecksum = grid.records.filter(r => !r.isFolder && r.changeState === 'checksumPending');
+				if (filesToChecksum.length > 0) {
+					const queueIdle = !state.checksumQueue || state.checksumCancelled || state.checksumQueueIndex >= state.checksumQueue.length;
+					if (queueIdle) {
+						startChecksumQueue(filesToChecksum, panelId, dirPath);
+					}
 				}
 			}
 		}
@@ -2273,7 +2381,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 }
 
 function setPanelPathValidity(panelId, isValid) {
-	const headerEl = getPanelGridHeaderElement(panelId);
+	const headerEl = getPanelHeaderElement(panelId);
 	const $path = headerEl ? $(headerEl).find('.panel-path') : $(`#panel-${panelId} .panel-path`);
 	if (isValid) {
 		$path.css('color', '');
@@ -2375,7 +2483,7 @@ async function initializeGridForPanel(panelId) {
 		reorderColumns: true,
 		recordHeight: recordHeight,
 		show: {
-			header: true,
+			header: false,
 			toolbar: true,
 			footer: true,
 			skipRecords: false,
@@ -2563,8 +2671,6 @@ async function initializeGridForPanel(panelId) {
 				if (typeof previousOnComplete === 'function') {
 					previousOnComplete.call(this, event);
 				}
-				const currentPath = panelState[panelId]?.currentPath || 'Loading...';
-				updateGridHeader(panelId, currentPath);
 				refreshFilterHeaderButtons(panelId);
 			};
 		}
@@ -2597,7 +2703,7 @@ async function initializeGridForPanel(panelId) {
 	bindGridFilterControls(panelId);
 	refreshFilterHeaderButtons(panelId);
 
-	updateGridHeader(panelId, panelState[panelId].currentPath || 'Loading...');
+	updatePanelHeader(panelId, panelState[panelId].currentPath || 'Loading...');
 }
 
 async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {
@@ -2830,6 +2936,224 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 	if (grid) {
 		setPanelSourceRecords(panelId, records);
 	}
+}
+
+async function populateGalleryView(entries, currentDirCategory, panelId = activePanelId) {
+	const state = panelState[panelId];
+	const [settings, tagDefs] = await Promise.all([
+		window.electronAPI.getSettings(),
+		window.electronAPI.loadTags()
+	]);
+
+	const hideDotDirectory = settings.hide_dot_directory || false;
+	const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
+	const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
+	const currentFolderName = state.currentPath.split(/[\\\/]/).filter(p => p).pop() || state.currentPath;
+
+	let filteredEntries = entries;
+	if (hideDotDirectory) {
+		filteredEntries = entries.filter(e => e.filename !== '.');
+	} else if (showFolderNameWithDotEntries) {
+		filteredEntries = filteredEntries.map(e => {
+			if (e.filename === '.') return { ...e, displayFilename: `. (${currentFolderName})` };
+			return e;
+		});
+	}
+
+	if (!hideDotDotDirectory && state.currentPath) {
+		const parentMetadata = await window.electronAPI.getParentDirectoryMetadata(state.currentPath);
+		if (parentMetadata) {
+			const dotIndex = filteredEntries.findIndex(e => e.filename === '.');
+			const insertIndex = dotIndex >= 0 ? dotIndex + 1 : 0;
+			let parentDisplayFilename = '..';
+			if (showFolderNameWithDotEntries && parentMetadata.path) {
+				const parentFolderName = parentMetadata.path.split(/[\\\/]/).filter(p => p).pop() || parentMetadata.path;
+				parentDisplayFilename = `.. (${parentFolderName})`;
+			}
+			filteredEntries = [...filteredEntries];
+			filteredEntries.splice(insertIndex, 0, { ...parentMetadata, displayFilename: parentDisplayFilename });
+		}
+	}
+
+	const folders = filteredEntries.filter(e => e.isDirectory);
+	const files = filteredEntries.filter(e => !e.isDirectory);
+
+	const galleryRecords = [];
+	let recordId = 1;
+
+	// Build folder records
+	for (const folder of folders) {
+		let category = currentDirCategory;
+		let iconUrl = '';
+		if (folder.filename !== '.' && folder.filename !== '..') {
+			try {
+				category = await window.electronAPI.getCategoryForDirectory(folder.path) || currentDirCategory;
+			} catch (_) {}
+		}
+		if (category) {
+			iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, folder.initials || null);
+		} else {
+			iconUrl = 'assets/icons/folder-icon.png';
+		}
+		galleryRecords.push({
+			recid: recordId++,
+			icon: iconUrl,
+			filename: folder.displayFilename || folder.filename,
+			filenameRaw: folder.filename,
+			path: folder.path,
+			isFolder: true,
+			changeState: folder.changeState || 'same',
+			tags: folder.tags || null,
+			inode: folder.inode,
+			dir_id: folder.dir_id || null,
+			orphan_id: folder.orphan_id || null
+		});
+	}
+
+	// Build file records
+	const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','bmp','tiff','tif','avif','heic','heif','svg']);
+	const VIDEO_EXTS = new Set(['mp4','mov','avi','mkv','webm','m4v','mpg','mpeg','wmv','flv']);
+	for (const file of files) {
+		const matchedFt = matchFileType(file.filename);
+		const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
+		const iconUrl = file.changeState === 'moved'
+			? 'assets/icons/file-moved.svg'
+			: `assets/icons/${ftIconFile}`;
+		const ext = file.filename.toLowerCase().split('.').pop();
+		const isImageType = (matchedFt && matchedFt.type === 'Image') || IMAGE_EXTS.has(ext);
+		const isVideoType = (matchedFt && matchedFt.type === 'Video') || VIDEO_EXTS.has(ext);
+		const thumbnailType = file.changeState === 'moved' ? 'icon'
+			: isImageType ? 'image' : isVideoType ? 'video' : 'icon';
+		galleryRecords.push({
+			recid: recordId++,
+			icon: iconUrl,
+			filename: file.displayFilename || file.filename,
+			filenameRaw: file.filename,
+			path: file.path,
+			isFolder: false,
+			changeState: file.changeState || 'same',
+			tags: file.tags || null,
+			inode: file.inode,
+			dir_id: file.dir_id || null,
+			orphan_id: file.orphan_id || null,
+			thumbnailType
+		});
+	}
+
+	state.galleryRecords = galleryRecords;
+	state.gallerySelectedRecids = new Set();
+
+	renderGallery(panelId, tagDefs);
+}
+
+function renderGallery(panelId, tagDefs) {
+	const state = panelState[panelId];
+	const records = state.galleryRecords || [];
+	const selected = state.gallerySelectedRecids || new Set();
+
+	const $gallery = $(`#panel-${panelId} .panel-gallery`);
+	$gallery.empty();
+
+	for (const record of records) {
+		const isSelected = selected.has(record.recid);
+		const tagBadgesHtml = record.tags ? renderTagBadges(record.tags, tagDefs) : '';
+
+		let thumbHtml;
+		const thumbType = record.thumbnailType || 'icon';
+		if (thumbType === 'image') {
+			const fileUrl = 'file:///' + record.path.replace(/\\/g, '/');
+			thumbHtml = `<img class="gallery-thumb" src="${fileUrl}" alt="" loading="lazy">`;
+		} else if (thumbType === 'video') {
+			const fileUrl = 'file:///' + record.path.replace(/\\/g, '/');
+			thumbHtml = `<video class="gallery-video-thumb" data-src="${fileUrl}" preload="none" muted playsinline></video>`;
+		} else {
+			thumbHtml = `<img class="gallery-item-icon" src="${record.icon}" alt="">`;
+		}
+
+		const $item = $(`
+			<div class="gallery-item${isSelected ? ' gallery-item-selected' : ''}"
+				data-recid="${record.recid}">
+				${thumbHtml}
+				<div class="gallery-item-name">${record.filename}</div>
+				${tagBadgesHtml ? `<div class="gallery-item-tags">${tagBadgesHtml}</div>` : ''}
+			</div>
+		`);
+		$gallery.append($item);
+	}
+
+	// Lazy-load video thumbnails via IntersectionObserver (seek to 1 s for poster frame)
+	const videoEls = $gallery[0].querySelectorAll('.gallery-video-thumb[data-src]');
+	if (videoEls.length > 0) {
+		const videoObserver = new IntersectionObserver((entries, obs) => {
+			entries.forEach(entry => {
+				if (!entry.isIntersecting) return;
+				const vid = entry.target;
+				obs.unobserve(vid);
+				vid.src = vid.dataset.src;
+				vid.addEventListener('loadeddata', () => {
+					try { vid.currentTime = 1; } catch (_) {}
+				}, { once: true });
+			});
+		}, { root: $gallery[0], rootMargin: '100px' });
+		videoEls.forEach(v => videoObserver.observe(v));
+	}
+
+	// Bind gallery events
+	$gallery.off('click.gallery dblclick.gallery contextmenu.gallery');
+
+	$gallery.on('click.gallery', '.gallery-item', function (e) {
+		setActivePanelId(panelId);
+		const recid = parseInt($(this).data('recid'), 10);
+		const record = (state.galleryRecords || []).find(r => r.recid === recid);
+		if (!record) return;
+
+		if (e.ctrlKey || e.metaKey) {
+			if (state.gallerySelectedRecids.has(recid)) {
+				state.gallerySelectedRecids.delete(recid);
+			} else {
+				state.gallerySelectedRecids.add(recid);
+			}
+		} else {
+			state.gallerySelectedRecids = new Set([recid]);
+		}
+
+		// Update selection visuals
+		$gallery.find('.gallery-item').removeClass('gallery-item-selected');
+		state.gallerySelectedRecids.forEach(id => {
+			$gallery.find(`.gallery-item[data-recid="${id}"]`).addClass('gallery-item-selected');
+		});
+
+		if (getPanelViewType(panelId) !== 'properties') {
+			updateSelectedItemFromRecord(record, panelId);
+		}
+	});
+
+	$gallery.on('dblclick.gallery', '.gallery-item', function () {
+		setActivePanelId(panelId);
+		const recid = parseInt($(this).data('recid'), 10);
+		const record = (state.galleryRecords || []).find(r => r.recid === recid);
+		if (!record) return;
+		if (record.isFolder && record.changeState !== 'moved') {
+			navigateToDirectory(record.path, panelId);
+		}
+	});
+
+	$gallery.on('contextmenu.gallery', '.gallery-item', async function (e) {
+		e.preventDefault();
+		setActivePanelId(panelId);
+		const recid = parseInt($(this).data('recid'), 10);
+		if (!state.gallerySelectedRecids.has(recid)) {
+			state.gallerySelectedRecids = new Set([recid]);
+			$gallery.find('.gallery-item').removeClass('gallery-item-selected');
+			$(this).addClass('gallery-item-selected');
+		}
+		const selectedRecords = [...state.gallerySelectedRecids].map(id =>
+			(state.galleryRecords || []).find(r => r.recid === id)
+		).filter(Boolean);
+		if (selectedRecords.length === 0) return;
+		const menuItems = await generateW2UIContextMenu(selectedRecords, visiblePanels);
+		showCustomContextMenu(menuItems, e.clientX, e.clientY, panelId);
+	});
 }
 
 function openInitialsEditor(record, panelId) {
@@ -3180,6 +3504,7 @@ export function setActivePanelId(panelId) {
 export function getPanelViewType(panelId) {
 	const $panel = $(`#panel-${panelId}`);
 	if ($panel.find('.panel-file-view').is(':visible')) return 'file';
+	if ($panel.find('.panel-gallery').hasClass('active')) return 'gallery';
 	if ($panel.find('.panel-grid').is(':visible')) return 'grid';
 	return 'properties';
 }
@@ -3210,8 +3535,8 @@ export function navigateForward() {
 }
 
 export function activatePathEditMode(panelId) {
-	const headerEl = getPanelGridHeaderElement(panelId);
-	const $header = headerEl ? $(headerEl) : $(`#panel-${panelId} .w2ui-panel-title`);
+	const headerEl = getPanelHeaderElement(panelId);
+	const $header = headerEl ? $(headerEl) : $(`#panel-${panelId} .panel-header`);
 	const $pathDisplay = $header.find('.panel-path');
 	const $pathInput = $header.find('.panel-path-input');
 	const currentPath = panelState[panelId].currentPath;
@@ -3221,8 +3546,8 @@ export function activatePathEditMode(panelId) {
 }
 
 export async function deactivatePathEditMode(panelId, navigateToNewPath = false, newPath = '') {
-	const headerEl = getPanelGridHeaderElement(panelId);
-	const $header = headerEl ? $(headerEl) : $(`#panel-${panelId} .w2ui-panel-title`);
+	const headerEl = getPanelHeaderElement(panelId);
+	const $header = headerEl ? $(headerEl) : $(`#panel-${panelId} .panel-header`);
 	const $pathDisplay = $header.find('.panel-path');
 	const $pathInput = $header.find('.panel-path-input');
 	$pathInput.hide();
@@ -3629,7 +3954,7 @@ function shiftPanelDown(panelId) {
 	const $currentGrid = $(`#panel-${panelId} .panel-grid`);
 	if (panelState[panelId].w2uiGrid) {
 		panelState[panelId].w2uiGrid.render($currentGrid[0]);
-		updateGridHeader(panelId, panelState[panelId].currentPath || 'Loading...');
+		updatePanelHeader(panelId, panelState[panelId].currentPath || 'Loading...');
 	}
 }
 
@@ -3660,14 +3985,18 @@ function clearPanelState(panelId) {
 		filterMenuField: null,
 		sourceRecords: [],
 		currentAttrColumns: [],
-		currentAttrDefinitions: {}
+		currentAttrDefinitions: {},
+		galleryRecords: [],
+		gallerySelectedRecids: new Set()
 	};
 
 	window.electronAPI.unregisterWatchedPath(panelId);
 	const $panel = $(`#panel-${panelId}`);
 	setPanelPathValidity(panelId, true);
+	$panel.find('.panel-header').removeClass('active');
 	$panel.find('.panel-landing-page').show();
 	$panel.find('.panel-grid').hide();
+	$panel.find('.panel-gallery').removeClass('active');
 	$panel.find('.panel-file-view').hide();
 }
 
@@ -4142,7 +4471,7 @@ export function applyRecordHeightToAllGrids(recordHeight) {
 			}
 			const currentPath = panelState[panelId].currentPath;
 			if (currentPath) {
-				updateGridHeader(panelId, currentPath);
+				updatePanelHeader(panelId, currentPath);
 			}
 		}
 	}

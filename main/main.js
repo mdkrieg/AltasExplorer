@@ -695,17 +695,17 @@ ipcMain.handle('get-categories-list', () => {
  */
 ipcMain.handle('save-category', (event, categoryData) => {
   try {
-    const { name, bgColor, textColor, description, patterns, enableChecksum, attributes: attrs, autoAssignCategory } = categoryData;
+    const { name, bgColor, textColor, description, patterns, enableChecksum, attributes: attrs, autoAssignCategory, displayMode } = categoryData;
     
     // Check if category exists
     const existing = categories.getCategory(name);
     
     if (existing) {
       // Update existing
-      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory);
+      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || null);
     } else {
       // Create new
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory);
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details');
     }
   } catch (err) {
     logger.error('Error saving category:', err.message);
@@ -718,16 +718,16 @@ ipcMain.handle('save-category', (event, categoryData) => {
  */
 ipcMain.handle('update-category', (event, categoryData) => {
   try {
-    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, attributes: attrs, autoAssignCategory } = categoryData;
+    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, attributes: attrs, autoAssignCategory, displayMode } = categoryData;
     const updateName = name || oldName;
     
     // If name changed, delete old and create new
     if (oldName && name && oldName !== name) {
       categories.deleteCategory(oldName);
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory);
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details');
     } else {
       // Just update
-      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || [], autoAssignCategory);
+      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || [], autoAssignCategory, displayMode || null);
     }
   } catch (err) {
     logger.error('Error updating category:', err.message);
@@ -1158,7 +1158,7 @@ ipcMain.handle('get-file-type-icons', () => {
     const iconsDir = path.join(__dirname, '..', 'public', 'assets', 'icons');
     if (!fsSync.existsSync(iconsDir)) return [];
     return fsSync.readdirSync(iconsDir)
-      .filter(f => /^user-.*\.png$/i.test(f))
+      .filter(f => /^user-.*\.(png|svg)$/i.test(f))
       .sort();
   } catch (err) {
     logger.error('Error listing file type icons:', err.message);
@@ -3333,7 +3333,8 @@ app.on('ready', () => {
     "default-src 'none'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    "img-src 'self' data: file:",
+    "media-src file:",
     "font-src 'self'",
     "connect-src 'none'"
   ].join('; ');

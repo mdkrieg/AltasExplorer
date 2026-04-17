@@ -56,7 +56,8 @@ class CategoryService {
         description: '',
         enableChecksum: false,
         attributes: [],
-        autoAssignCategory: null
+        autoAssignCategory: null,
+        displayMode: 'details'
       };
       fs.writeFileSync(defaultCategoryPath, JSON.stringify(defaultCategory, null, 2));
     }
@@ -155,6 +156,10 @@ class CategoryService {
           if (!category.attributes) {
             category.attributes = [];
           }
+          // Ensure backward compatibility: add displayMode if missing
+          if (category.displayMode === undefined) {
+            category.displayMode = 'details';
+          }
           category.autoAssignCategory = this.normalizeAutoAssignCategory(category.autoAssignCategory);
           if (category.name === 'Default') {
             category.autoAssignCategory = null;
@@ -180,7 +185,7 @@ class CategoryService {
   /**
    * Create a new category
    */
-  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = [], autoAssignCategory = null) {
+  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = [], autoAssignCategory = null, displayMode = 'details') {
     if (name === 'Default') {
       throw new Error('Cannot create a category named "Default" - it already exists');
     }
@@ -195,7 +200,8 @@ class CategoryService {
       description,
       enableChecksum,
       attributes,
-      autoAssignCategory: normalizedAutoAssignCategory
+      autoAssignCategory: normalizedAutoAssignCategory,
+      displayMode: displayMode || 'details'
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
@@ -207,7 +213,7 @@ class CategoryService {
   /**
    * Update an existing category
    */
-  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null, autoAssignCategory = undefined) {
+  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null, autoAssignCategory = undefined, displayMode = null) {
     // Get existing category to preserve fields if not specified
     const existingCategory = this.getCategory(name);
     const checksumSetting = enableChecksum !== null ? enableChecksum : (existingCategory?.enableChecksum || false);
@@ -215,6 +221,7 @@ class CategoryService {
     const autoAssignSetting = autoAssignCategory !== undefined
       ? this.validateAutoAssignCategory(name, autoAssignCategory)
       : this.validateAutoAssignCategory(name, existingCategory?.autoAssignCategory || null);
+    const displayModeSetting = displayMode !== null ? displayMode : (existingCategory?.displayMode || 'details');
 
     const category = {
       name,
@@ -224,7 +231,8 @@ class CategoryService {
       description,
       enableChecksum: checksumSetting,
       attributes: attributesSetting,
-      autoAssignCategory: autoAssignSetting
+      autoAssignCategory: autoAssignSetting,
+      displayMode: displayModeSetting
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);

@@ -58,8 +58,8 @@ Philosophy:
 [ ] One-click Backups
 [ ] Diffing between files
 [ ] Icons for context menu
-[ ] Photo / Media mode per category - thumbnails and preview pane
-[ ] Fix / figure out what to do with link in markdown (web links open in Electron)
+[x] Photo / Media mode per category - thumbnails and preview pane
+[x] Fix / figure out what to do with link in markdown (web links open in Electron)
 [ ] Historical snapshot viewer
 [x] Option for "Active Monitoring", taking combination of category, tags, and attributes
 [x] Notes column change - when there are no notes for a file or dir the notes column offers a "+" icon that opens a notes modal already in edit mode.

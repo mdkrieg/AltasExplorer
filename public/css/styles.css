@@ -122,7 +122,98 @@ button:active {
   min-height: 0;
 }
 
+/* Standalone panel header (path display) */
+.panel-header {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 12px;
+  flex: 0 0 auto;
+  min-height: 28px;
+}
+.panel-header.active {
+  display: flex;
+}
 
+/* Panel toolbar - w2toolbar renders its own chrome */
+.panel-toolbar {
+  display: none;
+  flex: 0 0 auto;
+}
+.panel-toolbar.active {
+  display: block;
+}
+
+/* Gallery view container */
+.panel-item > .panel-gallery {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  display: none;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  padding: 8px;
+  gap: 8px;
+}
+.panel-item > .panel-gallery.active {
+  display: flex;
+}
+
+/* Gallery card */
+.gallery-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100px;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  user-select: none;
+  box-sizing: border-box;
+}
+.gallery-item:hover {
+  background: #f0f0f0;
+  border-color: #ddd;
+}
+.gallery-item.gallery-item-selected {
+  background: #dce9f5;
+  border-color: #90caf9;
+}
+.gallery-item img,
+.gallery-item video {
+  width: 64px;
+  height: 64px;
+  display: block;
+  object-fit: contain;
+}
+.gallery-item .gallery-thumb,
+.gallery-item .gallery-video-thumb {
+  object-fit: cover;
+  background: #e8e8e8;
+  border-radius: 4px;
+}
+.gallery-item-name {
+  font-size: 11px;
+  text-align: center;
+  word-break: break-word;
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.gallery-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  justify-content: center;
+  margin-top: 2px;
+}
 
 /* Panel Number Badge */
 .panel-number {

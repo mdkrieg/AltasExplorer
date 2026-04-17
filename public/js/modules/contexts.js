@@ -255,7 +255,11 @@ async function handleContextMenuClick(event, panelId) {
 			if (firstRecord && firstRecord.isFolder) {
 				await panels.navigateToDirectory(firstRecord.path, targetPanel);
 				$panel.find('.panel-landing-page').hide();
-				$panel.find('.panel-grid').show();
+				// Only force grid visible when not in gallery mode
+				const viewType = panels.getPanelViewType(targetPanel);
+				if (viewType !== 'gallery') {
+					$panel.find('.panel-grid').show();
+				}
 				const grid = panelState[targetPanel].w2uiGrid;
 				if (grid && grid.resize) grid.resize();
 			} else if (firstRecord) {

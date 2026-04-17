@@ -10,12 +10,51 @@ const DEFAULT_FILE_TYPES = [
   { pattern: '*.json', type: 'JSON' },
   { pattern: '*.csv', type: 'CSV' },
   { pattern: '*.png', type: 'Image' },
-  { pattern: '*.txt', type: 'Text' }
+  { pattern: '*.jpg', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.jpeg', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.gif', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.webp', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.bmp', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.tiff', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.svg', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.txt', type: 'Text' },
+  { pattern: '*.mp4', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.mov', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.avi', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.mkv', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.webm', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.m4v', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.wmv', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.flv', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.mpg', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.mpeg', type: 'Video', icon: 'user-video.svg' }
+];
+
+// Entries to add to existing installs that pre-date them being in DEFAULT_FILE_TYPES
+const MIGRATION_TYPES = [
+  { pattern: '*.jpg', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.jpeg', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.gif', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.webp', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.bmp', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.tiff', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.svg', type: 'Image', icon: 'user-image.png' },
+  { pattern: '*.mp4', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.mov', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.avi', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.mkv', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.webm', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.m4v', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.wmv', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.flv', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.mpg', type: 'Video', icon: 'user-video.svg' },
+  { pattern: '*.mpeg', type: 'Video', icon: 'user-video.svg' }
 ];
 
 class FileTypeService {
   constructor() {
     this.ensureFile();
+    this.migrateFileTypes();
   }
 
   /**
@@ -118,6 +157,31 @@ class FileTypeService {
 
   _save(types) {
     fs.writeFileSync(FILETYPES_FILE, JSON.stringify(types, null, 2));
+  }
+
+  /**
+   * Additive migration: append any MIGRATION_TYPES entries not yet in the file.
+   * Preserves all existing user customisations.
+   */
+  migrateFileTypes() {
+    try {
+      const content = fs.readFileSync(FILETYPES_FILE, 'utf8');
+      const types = JSON.parse(content);
+      const existingPatterns = new Set(types.map(t => t.pattern.toLowerCase()));
+      let changed = false;
+      for (const entry of MIGRATION_TYPES) {
+        if (!existingPatterns.has(entry.pattern.toLowerCase())) {
+          types.push({ ...entry });
+          existingPatterns.add(entry.pattern.toLowerCase());
+          changed = true;
+        }
+      }
+      if (changed) {
+        this._save(types);
+      }
+    } catch (err) {
+      logger.error('Error migrating file types:', err.message);
+    }
   }
 }
 
