@@ -40,6 +40,11 @@
       "key": "Ctrl+Enter",
       "default": "Ctrl+Enter"
     },
+    "cycle_panel": {
+      "label": "Cycle Panel Focus",
+      "key": "Tab",
+      "default": "Tab"
+    },
     "enter_path": {
       "label": "Enter Path",
       "key": "Enter",

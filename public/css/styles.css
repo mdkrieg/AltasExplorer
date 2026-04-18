@@ -1374,6 +1374,11 @@ hr {
 }
 
 .w2ui-grid .w2ui-grid-row.w2ui-selected {
+  background: #e0e0e0;
+  color: #555;
+}
+
+.panel-active .w2ui-grid .w2ui-grid-row.w2ui-selected {
   background: #e3f2fd;
   color: #1976d2;
 }
@@ -1443,13 +1448,9 @@ hr {
   justify-content: center;
   width: 18px;
   height: 18px;
-  border: 1px solid #b9c2cc;
-  border-radius: 50%;
-  background: #fff;
+  border: 0;
+  background: transparent;
   color: #5c6670;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -1869,6 +1870,34 @@ hr {
   background: #e8e8e8;
   border-bottom: 1px solid #ddd;
   flex-shrink: 0;
+}
+
+.sidebar-focused #sidebar-toolbar {
+  background: linear-gradient(to bottom, #d4f0f0, #e8e8e8);
+  border-bottom-color: #c0dede;
+}
+
+.sidebar-focused.sidebar-toolbar-focused #sidebar-toolbar {
+  background: #d4f0f0;
+  border-bottom-color: #adffff;
+}
+
+#sidebar-toolbar button.sidebar-arrow-focused {
+  outline: 2px solid #7ecece;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.sidebar-section-header.sidebar-arrow-focused {
+  background: #d4f0f0;
+}
+
+.w2ui-node.sidebar-arrow-focused,
+.w2ui-node-group.sidebar-arrow-focused,
+.sidebar-item.sidebar-arrow-focused,
+.sidebar-todo-group-header.sidebar-arrow-focused,
+.sidebar-todo-item.sidebar-arrow-focused {
+  background: #d4f0f0;
 }
 
 #sidebar-toolbar button {

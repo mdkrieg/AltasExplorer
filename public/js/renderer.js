@@ -65,6 +65,7 @@ export let selectedItemState = {
 };
 
 export let activePanelId = 1;
+export let sidebarHasFocus = false;
 let allCategories = {};
 let allTags = [];
 export let fileEditMode = false;
@@ -100,6 +101,22 @@ export function setSelectedItemState(value) {
 
 export function syncRendererActivePanelId(panelId) {
   activePanelId = panelId;
+}
+
+export function setSidebarFocus(focused) {
+  sidebarHasFocus = focused;
+  const $sidebar = $('#sidebar-content');
+  if (focused) {
+    $sidebar.addClass('sidebar-focused');
+    // Clear panel focus styling
+    for (let i = 1; i <= 4; i++) {
+      $(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
+      $(`#panel-${i}`).removeClass('panel-active');
+    }
+  } else {
+    $sidebar.removeClass('sidebar-focused');
+    sidebar.clearSidebarArrowFocus();
+  }
 }
 
 export function getAllCategories() {
@@ -420,11 +437,58 @@ async function showLoadLayoutModal() {
  * Attach event listeners to buttons and grid
  */
 function attachEventListeners() {
-  // Capture-phase arrow key handler for grid navigation.
-  // Must be capture phase (fires before w2ui's textarea keydown handler) so we can
-  // stopPropagation() and prevent w2ui from also processing the key internally,
-  // which would otherwise trigger its nextRow() and crash on undefined records.
+  // Capture-phase key handler for grid navigation and panel cycling.
+  // Must be capture phase so we can intercept before the browser or w2ui processes them.
   document.addEventListener('keydown', function (event) {
+    // Tab / Shift+Tab: cycle focus through sidebar and panels
+    if (event.key === 'Tab' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      const tgt = event.target;
+      const inInput = tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+          tgt.contentEditable === 'true' ||
+          (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0));
+      if (!inInput) {
+        event.preventDefault();
+        event.stopPropagation();
+        // Tab order: sidebar(0) → panel 1 → panel 2 → ... → panel N → sidebar(0)
+        // Current position: 0 = sidebar, 1..N = panel id
+        const current = sidebarHasFocus ? 0 : activePanelId;
+        const slotCount = panels.visiblePanels + 1; // sidebar + N panels
+        let next;
+        if (event.shiftKey) {
+          next = (current - 1 + slotCount) % slotCount;
+        } else {
+          next = (current + 1) % slotCount;
+        }
+        if (next === 0) {
+          // Focus sidebar
+          setSidebarFocus(true);
+        } else {
+          // Focus panel (setActivePanelId clears sidebar focus)
+          panels.setActivePanelId(next);
+          // Auto-focus the grid so arrow keys work immediately
+          panels.setGridFocusedPanelId(next);
+        }
+        return;
+      }
+    }
+
+    // Sidebar keyboard navigation when sidebar is focused
+    if (sidebarHasFocus && !event.altKey && !event.ctrlKey && !event.metaKey &&
+        (event.key === 'ArrowUp' || event.key === 'ArrowDown' ||
+         event.key === 'ArrowLeft' || event.key === 'ArrowRight' ||
+         event.key === 'Enter')) {
+      const tgt = event.target;
+      const inInput = tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+          tgt.contentEditable === 'true' ||
+          (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0));
+      if (!inInput) {
+        event.preventDefault();
+        event.stopPropagation();
+        sidebar.handleSidebarArrowKey(event.key);
+        return;
+      }
+    }
+
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
         !event.altKey && !event.ctrlKey && !event.metaKey) {
       let targetPanelId = panels.gridFocusedPanelId;
@@ -591,15 +655,20 @@ function attachEventListeners() {
 
   // Window focus/blur handlers for panel selection styling
   $(window).blur(function () {
-    // When window loses focus, remove selection styling from all panels
+    // When window loses focus, remove selection styling from all panels and sidebar
     for (let i = 1; i <= 4; i++) {
       $(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
     }
+    $('#sidebar-content').removeClass('sidebar-focused');
   });
 
   $(window).focus(function () {
-    // When window regains focus, restore selection styling to active panel
-    $(`#panel-${activePanelId} .panel-number`).addClass('panel-number-selected');
+    // When window regains focus, restore focus styling
+    if (sidebarHasFocus) {
+      $('#sidebar-content').addClass('sidebar-focused');
+    } else {
+      $(`#panel-${activePanelId} .panel-number`).addClass('panel-number-selected');
+    }
   });
 
   // View button - show layout modal

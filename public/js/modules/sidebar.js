@@ -20,6 +20,10 @@ import {
 } from '../renderer.js';
 
 // ── Module-level state (private to this module) ────────────────────────────
+// Sidebar arrow-key focus: 'toolbar' or 'sections', plus an index within that zone
+let sidebarFocusZone = null; // null | 'toolbar' | 'sections'
+let sidebarFocusIndex = -1;
+
 let w2uiFavoritesSidebar = null;
 let favoritesContextMenuTarget = null;
 let favIconMap = {};
@@ -1705,5 +1709,215 @@ export function toggleSidebarCollapse() {
     applySidebarDragWidth(sidebarExpandedWidth);
   } else {
     setSidebarWidth(SIDEBAR_COLLAPSED_WIDTH, true);
+  }
+}
+
+// ── Sidebar arrow-key navigation ──────────────────────────────────────────
+
+function getToolbarButtons() {
+  return Array.from(document.querySelectorAll('#sidebar-toolbar button'));
+}
+
+/**
+ * Build a flat, ordered list of every visible navigable element inside
+ * #sidebar-sections.  Each entry is { el, type } where type is one of:
+ *   'section-header' — the collapsible section header (Favorites / TODO)
+ *   'fav-group'      — a w2ui favorites group node
+ *   'fav-item'       — a w2ui favorites item node
+ *   'sidebar-item'   — a directory item from the tree browser
+ *   'todo-group'     — a TODO group header
+ *   'todo-item'      — an individual TODO item
+ */
+function getVisibleSectionItems() {
+  const items = [];
+  const sections = document.querySelectorAll('#sidebar-sections .sidebar-section');
+
+  for (const section of sections) {
+    const header = section.querySelector('.sidebar-section-header');
+    if (!header) continue;
+    const sectionName = section.dataset.section;
+    items.push({ el: header, type: 'section-header', section: sectionName });
+
+    // Only include children if the section is expanded
+    if (section.classList.contains('collapsed')) continue;
+
+    if (sectionName === 'favorites') {
+      // w2ui sidebar nodes — walk visible nodes in DOM order
+      const favContainer = section.querySelector('.sidebar-section-body');
+      if (favContainer) {
+        const nodes = favContainer.querySelectorAll('.w2ui-node, .w2ui-node-group');
+        for (const node of nodes) {
+          // Skip nodes hidden by w2ui collapse (parent has display:none)
+          if (node.offsetParent === null) continue;
+          const isGroup = node.classList.contains('w2ui-node-group');
+          items.push({ el: node, type: isGroup ? 'fav-group' : 'fav-item' });
+        }
+      }
+      // Also include tree browser items (.sidebar-item) if they exist inside this section
+      const treeItems = section.querySelectorAll('.sidebar-item');
+      for (const item of treeItems) {
+        if (item.offsetParent === null) continue;
+        items.push({ el: item, type: 'sidebar-item' });
+      }
+    } else if (sectionName === 'todos') {
+      const todoBody = section.querySelector('.sidebar-section-body');
+      if (todoBody) {
+        const groups = todoBody.querySelectorAll('.sidebar-todo-group');
+        for (const group of groups) {
+          const groupHeader = group.querySelector('.sidebar-todo-group-header');
+          if (groupHeader) items.push({ el: groupHeader, type: 'todo-group', groupEl: group });
+          // Only show items if the group is expanded
+          if (!group.classList.contains('collapsed')) {
+            const todoItems = group.querySelectorAll('.sidebar-todo-item');
+            for (const item of todoItems) {
+              if (item.offsetParent === null) continue;
+              items.push({ el: item, type: 'todo-item' });
+            }
+          }
+        }
+      }
+    }
+  }
+  return items;
+}
+
+export function clearSidebarArrowFocus() {
+  document.querySelectorAll('.sidebar-arrow-focused').forEach(el => el.classList.remove('sidebar-arrow-focused'));
+  const $sidebar = document.getElementById('sidebar-content');
+  if ($sidebar) $sidebar.classList.remove('sidebar-toolbar-focused');
+  sidebarFocusZone = null;
+  sidebarFocusIndex = -1;
+}
+
+function applySidebarArrowFocus() {
+  document.querySelectorAll('.sidebar-arrow-focused').forEach(el => el.classList.remove('sidebar-arrow-focused'));
+  const $sidebar = document.getElementById('sidebar-content');
+  if (sidebarFocusZone === 'toolbar') {
+    const buttons = getToolbarButtons();
+    if (buttons[sidebarFocusIndex]) buttons[sidebarFocusIndex].classList.add('sidebar-arrow-focused');
+    if ($sidebar) $sidebar.classList.add('sidebar-toolbar-focused');
+  } else {
+    if ($sidebar) $sidebar.classList.remove('sidebar-toolbar-focused');
+    if (sidebarFocusZone === 'sections') {
+      const items = getVisibleSectionItems();
+      if (items[sidebarFocusIndex]) {
+        items[sidebarFocusIndex].el.classList.add('sidebar-arrow-focused');
+        items[sidebarFocusIndex].el.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }
+}
+
+export function handleSidebarArrowKey(key) {
+  const toolbarButtons = getToolbarButtons();
+
+  // If nothing focused yet, start at first toolbar button
+  if (sidebarFocusZone === null) {
+    sidebarFocusZone = 'toolbar';
+    sidebarFocusIndex = 0;
+    applySidebarArrowFocus();
+    return;
+  }
+
+  if (sidebarFocusZone === 'toolbar') {
+    if (key === 'ArrowLeft') {
+      if (sidebarFocusIndex > 0) sidebarFocusIndex--;
+      applySidebarArrowFocus();
+    } else if (key === 'ArrowRight') {
+      if (sidebarFocusIndex < toolbarButtons.length - 1) sidebarFocusIndex++;
+      applySidebarArrowFocus();
+    } else if (key === 'ArrowDown') {
+      const sectionItems = getVisibleSectionItems();
+      if (sectionItems.length > 0) {
+        sidebarFocusZone = 'sections';
+        sidebarFocusIndex = 0;
+        applySidebarArrowFocus();
+      }
+    } else if (key === 'Enter') {
+      if (toolbarButtons[sidebarFocusIndex]) toolbarButtons[sidebarFocusIndex].click();
+    }
+    return;
+  }
+
+  // sections zone
+  const items = getVisibleSectionItems();
+  if (items.length === 0) return;
+  const current = items[sidebarFocusIndex];
+
+  if (key === 'ArrowUp') {
+    if (sidebarFocusIndex > 0) {
+      sidebarFocusIndex--;
+      applySidebarArrowFocus();
+    } else {
+      // Move back to toolbar
+      sidebarFocusZone = 'toolbar';
+      sidebarFocusIndex = 0;
+      applySidebarArrowFocus();
+    }
+  } else if (key === 'ArrowDown') {
+    if (sidebarFocusIndex < items.length - 1) {
+      sidebarFocusIndex++;
+      applySidebarArrowFocus();
+    }
+  } else if (key === 'ArrowLeft') {
+    if (current?.type === 'section-header') {
+      // Collapse the section
+      if (current.section && getExpandedSectionsSet().has(current.section)) {
+        void toggleSidebarSection(current.section);
+      }
+    } else if (current?.type === 'sidebar-item') {
+      // Collapse tree item
+      const $item = $(current.el);
+      if ($item.attr('data-expanded') === 'true') {
+        void toggleSidebarItemExpansion($item);
+      }
+    } else if (current?.type === 'todo-group') {
+      // Collapse todo group
+      const group = current.groupEl;
+      if (group && !group.classList.contains('collapsed')) {
+        const groupHeader = group.querySelector('.sidebar-todo-group-header');
+        if (groupHeader) groupHeader.click();
+      }
+    } else if (current?.type === 'fav-group' || current?.type === 'fav-item') {
+      // Collapse w2ui node if expanded
+      const nodeId = current.el.dataset?.id;
+      if (nodeId && w2uiFavoritesSidebar) {
+        const node = w2uiFavoritesSidebar.get(nodeId);
+        if (node?.expanded) w2uiFavoritesSidebar.collapse(nodeId);
+      }
+    }
+  } else if (key === 'ArrowRight') {
+    if (current?.type === 'section-header') {
+      // Expand the section
+      if (current.section && !getExpandedSectionsSet().has(current.section)) {
+        void toggleSidebarSection(current.section);
+      }
+    } else if (current?.type === 'sidebar-item') {
+      // Expand tree item
+      const $item = $(current.el);
+      if ($item.attr('data-expanded') !== 'true') {
+        void toggleSidebarItemExpansion($item);
+      }
+    } else if (current?.type === 'todo-group') {
+      // Expand todo group
+      const group = current.groupEl;
+      if (group && group.classList.contains('collapsed')) {
+        const groupHeader = group.querySelector('.sidebar-todo-group-header');
+        if (groupHeader) groupHeader.click();
+      }
+    } else if (current?.type === 'fav-group' || current?.type === 'fav-item') {
+      // Expand w2ui node if collapsed
+      const nodeId = current.el.dataset?.id;
+      if (nodeId && w2uiFavoritesSidebar) {
+        const node = w2uiFavoritesSidebar.get(nodeId);
+        if (node && !node.expanded && node.nodes?.length > 0) w2uiFavoritesSidebar.expand(nodeId);
+      }
+    }
+  } else if (key === 'Enter') {
+    if (current?.type === 'section-header') {
+      void toggleSidebarSection(current.section);
+    } else if (current?.el) {
+      current.el.click();
+    }
   }
 }

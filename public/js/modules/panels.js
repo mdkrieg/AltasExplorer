@@ -28,7 +28,8 @@ import {
 	buildCompleteFileState,
 	formatHistoryData,
 	formatFileContent,
-	openTodoModal
+	openTodoModal,
+	setSidebarFocus
 } from '../renderer.js';
 
 export let activePanelId = 1;
@@ -2445,7 +2446,7 @@ async function initializeGridForPanel(panelId) {
 		{ field: 'checksum', headerLabel: 'Checksum', text: getColumnHeaderText(panelId, 'checksum', 'Checksum'), size: '70px', resizable: true, sortable: false },
 		{
 			field: 'tags', headerLabel: 'Tags', text: getColumnHeaderText(panelId, 'tags', 'Tags'), size: '190px', resizable: true, sortable: false, render: (record) => {
-				return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true">+</button></div>`;
+				return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M12.146.854a.5.5 0 0 1 .708 0l2.292 2.292a.5.5 0 0 1 0 .708L5.854 13.146a.5.5 0 0 1-.22.128l-3.5 1.167a.5.5 0 0 1-.632-.632l1.167-3.5a.5.5 0 0 1 .128-.22L12.146.854zM11.5 2.707 13.293 4.5 14.293 3.5 12.5 1.707 11.5 2.707zM12.586 5.207 10.793 3.414 4 10.207V10.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.793-6.793z"/></svg></button></div>`;
 			}
 		},
 		{
@@ -3496,12 +3497,19 @@ export function setActivePanelId(panelId) {
 	if (panelId >= 1 && panelId <= 4) {
 		activePanelId = panelId;
 		syncRendererActivePanelId(panelId);
+		setSidebarFocus(false);
 		for (let i = 1; i <= 4; i++) {
 			$(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
+			$(`#panel-${i}`).removeClass('panel-active');
 		}
 		$(`#panel-${panelId} .panel-number`).addClass('panel-number-selected');
+		$(`#panel-${panelId}`).addClass('panel-active');
 		refreshItemPropertiesInAllPanels();
 	}
+}
+
+export function setGridFocusedPanelId(panelId) {
+	gridFocusedPanelId = panelId;
 }
 
 export function getPanelViewType(panelId) {
@@ -3947,7 +3955,7 @@ export function removePanel(panelId) {
 		shiftPanelDown(i);
 	}
 	visiblePanels--;
-	activePanelId = 1;
+	setActivePanelId(1);
 	updatePanelLayout();
 }
 
@@ -4856,7 +4864,7 @@ export function gridNavigate(direction, isShift, targetPanelId) {
 	}
 }
 
-export function openSelectedItem(panelId) {
+export async function openSelectedItem(panelId) {
 	const grid = panelState[panelId].w2uiGrid;
 	if (!grid) return;
 	const selected = grid.getSelection();
@@ -4866,7 +4874,22 @@ export function openSelectedItem(panelId) {
 	if (!record) return;
 
 	if (record.isFolder) {
-		navigateToDirectory(record.path, panelId);
+		if (visiblePanels >= 4) {
+			// All panels in use — navigate in current panel
+			navigateToDirectory(record.path, panelId);
+			return;
+		}
+		visiblePanels++;
+		const newPanelId = visiblePanels;
+		$(`#panel-${newPanelId}`).show();
+		attachPanelEventListeners(newPanelId);
+		updatePanelLayout();
+		await initializeGridForPanel(newPanelId);
+		$(`#panel-${newPanelId} .panel-landing-page`).hide();
+		$(`#panel-${newPanelId} .panel-grid`).show();
+		await navigateToDirectory(record.path, newPanelId);
+		const newGrid = panelState[newPanelId].w2uiGrid;
+		if (newGrid && newGrid.resize) newGrid.resize();
 		return;
 	}
 
@@ -5084,6 +5107,5 @@ export async function applyLayoutState(layoutData) {
 	}
 
 	// 7. Set active panel to 1
-	activePanelId = 1;
-	syncRendererActivePanelId(1);
+	setActivePanelId(1);
 }
