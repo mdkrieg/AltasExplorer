@@ -1028,7 +1028,25 @@
         </button>
       </div>
 
+      <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+        <button id="btn-layout-save" style="flex: 1; padding: 10px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; cursor: pointer; font-size: 13px;">Save Layout...</button>
+        <button id="btn-layout-load" style="flex: 1; padding: 10px; background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 4px; cursor: pointer; font-size: 13px;">Load Layout...</button>
+      </div>
       <button id="btn-layout-close" style="width: 100%; padding: 10px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+    </div>
+  </div>
+
+  <!-- Load Layout Modal -->
+  <div id="load-layout-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 24px; border-radius: 8px; width: 620px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+      <div style="display: flex; align-items: center; margin-bottom: 16px;">
+        <h2 style="margin: 0; flex: 1; font-size: 16px;">Load Layout</h2>
+        <button id="btn-load-layout-close" style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Close</button>
+      </div>
+      <div id="load-layout-grid" style="flex: 1; overflow-y: auto; min-height: 120px;"></div>
+      <div style="margin-top: 12px; text-align: right;">
+        <button id="btn-load-layout-browse" style="padding: 8px 16px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 12px;">Browse for file...</button>
+      </div>
     </div>
   </div>
 

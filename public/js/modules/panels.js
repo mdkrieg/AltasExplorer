@@ -2704,6 +2704,9 @@ async function initializeGridForPanel(panelId) {
 	refreshFilterHeaderButtons(panelId);
 
 	updatePanelHeader(panelId, panelState[panelId].currentPath || 'Loading...');
+
+	// Apply column overrides from layout restore if present
+	applyColumnOverrides(panelId);
 }
 
 async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {
@@ -4918,4 +4921,169 @@ export async function reopenLastClosedPanel() {
 
 		await navigateToDirectory(savedState.currentPath, newPanelId, false);
 	}
+}
+
+// ============================================
+// Layout Save/Load (.aly files)
+// ============================================
+
+function applyColumnOverrides(panelId) {
+	const overrides = panelState[panelId].columnOverrides;
+	if (!overrides) return;
+
+	const grid = panelState[panelId].w2uiGrid;
+	if (!grid) return;
+
+	// Apply sizes and hidden state
+	for (const override of overrides) {
+		const col = grid.columns.find(c => c.field === override.field);
+		if (col) {
+			col.size = override.size;
+			col.hidden = override.hidden;
+		}
+	}
+
+	// Reorder columns to match saved order
+	const fieldOrder = overrides.map(o => o.field);
+	grid.columns.sort((a, b) => {
+		const ia = fieldOrder.indexOf(a.field);
+		const ib = fieldOrder.indexOf(b.field);
+		if (ia === -1 && ib === -1) return 0;
+		if (ia === -1) return 1;
+		if (ib === -1) return -1;
+		return ia - ib;
+	});
+
+	grid.refresh();
+	delete panelState[panelId].columnOverrides;
+}
+
+export function serializeLayoutState() {
+	const panels = {};
+	for (let panelId = 1; panelId <= 4; panelId++) {
+		const $panel = $(`#panel-${panelId}`);
+		if (!$panel.is(':visible')) {
+			panels[panelId] = null;
+			continue;
+		}
+		const state = panelState[panelId];
+		const gridName = `grid-panel-${panelId}`;
+		const grid = w2ui[gridName];
+		panels[panelId] = {
+			currentPath: state.currentPath || '',
+			viewType: getPanelViewType(panelId),
+			depth: state.depth || 0,
+			showDateCreated: state.showDateCreated || false,
+			columns: grid ? grid.columns.map(col => ({
+				field: col.field,
+				size: col.size,
+				hidden: !!col.hidden
+			})) : [],
+			sortData: grid ? (grid.sortData || []).map(s => ({
+				field: s.field,
+				direction: s.direction
+			})) : [],
+			filterValues: state.filterValues || null
+		};
+	}
+
+	const sidebarWidth = w2layoutInstance ? w2layoutInstance.get('left').size : 250;
+
+	return {
+		version: 1,
+		savedAt: new Date().toISOString(),
+		layout: {
+			currentLayout,
+			visiblePanels,
+			dividers: {
+				verticalPixels: panelDividerState.verticalPixels,
+				horizontalPixels: panelDividerState.horizontalPixels
+			},
+			sidebarWidth
+		},
+		panels
+	};
+}
+
+export async function applyLayoutState(layoutData) {
+	if (!layoutData || !layoutData.layout || !layoutData.panels) return;
+
+	const { layout, panels } = layoutData;
+
+	// 1. Hide all panels first
+	for (let i = 1; i <= 4; i++) {
+		$(`#panel-${i}`).hide();
+		clearPanelState(i);
+	}
+
+	// 2. Set divider state
+	panelDividerState.verticalPixels = layout.dividers.verticalPixels;
+	panelDividerState.horizontalPixels = layout.dividers.horizontalPixels;
+	localStorage.setItem('panelDividerVertical', layout.dividers.verticalPixels);
+	localStorage.setItem('panelDividerHorizontal', layout.dividers.horizontalPixels);
+
+	// 3. Set sidebar width
+	if (w2layoutInstance && layout.sidebarWidth) {
+		w2layoutInstance.sizeTo('left', layout.sidebarWidth);
+		localStorage.setItem('sidebarExpandedWidth', layout.sidebarWidth);
+	}
+
+	// 4. Show the correct number of panels
+	visiblePanels = layout.visiblePanels;
+	for (let i = 1; i <= visiblePanels; i++) {
+		$(`#panel-${i}`).show();
+	}
+
+	// 5. Switch to the saved layout
+	await switchLayout(layout.currentLayout);
+
+	// 6. Initialize grids and navigate panels
+	for (let panelId = 1; panelId <= 4; panelId++) {
+		const panelData = panels[panelId];
+		if (!panelData) continue;
+
+		// Set column overrides before grid init so they apply after creation
+		if (panelData.columns && panelData.columns.length > 0) {
+			panelState[panelId].columnOverrides = panelData.columns;
+		}
+
+		panelState[panelId].showDateCreated = panelData.showDateCreated || false;
+
+		await initializeGridForPanel(panelId);
+		attachPanelEventListeners(panelId);
+
+		if (panelData.currentPath) {
+			$(`#panel-${panelId} .panel-landing-page`).hide();
+			$(`#panel-${panelId} .panel-grid`).show();
+
+			await navigateToDirectory(panelData.currentPath, panelId, true);
+
+			// Restore depth after navigation (navigateToDirectory resets it)
+			if (panelData.depth > 0) {
+				panelState[panelId].depth = panelData.depth;
+				const depthInput = document.getElementById(`depth-input-${panelId}`);
+				if (depthInput) depthInput.value = panelData.depth;
+			}
+
+			// Apply column overrides again in case navigateToDirectory re-initialized the grid
+			if (panelData.columns && panelData.columns.length > 0) {
+				panelState[panelId].columnOverrides = panelData.columns;
+				applyColumnOverrides(panelId);
+			}
+
+			// Restore sort state
+			if (panelData.sortData && panelData.sortData.length > 0) {
+				const grid = panelState[panelId].w2uiGrid;
+				if (grid) {
+					grid.sortData = panelData.sortData;
+					grid.localSort();
+					grid.refresh();
+				}
+			}
+		}
+	}
+
+	// 7. Set active panel to 1
+	activePanelId = 1;
+	syncRendererActivePanelId(1);
 }

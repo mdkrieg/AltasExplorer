@@ -17,6 +17,7 @@ const attributes = require('../src/attributes');
 const notesParser = require('../src/notesParser');
 const todoAggregator = require('../src/todoAggregator');
 const customActions = require('../src/customActions');
+const layouts = require('../src/layouts');
 const { execFile } = require('child_process');
 const { dialog } = require('electron');
 
@@ -1899,6 +1900,92 @@ ipcMain.handle('pick-file', async (event, { filters, defaultPath } = {}) => {
   } catch (err) {
     logger.error('Error showing file picker:', err.message);
     return null;
+  }
+});
+
+// ============================================
+// Layout Save/Load (.aly files)
+// ============================================
+
+ipcMain.handle('save-layout', async (event, layoutData) => {
+  try {
+    const sharp = require('sharp');
+
+    // Capture screenshot of current window
+    const nimg = await mainWindow.webContents.capturePage();
+    const fullPng = nimg.toPNG();
+
+    // Resize to 400px wide thumbnail
+    const thumbnailBuffer = await sharp(fullPng)
+      .resize(400)
+      .png()
+      .toBuffer();
+
+    // Show save dialog
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: path.join(layouts.getDefaultDirectory(), 'layout.aly'),
+      filters: [{ name: 'Atlas Layout', extensions: ['aly'] }]
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    layouts.saveLayout(result.filePath, layoutData, thumbnailBuffer);
+    return { success: true, filePath: result.filePath };
+  } catch (err) {
+    logger.error('Error saving layout:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('load-layout', async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      defaultPath: layouts.getDefaultDirectory(),
+      filters: [{ name: 'Atlas Layout', extensions: ['aly'] }],
+      properties: ['openFile']
+    });
+
+    if (result.canceled || !result.filePaths[0]) {
+      return { success: false, canceled: true };
+    }
+
+    const { layoutData, thumbnailBase64 } = layouts.loadLayout(result.filePaths[0]);
+    return { success: true, layoutData, thumbnailBase64 };
+  } catch (err) {
+    logger.error('Error loading layout:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('list-layouts', async () => {
+  try {
+    const layoutsList = layouts.listLayouts();
+    return { success: true, layouts: layoutsList };
+  } catch (err) {
+    logger.error('Error listing layouts:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('load-layout-file', async (event, filePath) => {
+  try {
+    const { layoutData, thumbnailBase64 } = layouts.loadLayout(filePath);
+    return { success: true, layoutData, thumbnailBase64 };
+  } catch (err) {
+    logger.error('Error loading layout file:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('delete-layout', async (event, filePath) => {
+  try {
+    layouts.deleteLayout(filePath);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error deleting layout:', err.message);
+    return { success: false, error: err.message };
   }
 });
 

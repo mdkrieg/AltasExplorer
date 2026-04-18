@@ -336,6 +336,87 @@ function getActionForHotkey(combo) {
 // and are accessed via IPC to ensure consistent behavior across the app
 
 /**
+ * Show the Load Layout modal with thumbnails of saved layouts
+ */
+async function showLoadLayoutModal() {
+  const grid = document.getElementById('load-layout-grid');
+  grid.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">Loading layouts...</div>';
+  $('#load-layout-modal').show();
+
+  const result = await window.electronAPI.listLayouts();
+  if (!result.success) {
+    grid.innerHTML = `<div style="padding: 20px; text-align: center; color: #c62828;">Error: ${result.error}</div>`;
+    return;
+  }
+
+  if (result.layouts.length === 0) {
+    grid.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">No saved layouts found.<br><span style="font-size: 12px; color: #aaa;">Use "Save Layout..." to save your first layout.</span></div>';
+    return;
+  }
+
+  grid.innerHTML = '';
+  for (const layout of result.layouts) {
+    const card = document.createElement('div');
+    card.style.cssText = 'display: flex; align-items: center; gap: 14px; padding: 10px 12px; border: 1px solid #e0e0e0; border-radius: 6px; margin-bottom: 8px; cursor: pointer; transition: background 0.15s;';
+    card.onmouseenter = () => card.style.background = '#f5f9ff';
+    card.onmouseleave = () => card.style.background = '';
+
+    const thumb = document.createElement('div');
+    thumb.style.cssText = 'width: 120px; height: 75px; flex-shrink: 0; border-radius: 4px; overflow: hidden; background: #f0f0f0; border: 1px solid #ddd;';
+    if (layout.thumbnailBase64) {
+      const img = document.createElement('img');
+      img.src = 'data:image/png;base64,' + layout.thumbnailBase64;
+      img.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
+      thumb.appendChild(img);
+    } else {
+      thumb.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:11px;">No preview</div>';
+    }
+
+    const info = document.createElement('div');
+    info.style.cssText = 'flex: 1; min-width: 0;';
+    const name = layout.fileName.replace(/\.aly$/i, '');
+    const date = new Date(layout.savedAt);
+    const dateStr = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const panelLabel = layout.panelCount ? `${layout.panelCount} panel${layout.panelCount > 1 ? 's' : ''}` : '';
+    info.innerHTML = `<div style="font-weight: 600; font-size: 14px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${utils.escapeHtml(name)}</div>`
+      + `<div style="font-size: 12px; color: #888;">${dateStr}${panelLabel ? ' &middot; ' + panelLabel : ''}</div>`;
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '\u00D7';
+    deleteBtn.title = 'Delete layout';
+    deleteBtn.style.cssText = 'flex-shrink: 0; width: 28px; height: 28px; border: none; background: transparent; color: #999; font-size: 18px; cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center;';
+    deleteBtn.onmouseenter = () => { deleteBtn.style.background = '#ffebee'; deleteBtn.style.color = '#c62828'; };
+    deleteBtn.onmouseleave = () => { deleteBtn.style.background = 'transparent'; deleteBtn.style.color = '#999'; };
+    deleteBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const delResult = await window.electronAPI.deleteLayout(layout.filePath);
+      if (delResult.success) {
+        card.remove();
+        // Show empty message if no cards remain
+        if (grid.children.length === 0) {
+          grid.innerHTML = '<div style="padding: 20px; text-align: center; color: #888;">No saved layouts found.</div>';
+        }
+      }
+    };
+
+    card.onclick = async () => {
+      const loadResult = await window.electronAPI.loadLayoutFile(layout.filePath);
+      if (loadResult.success && loadResult.layoutData) {
+        $('#load-layout-modal').hide();
+        await panels.applyLayoutState(loadResult.layoutData);
+      } else if (loadResult.error) {
+        console.error('Failed to load layout:', loadResult.error);
+      }
+    };
+
+    card.appendChild(thumb);
+    card.appendChild(info);
+    card.appendChild(deleteBtn);
+    grid.appendChild(card);
+  }
+}
+
+/**
  * Attach event listeners to buttons and grid
  */
 function attachEventListeners() {
@@ -493,6 +574,18 @@ function attachEventListeners() {
         event.preventDefault();
         await panels.reopenLastClosedPanel();
         break;
+      case 'save_layout': {
+        event.preventDefault();
+        const layoutData = panels.serializeLayoutState();
+        const result = await window.electronAPI.saveLayout(layoutData);
+        if (result.error) console.error('Failed to save layout:', result.error);
+        break;
+      }
+      case 'load_layout': {
+        event.preventDefault();
+        await showLoadLayoutModal();
+        break;
+      }
     }
   });
 
@@ -543,6 +636,41 @@ function attachEventListeners() {
   $('#layout-modal').click(function (e) {
     if (e.target === this) {
       panels.hideLayoutModal();
+    }
+  });
+
+  // Layout save/load buttons
+  $('#btn-layout-save').click(async function () {
+    const layoutData = panels.serializeLayoutState();
+    const result = await window.electronAPI.saveLayout(layoutData);
+    if (result.success) {
+      panels.hideLayoutModal();
+    } else if (result.error) {
+      console.error('Failed to save layout:', result.error);
+    }
+  });
+
+  $('#btn-layout-load').click(async function () {
+    panels.hideLayoutModal();
+    await showLoadLayoutModal();
+  });
+
+  // Load Layout modal close
+  $('#btn-load-layout-close').click(function () {
+    $('#load-layout-modal').hide();
+  });
+  $('#load-layout-modal').click(function (e) {
+    if (e.target === this) $(this).hide();
+  });
+
+  // Browse for .aly file (fallback to native dialog)
+  $('#btn-load-layout-browse').click(async function () {
+    const result = await window.electronAPI.loadLayout();
+    if (result.success && result.layoutData) {
+      $('#load-layout-modal').hide();
+      await panels.applyLayoutState(result.layoutData);
+    } else if (result.error) {
+      console.error('Failed to load layout:', result.error);
     }
   });
 

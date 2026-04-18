@@ -192,6 +192,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternalLink: (url) => ipcRenderer.invoke('open-external-link', url),
   pickFile: (options) => ipcRenderer.invoke('pick-file', options || {}),
 
+  // Layout save/load
+  saveLayout: (layoutData) => ipcRenderer.invoke('save-layout', layoutData),
+  loadLayout: () => ipcRenderer.invoke('load-layout'),
+  listLayouts: () => ipcRenderer.invoke('list-layouts'),
+  loadLayoutFile: (filePath) => ipcRenderer.invoke('load-layout-file', filePath),
+  deleteLayout: (filePath) => ipcRenderer.invoke('delete-layout', filePath),
+
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),
 

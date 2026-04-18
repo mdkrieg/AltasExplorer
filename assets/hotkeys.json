@@ -63,6 +63,18 @@
       "default": "Ctrl+s"
     }
   },
+  "Layouts": {
+    "save_layout": {
+      "label": "Save Layout",
+      "key": "Ctrl+Shift+s",
+      "default": "Ctrl+Shift+s"
+    },
+    "load_layout": {
+      "label": "Load Layout",
+      "key": "Ctrl+Shift+l",
+      "default": "Ctrl+Shift+l"
+    }
+  },
   "Grid Navigation": {
     "grid_row_up": {
       "label": "Navigate Row Up",
