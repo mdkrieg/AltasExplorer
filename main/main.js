@@ -3422,7 +3422,7 @@ app.on('ready', () => {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: file:",
     "media-src file:",
-    "font-src 'self'",
+    "font-src 'self' data:",
     "connect-src 'none'"
   ].join('; ');
 

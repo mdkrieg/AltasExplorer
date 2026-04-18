@@ -39,7 +39,7 @@ export { openTodoModal } from './modules/todos.js';
 
 // Global error handler for debugging
 window.addEventListener('error', (event) => {
-  console.error('Uncaught error:', event.error);
+  if (event.error) console.error('Uncaught error:', event.error);
 });
 
 window.addEventListener('unhandledrejection', (event) => {
