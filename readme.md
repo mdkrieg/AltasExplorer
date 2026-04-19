@@ -28,8 +28,14 @@ Philosophy:
 
 ### BUGS:
 [x] If I set an alert to ANY/ANY - File Added. I get alerts when I first browse a folder. INITIAL events should always be considered a separate thing
+[ ] Galery View
+  [ ] the parent (..) folder shows the incorrect styling, seeing current folder style instead of parent style
+  [ ] Not seeing the toolbar (no search or refresh) on the gallery view (should gallery view have a depth feature?)
+[ ] ![alt text](image.png) - panels 2 - 4 formatting oddly wrong. no titles, panel 2 has some kind of overlap issue. May as well remove the extra new tab (+) button on panel 2
 
 ### ROADMAP:
+[ ] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
+[ ] CTRL+L to change path. Maybe CTRL+SHIFT+L opens a special segmented path edit?
 [ ] Search and Filter, make it so that if I start typing it will start searching by name automatically.
 [x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
 [ ] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need

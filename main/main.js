@@ -19,6 +19,7 @@ const todoAggregator = require('../src/todoAggregator');
 const customActions = require('../src/customActions');
 const layouts = require('../src/layouts');
 const { execFile } = require('child_process');
+const ffmpegBin = require('ffmpeg-static');
 const { dialog } = require('electron');
 
 let mainWindow;
@@ -294,6 +295,16 @@ function createWindow() {
 
     mainWindow.webContents.on('unresponsive', () => {
       logger.warn('Renderer process became unresponsive');
+    });
+
+    // Capture renderer console output in the log file.
+    // This catches errors that originate outside the preload.js override
+    // (e.g. unhandled rejections surfaced by Electron, errors in module load, etc.)
+    // Note: DevTools-internal messages like Autofill.enable are NOT capturable this way.
+    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      if (!message || message.includes('Autofill')) return; // skip DevTools noise
+      const levelName = level === 0 ? 'INFO' : level === 1 ? 'WARN' : 'ERROR';
+      logger.rendererLog(levelName, `[${sourceId}:${line}] ${message}`);
     });
 
     mainWindow.on('closed', () => {
@@ -3384,6 +3395,63 @@ ipcMain.on('log-to-file', (event, { level, message, args }) => {
   } catch (err) {
     logger.error('Error logging from renderer:', err.message);
   }
+});
+
+/**
+ * Extract a single thumbnail frame from a video file using ffmpeg.
+ * Tries 1 s first; falls back to the first frame for short clips.
+ * Returns a JPEG data URL, or success:false if extraction fails.
+ */
+ipcMain.handle('get-video-thumbnail', (event, filePath) => {
+  const runFfmpeg = (seekTime) => new Promise((resolve) => {
+    const args = [
+      '-ss', seekTime,
+      '-i', filePath,
+      '-vframes', '1',
+      '-vf', 'scale=200:-2',
+      '-f', 'image2pipe',
+      '-vcodec', 'mjpeg',
+      '-loglevel', 'error',
+      'pipe:1'
+    ];
+    execFile(ffmpegBin, args, { encoding: 'buffer', maxBuffer: 5 * 1024 * 1024 }, (err, stdout) => {
+      const failed = err || !stdout || stdout.length === 0;
+      resolve({ ok: !failed, stdout, error: err ? err.message : 'no output' });
+    });
+  });
+
+  return (async () => {
+    // Check cache first
+    let mtime = 0;
+    try {
+      mtime = fsSync.statSync(filePath).mtimeMs;
+      const cached = db.getCachedVideoThumbnail(filePath, mtime);
+      if (cached) {
+        return { success: true, dataUrl: 'data:image/jpeg;base64,' + cached.thumbnail.toString('base64') };
+      }
+    } catch (e) {
+      logger.warn(`Video thumbnail: could not stat "${filePath}" — ${e.message}`);
+    }
+
+    let result = await runFfmpeg('00:00:01');
+    if (!result.ok) {
+      logger.warn(`Video thumbnail: seek to 1s failed for "${filePath}" (${result.error}), retrying at 0s`);
+      result = await runFfmpeg('00:00:00');
+    }
+    if (!result.ok) {
+      logger.error(`Video thumbnail: could not extract frame from "${filePath}" — ${result.error}`);
+      return { success: false, error: result.error };
+    }
+
+    // Store in cache
+    try {
+      db.saveCachedVideoThumbnail(filePath, mtime, result.stdout);
+    } catch (e) {
+      logger.warn(`Video thumbnail: failed to cache "${filePath}" — ${e.message}`);
+    }
+
+    return { success: true, dataUrl: 'data:image/jpeg;base64,' + result.stdout.toString('base64') };
+  })();
 });
 
 // ============================================

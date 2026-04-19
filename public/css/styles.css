@@ -190,8 +190,7 @@ button:active {
   display: block;
   object-fit: contain;
 }
-.gallery-item .gallery-thumb,
-.gallery-item .gallery-video-thumb {
+.gallery-item .gallery-thumb {
   object-fit: cover;
   background: #e8e8e8;
   border-radius: 4px;

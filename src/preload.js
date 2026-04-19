@@ -222,5 +222,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   terminalResize: (id, cols, rows) => ipcRenderer.invoke('terminal-resize', { id, cols, rows }),
   terminalDestroy: (id) => ipcRenderer.invoke('terminal-destroy', { id }),
   onTerminalOutput: (callback) => ipcRenderer.on('terminal-output', (event, args) => callback(args)),
-  onTerminalExit: (callback) => ipcRenderer.on('terminal-exit', (event, args) => callback(args))
+  onTerminalExit: (callback) => ipcRenderer.on('terminal-exit', (event, args) => callback(args)),
+
+  // Video thumbnail extraction
+  getVideoThumbnail: (filePath) => ipcRenderer.invoke('get-video-thumbnail', filePath)
 });

@@ -183,6 +183,13 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_todo_items_notes_file ON todo_items(notes_file_id);
       CREATE INDEX IF NOT EXISTS idx_todo_items_group_label ON todo_items(group_label);
       CREATE INDEX IF NOT EXISTS idx_todo_items_completed ON todo_items(completed);
+
+      CREATE TABLE IF NOT EXISTS video_thumbnails (
+        file_path TEXT NOT NULL UNIQUE,
+        mtime INTEGER NOT NULL,
+        thumbnail BLOB NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+      );
     `;
 
     this.db.exec(schema);
@@ -1236,6 +1243,18 @@ class DatabaseService {
       ${whereCompleted}
       ORDER BY ti.group_label ASC, tnf.notes_path ASC, ti.section_key ASC, ti.group_index ASC, ti.item_index ASC
     `).all();
+  }
+
+  getCachedVideoThumbnail(filePath, mtime) {
+    return this.db.prepare(
+      'SELECT thumbnail FROM video_thumbnails WHERE file_path = ? AND mtime = ?'
+    ).get(filePath, mtime) || null;
+  }
+
+  saveCachedVideoThumbnail(filePath, mtime, jpegBuffer) {
+    this.db.prepare(
+      'INSERT OR REPLACE INTO video_thumbnails (file_path, mtime, thumbnail) VALUES (?, ?, ?)'
+    ).run(filePath, mtime, jpegBuffer);
   }
 
   close() {

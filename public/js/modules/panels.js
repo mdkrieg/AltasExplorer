@@ -3068,8 +3068,7 @@ function renderGallery(panelId, tagDefs) {
 			const fileUrl = 'file:///' + record.path.replace(/\\/g, '/');
 			thumbHtml = `<img class="gallery-thumb" src="${fileUrl}" alt="" loading="lazy">`;
 		} else if (thumbType === 'video') {
-			const fileUrl = 'file:///' + record.path.replace(/\\/g, '/');
-			thumbHtml = `<video class="gallery-video-thumb" data-src="${fileUrl}" preload="none" muted playsinline></video>`;
+			thumbHtml = `<img class="gallery-thumb" data-video-path="${utils.escapeHtml(record.path)}" data-icon="${utils.escapeHtml(record.icon)}" alt="">`;
 		} else {
 			thumbHtml = `<img class="gallery-item-icon" src="${record.icon}" alt="">`;
 		}
@@ -3085,21 +3084,32 @@ function renderGallery(panelId, tagDefs) {
 		$gallery.append($item);
 	}
 
-	// Lazy-load video thumbnails via IntersectionObserver (seek to 1 s for poster frame)
-	const videoEls = $gallery[0].querySelectorAll('.gallery-video-thumb[data-src]');
-	if (videoEls.length > 0) {
-		const videoObserver = new IntersectionObserver((entries, obs) => {
+	// Lazy-load video thumbnails via IPC (ffmpeg frame extraction)
+	const videoThumbEls = $gallery[0].querySelectorAll('.gallery-thumb[data-video-path]');
+	if (videoThumbEls.length > 0) {
+		const videoThumbObserver = new IntersectionObserver((entries, obs) => {
 			entries.forEach(entry => {
 				if (!entry.isIntersecting) return;
-				const vid = entry.target;
-				obs.unobserve(vid);
-				vid.src = vid.dataset.src;
-				vid.addEventListener('loadeddata', () => {
-					try { vid.currentTime = 1; } catch (_) {}
-				}, { once: true });
+				const img = entry.target;
+				if (img.src) return; // already loaded
+				obs.unobserve(img);
+
+				const filePath = img.dataset.videoPath;
+				window.electronAPI.getVideoThumbnail(filePath).then(result => {
+					if (result.success && result.dataUrl) {
+						img.src = result.dataUrl;
+					} else {
+						// Fallback to file-type icon if ffmpeg extraction fails
+						img.classList.replace('gallery-thumb', 'gallery-item-icon');
+						img.src = img.dataset.icon;
+					}
+				}).catch(() => {
+					img.classList.replace('gallery-thumb', 'gallery-item-icon');
+					img.src = img.dataset.icon;
+				});
 			});
 		}, { root: $gallery[0], rootMargin: '100px' });
-		videoEls.forEach(v => videoObserver.observe(v));
+		videoThumbEls.forEach(img => videoThumbObserver.observe(img));
 	}
 
 	// Bind gallery events
