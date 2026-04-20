@@ -37,8 +37,11 @@ Philosophy:
 [x] Add SVGs onto the back and parent nav buttons
 [x] CTRL+L to change path
 [x] Search and Filter, make it so that if I start typing it will start searching by name automatically.
+[ ] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
+  * should I make a universal description field? Or does it make more sense to just display the first little bit of notes. Maybe have some delimiter to designate a description in notes (not crazy about this idea)
 [x] Update title bar to show the styled colors of the folder category
 [ ] Right click on favorites to send to particular panel
+[ ] Tags in notes get set to file / db
 [ ] Tags in notes, add "archive" type, which is just #tag instead of @#tag. tags always update to database. If a user removes a tag that is present in a note it becomes archived. If a user adds a tag that is archived in notes they back-update in the note. 
 [x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
 [ ] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need

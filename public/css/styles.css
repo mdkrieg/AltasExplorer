@@ -370,6 +370,15 @@ button:active {
   background-color: #adffff;
 }
 
+.panel-previously-active {
+  box-shadow: inset 0 0 0 3px #ff8c00;
+}
+
+.panel-previously-active .panel-number {
+  background-color: #ff8c00;
+  color: white;
+}
+
 .panel-item {
   display: flex;
   flex-direction: column;
@@ -1963,6 +1972,7 @@ hr {
   overflow: hidden;
   width: 100%;
   height: 100%;
+  outline: none;
 }
 
 #main-content {
@@ -2044,6 +2054,12 @@ hr {
 
 /* Override w2ui vendor specificity (.w2ui-sidebar .w2ui-sidebar-body .w2ui-node-group = 0,3,0) */
 .w2ui-sidebar .w2ui-sidebar-body .w2ui-node-group.sidebar-arrow-focused {
+  background: #d4f0f0;
+}
+
+/* Override w2ui hover (.w2ui-sidebar .w2ui-sidebar-body .w2ui-node:hover = 0,4,0) so selected wins */
+#w2ui-favorites .w2ui-node.sidebar-arrow-focused,
+#w2ui-favorites .w2ui-node.sidebar-arrow-focused:hover {
   background: #d4f0f0;
 }
 
@@ -2985,6 +3001,12 @@ hr {
 
 .fav-menu-item-remove {
   color: #c0392b !important;
+}
+
+.fav-menu-separator {
+  height: 1px;
+  background: #e0e0e0;
+  margin: 3px 0;
 }
 
 /* =====================

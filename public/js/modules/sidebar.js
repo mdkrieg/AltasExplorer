@@ -10,12 +10,15 @@
  */
 
 import { w2sidebar } from './vendor/w2ui.es6.min.js';
-import { navigateToDirectory } from './panels.js';
+import { navigateToDirectory, visiblePanels, addPanel, setActivePanelId, setGridFocusedPanelId } from './panels.js';
 import {
   panelState,
   sidebarState,
   selectedItemState,
   activePanelId,
+  sidebarHasFocus,
+  activateSidebarContext,
+  setPreviouslyActivePanel,
   w2layoutInstance
 } from '../renderer.js';
 
@@ -23,6 +26,7 @@ import {
 // Sidebar arrow-key focus: 'toolbar' or 'sections', plus an index within that zone
 let sidebarFocusZone = null; // null | 'toolbar' | 'sections'
 let sidebarFocusIndex = -1;
+let previouslyFocusedPanelId = 1;
 
 let w2uiFavoritesSidebar = null;
 let favoritesContextMenuTarget = null;
@@ -727,28 +731,44 @@ function attachSidebarEventListeners() {
     toggleSidebarItemExpansion($item);
   });
 
-  // Double-click to navigate
+  // Double-click to navigate to previously focused panel
   $('#sidebar-tree').on('dblclick', '.sidebar-item-label', function (e) {
     e.stopPropagation();
     const $item = $(this).closest('.sidebar-item');
     const path = $item.attr('data-path');
 
     if (path) {
-      // Navigate to directory in panel-1
-      navigateToDirectory(path, 1);
-      // Update sidebar selection
+      navigateToDirectory(path, previouslyFocusedPanelId);
       updateSidebarSelection(path);
+      setActivePanelId(previouslyFocusedPanelId);
+      setGridFocusedPanelId(previouslyFocusedPanelId);
     }
   });
 
-  // Single click to select
+  // Single click to select and unify with keyboard focus style
   $('#sidebar-tree').on('click', '.sidebar-item-label', function (e) {
     e.stopPropagation();
     const $item = $(this).closest('.sidebar-item');
     const path = $item.attr('data-path');
 
     if (path) {
+      // Capture previously focused panel when sidebar wasn't yet focused
+      if (!sidebarHasFocus) {
+        previouslyFocusedPanelId = activePanelId || 1;
+        activateSidebarContext(previouslyFocusedPanelId);
+      }
       updateSidebarSelection(path);
+      // Move sidebar-arrow-focused to the clicked item
+      const items = getVisibleSectionItems();
+      const idx = items.findIndex(item => item.type === 'sidebar-item' && item.el === $item[0]);
+      if (idx !== -1) {
+        sidebarFocusZone = 'sections';
+        sidebarFocusIndex = idx;
+        applySidebarArrowFocus();
+      }
+      // Move DOM focus to the sidebar container so keydown events bypass
+      // any child-element keyboard handlers.
+      document.getElementById('sidebar-content')?.focus({ preventScroll: true });
     }
   });
 }
@@ -804,6 +824,7 @@ async function initializeFavoritesSidebar() {
       box: '#w2ui-favorites',
       name: 'favorites-sidebar',
       reorder: true,
+      keyboard: false,
       nodes: nodes,
       onClick: async (event) => {
         if (event.target === 'edit-AddGroup') {
@@ -816,13 +837,34 @@ async function initializeFavoritesSidebar() {
           await addFavoritesFromSelection();
           return;
         }
-        // Navigate to directory on click (not in edit mode)
+        // Single click: select only (no navigation), unify with keyboard focus style
         if (favEditMode) return;
         const node = w2uiFavoritesSidebar.get(event.target);
-        if (node && node.path && !node.disabled) {
-          await navigateToDirectory(node.path, 1);
-          updateSidebarSelection(node.path);
+        if (!node || node.group || node.disabled) return;
+
+        // Capture previously focused panel when sidebar wasn't yet focused
+        if (!sidebarHasFocus) {
+          previouslyFocusedPanelId = activePanelId || 1;
+          activateSidebarContext(previouslyFocusedPanelId);
         }
+
+        // Move sidebar-arrow-focused to the clicked node
+        const items = getVisibleSectionItems();
+        const idx = items.findIndex(item => item.type === 'fav-item' && item.el.dataset?.id === String(node.id));
+        if (idx !== -1) {
+          sidebarFocusZone = 'sections';
+          sidebarFocusIndex = idx;
+          applySidebarArrowFocus();
+        }
+
+        // Move DOM focus to the sidebar container so keydown events bubble to document
+        // without being intercepted by w2ui's child-element keyboard handlers.
+        document.getElementById('sidebar-content')?.focus({ preventScroll: true });
+
+        // Suppress w2ui's own selection highlight
+        setTimeout(() => {
+          if (w2uiFavoritesSidebar) w2uiFavoritesSidebar.unselect(event.target);
+        }, 0);
       },
       onContextMenu: (event) => {
         event.preventDefault();
@@ -877,6 +919,19 @@ async function initializeFavoritesSidebar() {
             this.remove(nodeId);
           }
         });
+      }
+    });
+
+    // Double-click on a favorites item navigates to the previously focused panel
+    $('#w2ui-favorites').on('dblclick', '.w2ui-node', function () {
+      if (favEditMode) return;
+      const nodeId = this.dataset?.id;
+      if (!nodeId) return;
+      const node = w2uiFavoritesSidebar?.get(nodeId);
+      if (node && node.path && !node.disabled) {
+        navigateToDirectory(node.path, previouslyFocusedPanelId);
+        setActivePanelId(previouslyFocusedPanelId);
+        setGridFocusedPanelId(previouslyFocusedPanelId);
       }
     });
 
@@ -1272,9 +1327,47 @@ function showFavoritesContextMenu(x, y, targetType = 'item') {
   $menu.empty();
 
   if (targetType === 'item') {
-    // Item context menu
+    // Panel open options: one entry per visible panel
+    for (let i = 1; i <= visiblePanels; i++) {
+      const panelId = i;
+      $menu.append(
+        $('<div>').addClass('fav-menu-item')
+          .text(`Open in Panel ${panelId}`)
+          .on('click', async function (e) {
+            e.stopPropagation();
+            if (favoritesContextMenuTarget && favoritesContextMenuTarget.path) {
+              await navigateToDirectory(favoritesContextMenuTarget.path, panelId);
+              setActivePanelId(panelId);
+              setGridFocusedPanelId(panelId);
+            }
+            hideFavoritesContextMenu();
+          })
+      );
+    }
+    // N+1: open a new panel (if under the 4-panel max)
+    if (visiblePanels < 4) {
+      const newPanelId = visiblePanels + 1;
+      $menu.append(
+        $('<div>').addClass('fav-menu-item')
+          .text(`Open in new Panel ${newPanelId}`)
+          .on('click', async function (e) {
+            e.stopPropagation();
+            if (favoritesContextMenuTarget && favoritesContextMenuTarget.path) {
+              const created = addPanel();
+              const targetId = created ?? newPanelId;
+              await navigateToDirectory(favoritesContextMenuTarget.path, targetId);
+              setActivePanelId(targetId);
+              setGridFocusedPanelId(targetId);
+            }
+            hideFavoritesContextMenu();
+          })
+      );
+    }
+    // Separator
+    $menu.append($('<div>').addClass('fav-menu-separator'));
+    // Remove option
     $menu.append(
-      $('<div>').addClass('fav-menu-item')
+      $('<div>').addClass('fav-menu-item fav-menu-item-remove')
         .text('Remove from Favorites')
         .on('click', async function (e) {
           e.stopPropagation();
@@ -1790,9 +1883,13 @@ export function clearSidebarArrowFocus() {
 }
 
 export function initSidebarFocus() {
+  previouslyFocusedPanelId = activePanelId || 1;
   sidebarFocusZone = 'toolbar';
   sidebarFocusIndex = 0;
   applySidebarArrowFocus();
+  // Keep DOM focus on the sidebar container so keydown events are not
+  // intercepted by w2ui or other child-element handlers.
+  document.getElementById('sidebar-content')?.focus({ preventScroll: true });
 }
 
 function applySidebarArrowFocus() {
@@ -1802,6 +1899,7 @@ function applySidebarArrowFocus() {
     const buttons = getToolbarButtons();
     if (buttons[sidebarFocusIndex]) buttons[sidebarFocusIndex].classList.add('sidebar-arrow-focused');
     if ($sidebar) $sidebar.classList.add('sidebar-toolbar-focused');
+    setPreviouslyActivePanel(null);
   } else {
     if ($sidebar) $sidebar.classList.remove('sidebar-toolbar-focused');
     if (sidebarFocusZone === 'sections') {
@@ -1809,6 +1907,13 @@ function applySidebarArrowFocus() {
       if (items[sidebarFocusIndex]) {
         items[sidebarFocusIndex].el.classList.add('sidebar-arrow-focused');
         items[sidebarFocusIndex].el.scrollIntoView({ block: 'nearest' });
+      }
+      // Show orange shadow on previously focused panel only when a fav-item is active
+      const currentItem = items[sidebarFocusIndex];
+      if (currentItem?.type === 'fav-item') {
+        setPreviouslyActivePanel(previouslyFocusedPanelId);
+      } else {
+        setPreviouslyActivePanel(null);
       }
     }
   }
@@ -1928,6 +2033,24 @@ export function handleSidebarArrowKey(key) {
   } else if (key === 'Enter') {
     if (current?.type === 'section-header') {
       void toggleSidebarSection(current.section);
+    } else if (current?.type === 'fav-item') {
+      const nodeId = current.el.dataset?.id;
+      if (nodeId) {
+        const node = w2uiFavoritesSidebar?.get(nodeId);
+        if (node && node.path && !node.disabled) {
+          navigateToDirectory(node.path, previouslyFocusedPanelId);
+          setActivePanelId(previouslyFocusedPanelId);
+          setGridFocusedPanelId(previouslyFocusedPanelId);
+        }
+      }
+    } else if (current?.type === 'sidebar-item') {
+      const path = current.el.getAttribute('data-path');
+      if (path) {
+        navigateToDirectory(path, previouslyFocusedPanelId);
+        updateSidebarSelection(path);
+        setActivePanelId(previouslyFocusedPanelId);
+        setGridFocusedPanelId(previouslyFocusedPanelId);
+      }
     } else if (current?.el) {
       current.el.click();
     }

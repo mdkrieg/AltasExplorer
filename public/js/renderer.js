@@ -104,19 +104,39 @@ export function syncRendererActivePanelId(panelId) {
   activePanelId = panelId;
 }
 
-export function setSidebarFocus(focused) {
-  sidebarHasFocus = focused;
+export function activateSidebarContext(panelId) {
+  sidebarHasFocus = true;
   const $sidebar = $('#sidebar-content');
+  $sidebar.addClass('sidebar-focused');
+  for (let i = 1; i <= 4; i++) {
+    $(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
+    $(`#panel-${i}`).removeClass('panel-active').removeClass('panel-previously-active');
+  }
+  // Store the previously-focused panel ID on the element for later use, but don't show
+  // the orange shadow yet — it only shows when a favorite item is actually selected.
+  $(`#sidebar-content`).data('previousPanelId', panelId >= 1 && panelId <= 4 ? panelId : 1);
+}
+
+export function setPreviouslyActivePanel(panelId) {
+  for (let i = 1; i <= 4; i++) {
+    $(`#panel-${i}`).removeClass('panel-previously-active');
+  }
+  if (panelId >= 1 && panelId <= 4) {
+    $(`#panel-${panelId}`).addClass('panel-previously-active');
+  }
+}
+
+export function setSidebarFocus(focused) {
   if (focused) {
-    $sidebar.addClass('sidebar-focused');
-    // Clear panel focus styling
-    for (let i = 1; i <= 4; i++) {
-      $(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
-      $(`#panel-${i}`).removeClass('panel-active');
-    }
+    activateSidebarContext(activePanelId);
     sidebar.initSidebarFocus();
   } else {
+    sidebarHasFocus = false;
+    const $sidebar = $('#sidebar-content');
     $sidebar.removeClass('sidebar-focused');
+    for (let i = 1; i <= 4; i++) {
+      $(`#panel-${i}`).removeClass('panel-previously-active');
+    }
     sidebar.clearSidebarArrowFocus();
   }
 }
