@@ -155,13 +155,105 @@ button:active {
   display: flex;
 }
 
-/* Panel toolbar - w2toolbar renders its own chrome */
+/* Panel toolbar (navigation + search + depth + scan controls) */
 .panel-toolbar {
   display: none;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #e0e0e0;
+  min-height: 32px;
 }
 .panel-toolbar.active {
-  display: block;
+  display: flex;
+}
+
+.panel-tb-btn {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.panel-tb-btn:hover {
+  background: #e0e0e0;
+  border-color: #ccc;
+}
+.panel-tb-btn .w2ui-icon {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+}
+
+.panel-tb-break {
+  width: 1px;
+  height: 20px;
+  background: #ccc;
+  margin: 0 4px;
+}
+
+.panel-tb-search {
+  flex: 1;
+  min-width: 120px;
+  max-width: 320px;
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  font-family: inherit;
+}
+.panel-tb-search:focus {
+  outline: none;
+  border-color: #2196F3;
+}
+
+.panel-tb-depth {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+}
+.panel-tb-depth label {
+  font-size: 12px;
+  color: #555;
+  white-space: nowrap;
+}
+.panel-tb-depth input {
+  width: 46px;
+  padding: 2px 4px;
+  font-size: 12px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  text-align: center;
+  font-family: inherit;
+}
+
+.panel-tb-scan {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+.panel-tb-stop-scan {
+  padding: 2px 10px;
+  background: #c62828;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 12px;
+}
+.panel-tb-scan-status {
+  font-size: 11px;
+  color: #1565C0;
+  font-style: italic;
 }
 
 /* Gallery view container */

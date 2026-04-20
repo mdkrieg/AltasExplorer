@@ -970,6 +970,109 @@ function attachPanelHeaderEventListeners(panelId) {
 	}
 }
 
+function getPanelToolbarElement(panelId) {
+	return document.querySelector(`#panel-${panelId} .panel-toolbar`);
+}
+
+export function renderPanelToolbar(panelId, mode = 'detail') {
+	const container = getPanelToolbarElement(panelId);
+	if (!container) return;
+	const showDepth = mode !== 'gallery';
+	const depth = panelState[panelId]?.depth || 0;
+	const searchValue = panelState[panelId]?.toolbarSearch || '';
+
+	container.innerHTML = `
+		<button class="panel-tb-btn" data-action="back" title="Back">
+			<span class="w2ui-icon icon-navigate-back"></span>
+		</button>
+		<button class="panel-tb-btn" data-action="up" title="Parent">
+			<span class="w2ui-icon icon-navigate-up"></span>
+		</button>
+		<button class="panel-tb-btn" data-action="refresh" title="Refresh">
+			<span class="w2ui-icon w2ui-icon-reload"></span>
+		</button>
+		<span class="panel-tb-break"></span>
+		<input type="text" class="panel-tb-search" placeholder="Search filename" value="${utils.escapeHtml(searchValue)}">
+		${showDepth ? `
+			<span class="panel-tb-break"></span>
+			<div class="panel-tb-depth">
+				<label>Depth</label>
+				<input id="depth-input-${panelId}" type="number" min="0" max="99" value="${depth}">
+			</div>
+		` : ''}
+		<div class="panel-tb-scan">
+			<button id="btn-stop-scan-${panelId}" class="panel-tb-stop-scan" style="display:none;" title="Stop the current scan">&#9632; Stop</button>
+			<span id="scan-status-${panelId}" class="panel-tb-scan-status" style="display:none;">Scanning…</span>
+		</div>
+	`;
+	container.style.display = '';
+	container.classList.add('active');
+	attachPanelToolbarEventListeners(panelId);
+}
+
+export function hidePanelToolbar(panelId) {
+	const container = getPanelToolbarElement(panelId);
+	if (!container) return;
+	container.classList.remove('active');
+}
+
+function attachPanelToolbarEventListeners(panelId) {
+	const $tb = $(`#panel-${panelId} .panel-toolbar`);
+
+	$tb.find('[data-action="back"]').off('click').on('click', function () {
+		setActivePanelId(panelId);
+		navigateBack();
+	});
+
+	$tb.find('[data-action="up"]').off('click').on('click', function () {
+		navigateToParent(panelId);
+	});
+
+	$tb.find('[data-action="refresh"]').off('click').on('click', function () {
+		setActivePanelId(panelId);
+		if (panelState[panelId]?.currentPath) {
+			navigateToDirectory(panelState[panelId].currentPath, panelId);
+		}
+	});
+
+	$tb.find('.panel-tb-search').off('keydown input').on('keydown', function (e) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			applyPanelToolbarSearch(panelId, this.value);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			this.value = '';
+			applyPanelToolbarSearch(panelId, '');
+		}
+	});
+}
+
+function applyPanelToolbarSearch(panelId, value) {
+	const state = panelState[panelId];
+	if (!state) return;
+	const query = String(value || '').trim();
+	state.toolbarSearch = query;
+	const grid = state.w2uiGrid;
+	if (grid) {
+		if (query) {
+			grid.search('filename', query);
+		} else {
+			grid.searchReset();
+		}
+	}
+	filterGalleryByName(panelId, query);
+}
+
+function filterGalleryByName(panelId, value) {
+	const $gallery = $(`#panel-${panelId} .panel-gallery`);
+	if ($gallery.length === 0) return;
+	const q = String(value || '').trim().toLowerCase();
+	$gallery.find('.gallery-item').each(function () {
+		const name = ($(this).find('.gallery-item-name').text() || '').toLowerCase();
+		this.style.display = (!q || name.includes(q)) ? '' : 'none';
+	});
+}
+
 function getRelativePathFromRoot(rootPath, entryPath) {
 	const root = rootPath.endsWith('\\') ? rootPath.slice(0, -1) : rootPath;
 	if (entryPath.toLowerCase() === root.toLowerCase()) return '.';
@@ -2278,6 +2381,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			$panelMissing.find('.panel-grid').show();
 			showMissingDirectoryRecord(panelId);
 			updatePanelHeader(panelId, normalizedPath);
+			renderPanelToolbar(panelId, 'detail');
 			return;
 		}
 
@@ -2320,6 +2424,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			$panel.find('.panel-gallery').removeClass('active');
 			$panel.find('.panel-grid').show();
 		}
+		renderPanelToolbar(panelId, isGallery ? 'gallery' : 'detail');
 
 		if (isGallery) {
 			await populateGalleryView(entries, category, panelId);
@@ -2329,14 +2434,14 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			await populateFileGrid(entries, category, panelId);
 		}
 
+		if (panelState[panelId].toolbarSearch) {
+			applyPanelToolbarSearch(panelId, panelState[panelId].toolbarSearch);
+		}
+
 		updatePanelHeader(panelId, normalizedPath);
 		const gridToResize = panelState[panelId].w2uiGrid;
 		if (gridToResize) {
 			requestAnimationFrame(() => {
-				const toolbarEl = document.getElementById(`grid_${gridToResize.name}_toolbar`);
-				if (toolbarEl && toolbarEl.style.height === '0px') {
-					toolbarEl.style.height = '';
-				}
 				gridToResize.resize();
 			});
 		}
@@ -2466,8 +2571,7 @@ async function initializeGridForPanel(panelId) {
 		recordHeight: recordHeight,
 		show: {
 			header: false,
-			toolbar: true,
-			toolbarReload: false,
+			toolbar: false,
 			footer: true,
 			skipRecords: false,
 			saveRestoreState: false
@@ -2477,52 +2581,6 @@ async function initializeGridForPanel(panelId) {
 		searches:[
 			{ field: 'filename', caption: 'Filename', type: 'text' },
 		],
-		toolbar: {
-			items: [
-				{
-					type: 'button', id: 'nav-back',
-					icon: 'icon-navigate-back', tooltip: 'Back',
-					onClick: () => {
-						setActivePanelId(panelId);
-						navigateBack();
-					}
-				},
-				{
-					type: 'button', id: 'nav-up',
-					icon: 'icon-navigate-up', tooltip: 'Parent',
-					onClick: () => navigateToParent(panelId)
-				},
-				{
-					type: 'button', id: 'nav-refresh',
-					icon: 'w2ui-icon-reload', tooltip: 'Refresh',
-					onClick: () => {
-						setActivePanelId(panelId);
-						navigateToDirectory(panelState[panelId].currentPath, panelId);
-					}
-				},
-				{ type: 'break' },
-				{
-					type: 'html',
-					id: 'depth-control',
-					html: `<div style="display:inline-flex;align-items:center;gap:4px;padding:0 8px;">
-						<label style="font-size:14px;color:#555;white-space:nowrap;">Depth</label>
-						<input id="depth-input-${panelId}" type="number" min="0" max="99" value="${panelState[panelId].depth || 0}"
-							style="width:46px;padding:1px 4px;font-size:14px;border:1px solid #ccc;border-radius:3px;text-align:center;">
-					</div>`
-				},
-				{
-					type: 'html',
-					id: 'scan-controls',
-					html: `<div style="display:inline-flex;align-items:center;gap:6px;padding:0 4px;">
-						<button id="btn-stop-scan-${panelId}"
-							style="display:none;padding:2px 10px;background:#c62828;color:white;border:none;border-radius:3px;cursor:pointer;font-weight:bold;font-size:12px;"
-							title="Stop the current scan">&#9632; Stop</button>
-						<span id="scan-status-${panelId}"
-							style="display:none;font-size:11px;color:#1565C0;font-style:italic;">Scanning…</span>
-					</div>`
-				}
-			]
-		},
 		columns,
 		records: [],
 		contextMenu: [],
@@ -3907,16 +3965,14 @@ export function toggleSelectMode(panelId) {
 		$selectBtn.addClass('panel-select-active');
 		$(`#panel-${panelId} .panel-landing-page`).hide();
 		$(`#panel-${panelId} .panel-grid`).show();
+		renderPanelToolbar(panelId, 'detail');
 		const grid = panelState[panelId].w2uiGrid;
-		if (grid) {
-			const toolbarEl = document.getElementById(`grid_grid-panel-${panelId}_toolbar`);
-			if (toolbarEl && toolbarEl.style.height === '0px') toolbarEl.style.height = '';
-			grid.resize();
-		}
+		if (grid) grid.resize();
 	} else {
 		$selectBtn.removeClass('panel-select-active');
 		$(`#panel-${panelId} .panel-landing-page`).show();
 		$(`#panel-${panelId} .panel-grid`).hide();
+		hidePanelToolbar(panelId);
 	}
 }
 
@@ -4048,6 +4104,7 @@ function clearPanelState(panelId) {
 	$panel.find('.panel-grid').hide();
 	$panel.find('.panel-gallery').removeClass('active');
 	$panel.find('.panel-file-view').hide();
+	hidePanelToolbar(panelId);
 }
 
 export async function closeActivePanel() {
@@ -4152,11 +4209,7 @@ export function attachPanelEventListeners(panelId) {
 				$panel.find('.panel-landing-page').hide();
 				$panel.find('.panel-grid').show();
 				const grid = panelState[panelId].w2uiGrid;
-				if (grid) {
-					const toolbarEl = document.getElementById(`grid_grid-panel-${panelId}_toolbar`);
-					if (toolbarEl && toolbarEl.style.height === '0px') toolbarEl.style.height = '';
-					grid.resize();
-				}
+				if (grid) grid.resize();
 			}
 		});
 
@@ -5020,11 +5073,7 @@ export async function reopenLastClosedPanel() {
 		$(`#panel-${newPanelId} .panel-landing-page`).hide();
 		$(`#panel-${newPanelId} .panel-grid`).show();
 		const grid = panelState[newPanelId].w2uiGrid;
-		if (grid) {
-			const toolbarEl = document.getElementById(`grid_grid-panel-${newPanelId}_toolbar`);
-			if (toolbarEl && toolbarEl.style.height === '0px') toolbarEl.style.height = '';
-			grid.resize();
-		}
+		if (grid) grid.resize();
 
 		panelState[newPanelId].navigationHistory = savedState.navigationHistory;
 		panelState[newPanelId].navigationIndex = savedState.navigationIndex;

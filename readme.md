@@ -28,10 +28,9 @@ Philosophy:
 
 ### BUGS:
 [x] If I set an alert to ANY/ANY - File Added. I get alerts when I first browse a folder. INITIAL events should always be considered a separate thing
-[ ] Galery View
-  [ ] the parent (..) folder shows the incorrect styling, seeing current folder style instead of parent style
-  [ ] Not seeing the toolbar (no search or refresh) on the gallery view (should gallery view have a depth feature?)
-[ ] ![alt text](image.png) - panels 2 - 4 formatting oddly wrong. no titles, panel 2 has some kind of overlap issue. May as well remove the extra new tab (+) button on panel 2
+[x] Galery View
+  [x] the parent (..) folder shows the incorrect styling, seeing current folder style instead of parent style
+  [x] Not seeing the toolbar (no search or refresh) on the gallery view (should gallery view have a depth feature?)
 
 ### ROADMAP:
 [x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.

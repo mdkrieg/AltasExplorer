@@ -282,6 +282,8 @@ export async function showFileView(panelId, filePathOverride) {
 
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
+    $(`#panel-${panelId} .panel-gallery`).removeClass('active');
+    panels.hidePanelToolbar(panelId);
     $fileView.css('display', 'flex');
 
     $fileContentView.show();
@@ -308,6 +310,8 @@ export async function showFileView(panelId, filePathOverride) {
 
     $(`#panel-${panelId} .panel-landing-page`).hide();
     $(`#panel-${panelId} .panel-grid`).hide();
+    $(`#panel-${panelId} .panel-gallery`).removeClass('active');
+    panels.hidePanelToolbar(panelId);
     $fileView.css('display', 'flex');
 
     $fileEditorContainer.show();
