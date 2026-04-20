@@ -48,6 +48,7 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 export let panelState = {
+  0: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] },
   1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] },
   2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] },
   3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] },
@@ -524,6 +525,12 @@ function attachEventListeners() {
       return;
     }
 
+    // Escape key: close item properties modal if open
+    if (event.key === 'Escape' && $('#item-props-modal').is(':visible')) {
+      panels.hideItemPropsModal();
+      return;
+    }
+
     // Escape key: close image viewer modal if open
     if (event.key === 'Escape' && $('#image-viewer-modal').is(':visible')) {
       $('#image-viewer-modal').hide();
@@ -625,6 +632,34 @@ function attachEventListeners() {
         event.preventDefault();
         panels.closeActivePanel();
         break;
+      case 'enter_path': {
+        // If Enter is pressed while a file (not folder) is selected in a visible grid, show Item Properties modal
+        const tgt = event.target;
+        const isRealInput = tgt && (
+          tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+          tgt.contentEditable === 'true' ||
+          (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0)
+        );
+        if (!isRealInput) {
+          const targetPanelId = (panels.gridFocusedPanelId !== null && panels.gridFocusedPanelId !== undefined)
+            ? panels.gridFocusedPanelId
+            : activePanelId;
+          const gridState = panelState[targetPanelId];
+          if (gridState && gridState.w2uiGrid && $(`#panel-${targetPanelId} .panel-grid`).is(':visible')) {
+            const grid = gridState.w2uiGrid;
+            const selected = grid.getSelection();
+            if (selected.length === 1) {
+              const recid = selected[0];
+              const record = grid.records.find(r => r.recid === recid);
+              if (record && !record.isFolder) {
+                event.preventDefault();
+                panels.showItemPropsModal(record, targetPanelId);
+              }
+            }
+          }
+        }
+        break;
+      }
       case 'open_item':
         event.preventDefault();
         panels.openSelectedItem(activePanelId);
@@ -728,10 +763,20 @@ function attachEventListeners() {
     }
   });
 
-  // Panel button handlers - add click listeners for all panels
-  for (let panelId = 1; panelId <= 4; panelId++) {
+  // Panel button handlers - add click listeners for all panels (0 = item-props modal)
+  for (let panelId = 0; panelId <= 4; panelId++) {
     panels.attachPanelEventListeners(panelId);
   }
+
+  // Item properties modal close button
+  $('#btn-item-props-modal-close').click(function () {
+    panels.hideItemPropsModal();
+  });
+
+  // Close item properties modal when clicking the backdrop
+  $('#item-props-modal').on('click', function (e) {
+    if (e.target === this) panels.hideItemPropsModal();
+  });
 
   // Settings modal close button
   $('#btn-settings-close').click(function () {

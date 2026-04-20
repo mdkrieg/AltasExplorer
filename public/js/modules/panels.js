@@ -4144,7 +4144,7 @@ export function attachPanelEventListeners(panelId) {
 		}
 	});
 
-	if (panelId > 1) {
+	if (panelId === 0 || panelId > 1) {
 		$panel.find('.btn-panel-select').off('click').on('click', function () {
 			setActivePanelId(panelId);
 			if (panel1SelectedDirectoryPath) {
@@ -4936,6 +4936,68 @@ export async function openSelectedItem(panelId) {
 		updatePanelLayout();
 		setTimeout(() => updateItemPropertiesPage(newPanelId), 150);
 	}
+}
+
+/**
+ * Shows the Item Properties modal for a file record.
+ * Displays buttons to open the properties in panel 2 through min(visiblePanels+1, 4).
+ */
+export async function showItemPropsModal(record, sourcePanelId) {
+	Object.assign(selectedItemState, {
+		path: record.path,
+		filename: record.filenameRaw || record.filename,
+		isDirectory: false,
+		inode: record.inode,
+		dir_id: record.dir_id,
+		record: record,
+		panelId: sourcePanelId
+	});
+	panelState[0].attrEditMode = false;
+	panelState[0].notesEditMode = false;
+
+	const $btns = $('#item-props-modal-panel-btns').empty();
+	const maxPanel = Math.min(visiblePanels + 1, 4);
+	for (let p = 2; p <= maxPanel; p++) {
+		const targetPanel = p;
+		$('<button>')
+			.text(`Open in Panel ${targetPanel}`)
+			.css({
+				padding: '4px 10px',
+				background: '#2196F3',
+				color: 'white',
+				border: 'none',
+				borderRadius: '4px',
+				cursor: 'pointer',
+				fontSize: '12px'
+			})
+			.on('click', function () {
+				hideItemPropsModal();
+				openItemPropsInPanel(targetPanel);
+			})
+			.appendTo($btns);
+	}
+
+	$('#item-props-modal').css('display', 'flex');
+	await updateItemPropertiesPage(0);
+}
+
+export function hideItemPropsModal() {
+	$('#item-props-modal').hide();
+}
+
+async function openItemPropsInPanel(targetPanel) {
+	if (targetPanel > visiblePanels) {
+		visiblePanels++;
+		$(`#panel-${targetPanel}`).show();
+		attachPanelEventListeners(targetPanel);
+		updatePanelLayout();
+	}
+	const $panel = $(`#panel-${targetPanel}`);
+	$panel.find('.panel-grid').hide();
+	$panel.find('.panel-file-view').hide();
+	$panel.find('.panel-landing-page').show();
+	await updateItemPropertiesPage(targetPanel);
+	setActivePanelId(targetPanel);
 }
 
 export async function reopenLastClosedPanel() {

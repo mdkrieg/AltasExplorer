@@ -40,15 +40,13 @@ Philosophy:
 [ ] Search and Filter, make it so that if I start typing it will start searching by name automatically.
 [x] Update title bar to show the styled colors of the folder category
 [ ] Right click on favorites to send to particular panel
+[ ] Tags in notes, add "archive" type, which is just #tag instead of @#tag. tags always update to database. If a user removes a tag that is present in a note it becomes archived. If a user adds a tag that is archived in notes they back-update in the note. 
 [x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
 [ ] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need
 [-] CTRL + Enter to do same as double click in grid --- nvm, change this:
   [ ] Enter browses dirs in same folders, opens Item Properties in modal for files
   [x] Ctrl+Enter does the same in a new panel
-[x] (mostly done, maybe some missed but seems okay) Add some passive ui notifications (https://w2ui.com/web/demos/#/utils/8) for when settings are saved, this includes:
-  * Browser Settings
-  * Alerts and Monitoring Settings
-  * Maybe others? Any time one of the "gridded" settings are updated such as Categories and Tabs
+[x] (mostly done, maybe some missed but seems okay) Add some passive ui notifications (https://w2ui.com/web/demos/#/utils/8) for when settings are saved, this includes: Browser Settings, Alerts and Monitoring Settings, Maybe others? Any time one of the "gridded" settings are updated such as Categories and Tabs
 [x] Update the color inputs to use the w2ui color picker (https://w2ui.com/web/demos/#/fields/8)
 [x] (got the color picker, not sure others are used but meh) Update the forms to use more of the standard w2ui elements, see: https://w2ui.com/web/demos/#/form
 [x] Update the forms to not throw alert popups but instead use inline styling and remarks like a modern webform
