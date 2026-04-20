@@ -3179,6 +3179,7 @@ function renderGallery(panelId, tagDefs) {
 
 	$gallery.on('click.gallery', '.gallery-item', function (e) {
 		setActivePanelId(panelId);
+		gridFocusedPanelId = panelId;
 		const recid = parseInt($(this).data('recid'), 10);
 		const record = (state.galleryRecords || []).find(r => r.recid === recid);
 		if (!record) return;
@@ -4942,6 +4943,76 @@ export function gridNavigate(direction, isShift, targetPanelId) {
 			grid.select(allRecids[i]);
 		}
 		if (typeof grid.scrollIntoView === 'function') grid.scrollIntoView(allRecids[newCursorIndex]);
+	}
+}
+
+export function galleryNavigate(direction, panelId) {
+	const targetPanelId = panelId !== undefined ? panelId : gridFocusedPanelId;
+	if (targetPanelId === null || targetPanelId === undefined) return;
+	gridFocusedPanelId = targetPanelId;
+
+	const state = panelState[targetPanelId];
+	if (!state) return;
+
+	const $gallery = $(`#panel-${targetPanelId} .panel-gallery`);
+	const items = $gallery.find('.gallery-item').toArray();
+	if (!items.length) return;
+
+	const selectedRecid = state.gallerySelectedRecids && state.gallerySelectedRecids.size > 0
+		? [...state.gallerySelectedRecids][0]
+		: null;
+	const currentIdx = selectedRecid !== null
+		? items.findIndex(el => parseInt(el.dataset.recid, 10) === selectedRecid)
+		: -1;
+
+	let newIdx;
+
+	if (currentIdx === -1) {
+		// Nothing selected — select the first item regardless of direction
+		newIdx = 0;
+	} else if (direction === 'left') {
+		if (currentIdx === 0) return;
+		newIdx = currentIdx - 1;
+	} else if (direction === 'right') {
+		if (currentIdx === items.length - 1) return;
+		newIdx = currentIdx + 1;
+	} else {
+		// up / down: use rendered positions to find the nearest item in the adjacent row
+		const currentEl = items[currentIdx];
+		const curTop = currentEl.offsetTop;
+		const curCenterX = currentEl.getBoundingClientRect().left + currentEl.getBoundingClientRect().width / 2;
+
+		const candidates = items.filter(el =>
+			direction === 'up' ? el.offsetTop < curTop : el.offsetTop > curTop
+		);
+		if (!candidates.length) return; // already on first or last row
+
+		const targetRowTop = direction === 'up'
+			? Math.max(...candidates.map(el => el.offsetTop))
+			: Math.min(...candidates.map(el => el.offsetTop));
+
+		const rowItems = candidates.filter(el => el.offsetTop === targetRowTop);
+		const bestEl = rowItems.reduce((best, el) => {
+			const elCenterX = el.getBoundingClientRect().left + el.getBoundingClientRect().width / 2;
+			const bestCenterX = best.getBoundingClientRect().left + best.getBoundingClientRect().width / 2;
+			return Math.abs(elCenterX - curCenterX) < Math.abs(bestCenterX - curCenterX) ? el : best;
+		});
+		newIdx = items.indexOf(bestEl);
+	}
+
+	if (newIdx === currentIdx) return;
+
+	const newEl = items[newIdx];
+	const newRecid = parseInt(newEl.dataset.recid, 10);
+	state.gallerySelectedRecids = new Set([newRecid]);
+
+	$gallery.find('.gallery-item').removeClass('gallery-item-selected');
+	$(newEl).addClass('gallery-item-selected');
+	newEl.scrollIntoView({ block: 'nearest' });
+
+	const record = (state.galleryRecords || []).find(r => r.recid === newRecid);
+	if (record && getPanelViewType(targetPanelId) !== 'properties') {
+		updateSelectedItemFromRecord(record, targetPanelId);
 	}
 }
 

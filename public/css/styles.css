@@ -298,6 +298,10 @@ button:active {
   border-color: #ddd;
 }
 .gallery-item.gallery-item-selected {
+  background: #e0e0e0;
+  border-color: #bdbdbd;
+}
+.panel-active .gallery-item.gallery-item-selected {
   background: #dce9f5;
   border-color: #90caf9;
 }
@@ -1468,14 +1472,15 @@ hr {
   background: #f5f5f5;
 }
 
-.w2ui-grid .w2ui-grid-row.w2ui-selected {
-  background: #e0e0e0;
-  color: #555;
-}
-
-.panel-active .w2ui-grid .w2ui-grid-row.w2ui-selected {
-  background: #e3f2fd;
-  color: #1976d2;
+/* Non-active panel: override w2ui's !important blue with grey */
+.panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr.w2ui-selected,
+.panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-selected,
+.panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr td.w2ui-selected,
+.panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr td.w2ui-selected,
+.panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr.w2ui-inactive,
+.panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-inactive {
+  background-color: #e0e0e0 !important;
+  color: #555 !important;
 }
 
 .w2ui-grid .w2ui-grid-cell {

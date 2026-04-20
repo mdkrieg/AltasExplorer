@@ -491,6 +491,30 @@ function attachEventListeners() {
       }
     }
 
+    if ((event.key === 'ArrowUp' || event.key === 'ArrowDown' ||
+         event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
+        !event.altKey && !event.ctrlKey && !event.metaKey) {
+      const galleryPanelId = panels.getPanelViewType(activePanelId) === 'gallery'
+        ? activePanelId
+        : (panels.gridFocusedPanelId !== null && panels.gridFocusedPanelId !== undefined
+            ? panels.gridFocusedPanelId
+            : activePanelId);
+      if (galleryPanelId !== null && galleryPanelId !== undefined &&
+          panels.getPanelViewType(galleryPanelId) === 'gallery') {
+        const target = event.target;
+        const isRealInput = target &&
+            (target.tagName === 'INPUT' || target.tagName === 'SELECT' ||
+             target.contentEditable === 'true' ||
+             (target.tagName === 'TEXTAREA' && $(target).closest('.panel-grid').length === 0));
+        if (!isRealInput) {
+          event.preventDefault();
+          event.stopPropagation();
+          panels.galleryNavigate(event.key.replace('Arrow', '').toLowerCase(), galleryPanelId);
+          return;
+        }
+      }
+    }
+
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
         !event.altKey && !event.ctrlKey && !event.metaKey) {
       let targetPanelId = panels.gridFocusedPanelId;
@@ -633,7 +657,6 @@ function attachEventListeners() {
         panels.closeActivePanel();
         break;
       case 'enter_path': {
-        // If Enter is pressed while a file (not folder) is selected in a visible grid, show Item Properties modal
         const tgt = event.target;
         const isRealInput = tgt && (
           tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
@@ -641,19 +664,38 @@ function attachEventListeners() {
           (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0)
         );
         if (!isRealInput) {
-          const targetPanelId = (panels.gridFocusedPanelId !== null && panels.gridFocusedPanelId !== undefined)
-            ? panels.gridFocusedPanelId
-            : activePanelId;
-          const gridState = panelState[targetPanelId];
-          if (gridState && gridState.w2uiGrid && $(`#panel-${targetPanelId} .panel-grid`).is(':visible')) {
-            const grid = gridState.w2uiGrid;
-            const selected = grid.getSelection();
-            if (selected.length === 1) {
-              const recid = selected[0];
-              const record = grid.records.find(r => r.recid === recid);
-              if (record && !record.isFolder) {
+          const targetPanelId = activePanelId;
+          const viewType = panels.getPanelViewType(targetPanelId);
+          if (viewType === 'gallery') {
+            const state = panelState[targetPanelId];
+            if (state && state.gallerySelectedRecids && state.gallerySelectedRecids.size > 0) {
+              const recid = [...state.gallerySelectedRecids][0];
+              const record = (state.galleryRecords || []).find(r => r.recid === recid);
+              if (record) {
                 event.preventDefault();
-                panels.showItemPropsModal(record, targetPanelId);
+                if (record.isFolder && record.changeState !== 'moved') {
+                  panels.navigateToDirectory(record.path, targetPanelId);
+                } else if (!record.isFolder) {
+                  panels.showItemPropsModal(record, targetPanelId);
+                }
+              }
+            }
+          } else if (viewType !== 'properties') {
+            const gridState = panelState[targetPanelId];
+            if (gridState && gridState.w2uiGrid && $(`#panel-${targetPanelId} .panel-grid`).is(':visible')) {
+              const grid = gridState.w2uiGrid;
+              const selected = grid.getSelection();
+              if (selected.length === 1) {
+                const recid = selected[0];
+                const record = grid.records.find(r => r.recid === recid);
+                if (record) {
+                  event.preventDefault();
+                  if (record.isFolder && record.changeState !== 'moved') {
+                    panels.navigateToDirectory(record.path, targetPanelId);
+                  } else if (!record.isFolder) {
+                    panels.showItemPropsModal(record, targetPanelId);
+                  }
+                }
               }
             }
           }
