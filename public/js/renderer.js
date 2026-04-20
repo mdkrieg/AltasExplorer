@@ -113,6 +113,7 @@ export function setSidebarFocus(focused) {
       $(`#panel-${i} .panel-number`).removeClass('panel-number-selected');
       $(`#panel-${i}`).removeClass('panel-active');
     }
+    sidebar.initSidebarFocus();
   } else {
     $sidebar.removeClass('sidebar-focused');
     sidebar.clearSidebarArrowFocus();

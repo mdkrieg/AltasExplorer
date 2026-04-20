@@ -1789,6 +1789,12 @@ export function clearSidebarArrowFocus() {
   sidebarFocusIndex = -1;
 }
 
+export function initSidebarFocus() {
+  sidebarFocusZone = 'toolbar';
+  sidebarFocusIndex = 0;
+  applySidebarArrowFocus();
+}
+
 function applySidebarArrowFocus() {
   document.querySelectorAll('.sidebar-arrow-focused').forEach(el => el.classList.remove('sidebar-arrow-focused'));
   const $sidebar = document.getElementById('sidebar-content');
@@ -1883,7 +1889,10 @@ export function handleSidebarArrowKey(key) {
       const nodeId = current.el.dataset?.id;
       if (nodeId && w2uiFavoritesSidebar) {
         const node = w2uiFavoritesSidebar.get(nodeId);
-        if (node?.expanded) w2uiFavoritesSidebar.collapse(nodeId);
+        if (node?.expanded) {
+          w2uiFavoritesSidebar.collapse(nodeId);
+          setTimeout(() => applySidebarArrowFocus(), 0);
+        }
       }
     }
   } else if (key === 'ArrowRight') {
@@ -1910,7 +1919,10 @@ export function handleSidebarArrowKey(key) {
       const nodeId = current.el.dataset?.id;
       if (nodeId && w2uiFavoritesSidebar) {
         const node = w2uiFavoritesSidebar.get(nodeId);
-        if (node && !node.expanded && node.nodes?.length > 0) w2uiFavoritesSidebar.expand(nodeId);
+        if (node && !node.expanded && node.nodes?.length > 0) {
+          w2uiFavoritesSidebar.expand(nodeId);
+          setTimeout(() => applySidebarArrowFocus(), 0);
+        }
       }
     }
   } else if (key === 'Enter') {

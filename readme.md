@@ -34,10 +34,11 @@ Philosophy:
 [ ] ![alt text](image.png) - panels 2 - 4 formatting oddly wrong. no titles, panel 2 has some kind of overlap issue. May as well remove the extra new tab (+) button on panel 2
 
 ### ROADMAP:
-[ ] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
+[x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
+[ ] Add SVGs onto the back and parent nav buttons
 [ ] CTRL+L to change path. Maybe CTRL+SHIFT+L opens a special segmented path edit?
 [ ] Search and Filter, make it so that if I start typing it will start searching by name automatically.
-[ ] Update title bar to show the styled colors of the folder category
+[x] Update title bar to show the styled colors of the folder category
 [ ] Right click on favorites to send to particular panel
 [x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
 [ ] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need

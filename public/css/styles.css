@@ -1920,10 +1920,14 @@ hr {
 }
 
 .w2ui-node.sidebar-arrow-focused,
-.w2ui-node-group.sidebar-arrow-focused,
 .sidebar-item.sidebar-arrow-focused,
 .sidebar-todo-group-header.sidebar-arrow-focused,
 .sidebar-todo-item.sidebar-arrow-focused {
+  background: #d4f0f0;
+}
+
+/* Override w2ui vendor specificity (.w2ui-sidebar .w2ui-sidebar-body .w2ui-node-group = 0,3,0) */
+.w2ui-sidebar .w2ui-sidebar-body .w2ui-node-group.sidebar-arrow-focused {
   background: #d4f0f0;
 }
 
