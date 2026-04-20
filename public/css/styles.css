@@ -130,6 +130,10 @@ button:active {
   min-height: 0;
 }
 
+.panel-item > .panel-grid {
+  border: 0 !important;
+}
+
 .panel-content > .panel-grid {
   height: auto !important;
 }
@@ -139,12 +143,13 @@ button:active {
   display: none;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 12px;
+  padding: 3px 3px 3px 15px;
   background: #f0f0f0;
   border-bottom: 1px solid #e0e0e0;
   font-size: 12px;
   flex: 0 0 auto;
   min-height: 28px;
+  border-bottom-width: 2px;
 }
 .panel-header.active {
   display: flex;
@@ -242,7 +247,7 @@ button:active {
   left: 0px;
   width: 12px;
   height: 12px;
-  /* background: #FFFFFF; */
+  background: #F0F0F0;
   color:  #858585;
   border-bottom-right-radius: 50%;
   display: flex;
@@ -1761,11 +1766,33 @@ hr {
   border-radius: 4px;
 }
 
+/* Grid Header Container Styles */
+.panel-header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 18px 0 0 18px;
+  width: 100%;
+  padding: 2px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+/* Grid Header Button Container */
+.panel-header-buttons {
+  display: flex;
+  gap: 4px;
+}
+
 /* Editable Panel Path Styling */
 .panel-path {
+  font-weight: bold;
+  font-size: 12px;
   cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 2px;
+  user-select: none;
+  padding: 3px 5px;
+  border-radius: 16px 0 0 16px;
+  width:100%;
 }
 
 .panel-path:hover {
@@ -1774,13 +1801,15 @@ hr {
 
 .panel-path-input {
   display: none;
-  flex: 1;
-  max-width: 60%;
-  padding: 4px 6px;
+  font-weight: bold;
+  font-size: 12px;
+  padding: 2px;
   border: 1px solid #2196F3 !important;
-  border-radius: 3px !important;
-  font-size: 12px !important;
-  font-weight: bold !important;
+  border-radius: 2px !important;
+  font-family: inherit;
+  flex: 1;
+  width: 100%;
+  margin-right: 8px;
 }
 
 .panel-path-input:focus {
@@ -3711,4 +3740,20 @@ hr {
   top: auto !important;
   transform: none !important;
   margin: 0 !important;
+}
+
+/* Custom SVG icons for w2ui toolbar navigation buttons */
+.w2ui-icon.icon-navigate-back,
+.w2ui-icon.icon-navigate-up {
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  width: 16px;
+  height: 16px;
+}
+.w2ui-icon.icon-navigate-back {
+  background-image: url('../assets/icons/navigate-back.svg');
+}
+.w2ui-icon.icon-navigate-up {
+  background-image: url('../assets/icons/navigate-up.svg');
 }

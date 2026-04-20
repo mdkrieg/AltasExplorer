@@ -805,17 +805,29 @@ function syncAddPanelButtonState() {
 	button.title = canAddPanel ? 'Add panel' : 'Maximum panels open';
 }
 
-function buildGridHeaderHtml(panelId, path) {
+function darkenRgb(rgbStr, amount = 30) {
+	const match = rgbStr && rgbStr.match(/rgb\(\s*(\d+),\s*(\d+),\s*(\d+)\s*\)/);
+	if (!match) return rgbStr;
+	const r = Math.max(0, parseInt(match[1]) - amount);
+	const g = Math.max(0, parseInt(match[2]) - amount);
+	const b = Math.max(0, parseInt(match[3]) - amount);
+	return `rgb(${r}, ${g}, ${b})`;
+}
+
+function buildGridHeaderHtml(panelId, path, category) {
 	const safePath = utils.escapeHtml(path || '');
 	const buttonsHtml = panelId === 1
-		? '<button class="btn-panel-parent" style="padding: 4px 8px;">← Parent</button>'
-		: '<button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold; border-radius: 4px;" title="Close panel">X</button>';
+		? ''
+		: '<button class="btn-panel-remove" title="Close panel">X</button>';
+
+	const borderColor = category?.bgColor ? darkenRgb(category.bgColor) : '';
+	const contentStyle = borderColor ? ` style="border-bottom-color: ${borderColor};"` : '';
 
 	return `
-		<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 12px; background: #f0f0f0; border-bottom: 1px solid #e0e0e0;">
-			<span class="panel-path" style="font-weight: bold; font-size: 12px; cursor: pointer; user-select: none;">${safePath}</span>
-			<input class="panel-path-input" type="text" value="${safePath}" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #2196F3; border-radius: 4px; font-family: inherit; flex: 1; max-width: 60%; margin-right: 8px;">
-			<div style="display: flex; gap: 4px;">
+		<div class="panel-header-content"${contentStyle}>
+			<span class="panel-path">${safePath}</span>
+			<input class="panel-path-input" type="text" value="${safePath}">
+			<div class="panel-header-buttons">
 				${buttonsHtml}
 			</div>
 		</div>
@@ -824,7 +836,8 @@ function buildGridHeaderHtml(panelId, path) {
 }
 
 function updateGridHeader(panelId, path = panelState[panelId]?.currentPath || '') {
-	const headerHtml = buildGridHeaderHtml(panelId, path);
+	const category = panelState[panelId]?.currentCategory;
+	const headerHtml = buildGridHeaderHtml(panelId, path, category);
 	const grid = getPanelGrid(panelId);
 	if (grid) {
 		grid.header = headerHtml;
@@ -869,17 +882,6 @@ function attachGridHeaderEventListeners(panelId) {
 		$header.find('.panel-path').show();
 	});
 
-	$header.find('.btn-panel-parent').off('click').on('click', function () {
-		setActivePanelId(panelId);
-		const state = panelState[panelId];
-		if (state.currentPath && state.currentPath.length > 3) {
-			const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
-			if (parentPath.length >= 2) {
-				navigateToDirectory(parentPath, panelId);
-			}
-		}
-	});
-
 	$header.find('.btn-panel-refresh').off('click').on('click', async function () {
 		setActivePanelId(panelId);
 		await navigateToDirectory(panelState[panelId].currentPath, panelId);
@@ -902,9 +904,17 @@ function attachGridHeaderEventListeners(panelId) {
 function updatePanelHeader(panelId, path = panelState[panelId]?.currentPath || '') {
 	const headerEl = getPanelHeaderElement(panelId);
 	if (!headerEl) return;
-	const headerHtml = buildGridHeaderHtml(panelId, path);
+	const category = panelState[panelId]?.currentCategory;
+	const headerHtml = buildGridHeaderHtml(panelId, path, category);
 	headerEl.innerHTML = headerHtml;
 	headerEl.classList.add('active');
+	if (category?.bgColor) {
+		headerEl.style.background = category.bgColor;
+		headerEl.style.borderBottomColor = category.textColor || darkenRgb(category.bgColor);
+	} else {
+		headerEl.style.background = '';
+		headerEl.style.borderBottomColor = '';
+	}
 	attachPanelHeaderEventListeners(panelId);
 }
 
@@ -939,17 +949,6 @@ function attachPanelHeaderEventListeners(panelId) {
 	}).on('blur', function () {
 		$(this).hide();
 		$header.find('.panel-path').show();
-	});
-
-	$header.find('.btn-panel-parent').off('click').on('click', function () {
-		setActivePanelId(panelId);
-		const state = panelState[panelId];
-		if (state.currentPath && state.currentPath.length > 3) {
-			const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
-			if (parentPath.length >= 2) {
-				navigateToDirectory(parentPath, panelId);
-			}
-		}
 	});
 
 	$header.find('.btn-panel-refresh').off('click').on('click', async function () {
@@ -2468,6 +2467,7 @@ async function initializeGridForPanel(panelId) {
 		show: {
 			header: false,
 			toolbar: true,
+			toolbarReload: false,
 			footer: true,
 			skipRecords: false,
 			saveRestoreState: false
@@ -2479,6 +2479,28 @@ async function initializeGridForPanel(panelId) {
 		],
 		toolbar: {
 			items: [
+				{
+					type: 'button', id: 'nav-back',
+					icon: 'icon-navigate-back', tooltip: 'Back',
+					onClick: () => {
+						setActivePanelId(panelId);
+						navigateBack();
+					}
+				},
+				{
+					type: 'button', id: 'nav-up',
+					icon: 'icon-navigate-up', tooltip: 'Parent',
+					onClick: () => navigateToParent(panelId)
+				},
+				{
+					type: 'button', id: 'nav-refresh',
+					icon: 'w2ui-icon-reload', tooltip: 'Refresh',
+					onClick: () => {
+						setActivePanelId(panelId);
+						navigateToDirectory(panelState[panelId].currentPath, panelId);
+					}
+				},
+				{ type: 'break' },
 				{
 					type: 'html',
 					id: 'depth-control',
@@ -2662,9 +2684,6 @@ async function initializeGridForPanel(panelId) {
 
 	const $gridContainer = $(`#panel-${panelId} .panel-grid`);
 	w2ui[gridName].render($gridContainer[0]);
-
-	const reloadItem = w2ui[gridName].toolbar.get('w2ui-reload');
-	if (reloadItem) reloadItem.tooltip = 'Refresh';
 
 	$(document).off(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`)
 		.on(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`, function () {
@@ -3529,6 +3548,17 @@ export function navigateBack() {
 	if (state.navigationIndex > 0) {
 		state.navigationIndex--;
 		navigateToDirectory(state.navigationHistory[state.navigationIndex], activePanelId, false);
+	}
+}
+
+export function navigateToParent(panelId) {
+	setActivePanelId(panelId);
+	const state = panelState[panelId];
+	if (state.currentPath && state.currentPath.length > 3) {
+		const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
+		if (parentPath.length >= 2) {
+			navigateToDirectory(parentPath, panelId);
+		}
 	}
 }
 
