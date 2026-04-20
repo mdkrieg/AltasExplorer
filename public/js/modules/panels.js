@@ -768,6 +768,7 @@ function updateSelectedItemFromRecord(record, panelId) {
 
 export function setVisiblePanels(value) {
 	visiblePanels = value;
+	syncAddPanelButtonState();
 }
 
 export function setUnacknowledgedAlertCount(value) {
@@ -796,23 +797,24 @@ function getPanelHeaderElement(panelId) {
 	return document.querySelector(`#panel-${panelId} .panel-header`);
 }
 
+function syncAddPanelButtonState() {
+	const button = document.getElementById('btn-sidebar-add-panel');
+	if (!button) return;
+	const canAddPanel = visiblePanels < 4;
+	button.disabled = !canAddPanel;
+	button.title = canAddPanel ? 'Add panel' : 'Maximum panels open';
+}
+
 function buildGridHeaderHtml(panelId, path) {
-	let buttonsHtml = `
-		<button class="btn-panel-parent" style="padding: 4px 8px; margin-right: 5px;">←  Parent</button>
-	`;
-
-	if (panelId === 1) {
-		buttonsHtml += `<button id="btn-add-panel" style="padding: 4px 8px; background: #4CAF50; color: white; border: none; font-weight: bold; border-radius: 4px;">+</button>`;
-	}
-
-	if (panelId > 1) {
-		buttonsHtml += `<button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold;">-</button>`;
-	}
+	const safePath = utils.escapeHtml(path || '');
+	const buttonsHtml = panelId === 1
+		? '<button class="btn-panel-parent" style="padding: 4px 8px;">← Parent</button>'
+		: '<button class="btn-panel-remove" style="padding: 4px 8px; background: #f44336; color: white; border: none; font-weight: bold; border-radius: 4px;" title="Close panel">X</button>';
 
 	return `
 		<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 12px; background: #f0f0f0; border-bottom: 1px solid #e0e0e0;">
-			<span class="panel-path" style="font-weight: bold; font-size: 12px; cursor: pointer; user-select: none;">${path}</span>
-			<input class="panel-path-input" type="text" value="${path}" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #2196F3; border-radius: 4px; font-family: inherit; flex: 1; max-width: 60%; margin-right: 8px;">
+			<span class="panel-path" style="font-weight: bold; font-size: 12px; cursor: pointer; user-select: none;">${safePath}</span>
+			<input class="panel-path-input" type="text" value="${safePath}" style="display: none; font-weight: bold; font-size: 12px; padding: 4px; border: 1px solid #2196F3; border-radius: 4px; font-family: inherit; flex: 1; max-width: 60%; margin-right: 8px;">
 			<div style="display: flex; gap: 4px;">
 				${buttonsHtml}
 			</div>
@@ -888,16 +890,6 @@ function attachGridHeaderEventListeners(panelId) {
 			setActivePanelId(panelId);
 			showSettingsModal();
 		});
-
-		$header.find('#btn-add-panel').off('click').on('click', function () {
-			if (visiblePanels < 4) {
-				visiblePanels++;
-				const newPanelId = visiblePanels;
-				$(`#panel-${newPanelId}`).show();
-				attachPanelEventListeners(newPanelId);
-				updatePanelLayout();
-			}
-		});
 	}
 
 	if (panelId > 1) {
@@ -969,16 +961,6 @@ function attachPanelHeaderEventListeners(panelId) {
 		$header.find('.btn-panel-settings').off('click').on('click', function () {
 			setActivePanelId(panelId);
 			showSettingsModal();
-		});
-
-		$header.find('#btn-add-panel').off('click').on('click', function () {
-			if (visiblePanels < 4) {
-				visiblePanels++;
-				const newPanelId = visiblePanels;
-				$(`#panel-${newPanelId}`).show();
-				attachPanelEventListeners(newPanelId);
-				updatePanelLayout();
-			}
 		});
 	}
 
@@ -2987,12 +2969,15 @@ async function populateGalleryView(entries, currentDirCategory, panelId = active
 
 	// Build folder records
 	for (const folder of folders) {
-		let category = currentDirCategory;
+		let category = folder.filename === '.' ? currentDirCategory : null;
 		let iconUrl = '';
-		if (folder.filename !== '.' && folder.filename !== '..') {
+		if (folder.filename !== '.' && folder.changeState !== 'moved') {
 			try {
-				category = await window.electronAPI.getCategoryForDirectory(folder.path) || currentDirCategory;
+				category = await window.electronAPI.getCategoryForDirectory(folder.path) || category;
 			} catch (_) {}
+		}
+		if (!category && folder.filename !== '..') {
+			category = currentDirCategory;
 		}
 		if (category) {
 			iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, folder.initials || null);
@@ -3934,10 +3919,24 @@ export function updatePanelLayout() {
 	const $container = $('#panel-container');
 	$container.removeClass('layout-1 layout-2 layout-3 layout-4').addClass(`layout-${visiblePanels}`);
 	currentLayout = visiblePanels;
+	syncAddPanelButtonState();
 	setTimeout(() => {
 		setupDividers();
 		setupBadgeDragHandles();
 	}, 100);
+}
+
+export function addPanel() {
+	if (visiblePanels >= 4) {
+		return null;
+	}
+
+	visiblePanels++;
+	const newPanelId = visiblePanels;
+	$(`#panel-${newPanelId}`).show();
+	attachPanelEventListeners(newPanelId);
+	updatePanelLayout();
+	return newPanelId;
 }
 
 export function removePanel(panelId) {
@@ -4468,17 +4467,6 @@ export function attachPanelEventListeners(panelId) {
 			$panel.find('.item-props-notes').show();
 		});
 
-		if (panelId === 2) {
-			$panel.find('.btn-add-panel-landing').off('click').on('click', function () {
-				if (visiblePanels < 4) {
-					visiblePanels++;
-					const newPanelId = visiblePanels;
-					$(`#panel-${newPanelId}`).show();
-					attachPanelEventListeners(newPanelId);
-					updatePanelLayout();
-				}
-			});
-		}
 	}
 }
 

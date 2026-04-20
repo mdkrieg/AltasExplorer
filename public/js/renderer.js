@@ -602,13 +602,7 @@ function attachEventListeners() {
         break;
       case 'add_panel':
         event.preventDefault();
-        if (panels.visiblePanels < 4) {
-          const nextPanelId = panels.visiblePanels + 1;
-          panels.setVisiblePanels(nextPanelId);
-          $(`#panel-${nextPanelId}`).show();
-          panels.attachPanelEventListeners(nextPanelId);
-          panels.updatePanelLayout();
-        }
+        panels.addPanel();
         break;
       case 'open_terminal': {
         event.preventDefault();
@@ -676,18 +670,8 @@ function attachEventListeners() {
     panels.showLayoutModal();
   });
 
-  // Add panel button
-  $('#btn-add-panel').click(function () {
-    if (panels.visiblePanels < 4) {
-      const newPanelId = panels.visiblePanels + 1;
-      panels.setVisiblePanels(newPanelId);
-      $(`#panel-${newPanelId}`).show();
-
-      // Reattach event listeners for the newly visible panel
-      panels.attachPanelEventListeners(newPanelId);
-
-      panels.updatePanelLayout();
-    }
+  $('#btn-sidebar-add-panel').click(function () {
+    panels.addPanel();
   });
 
   // Layout option buttons

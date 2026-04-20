@@ -115,11 +115,23 @@ button:active {
   display: none !important;
 }
 
+.panel-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Grid container fills remaining space below toolbar */
-.panel-item > .panel-grid {
+.panel-item > .panel-grid,
+.panel-content > .panel-grid {
   flex: 1 1 auto;
   overflow: hidden;
   min-height: 0;
+}
+
+.panel-content > .panel-grid {
+  height: auto !important;
 }
 
 /* Standalone panel header (path display) */
@@ -148,7 +160,8 @@ button:active {
 }
 
 /* Gallery view container */
-.panel-item > .panel-gallery {
+.panel-item > .panel-gallery,
+.panel-content > .panel-gallery {
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
@@ -158,8 +171,16 @@ button:active {
   padding: 8px;
   gap: 8px;
 }
-.panel-item > .panel-gallery.active {
+.panel-item > .panel-gallery.active,
+.panel-content > .panel-gallery.active {
   display: flex;
+}
+
+.panel-content > .panel-landing-page,
+.panel-content > .panel-file-view,
+.panel-content > .panel-terminal-view {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Gallery card */
@@ -1089,34 +1110,12 @@ textarea {
   background: #c62828;
 }
 
-/* Add Panel Button on Panel 2 Landing Page */
-.btn-add-panel-landing {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  padding: 4px 8px;
-  background: #4CAF50;
-  color: white;
-  border: none;
-  font-weight: bold;
-  border-radius: 4px;
-  cursor: pointer;
-  z-index: 5;
-  transition: all 0.2s ease;
-}
-
-.btn-add-panel-landing:hover {
-  background: #388E3C;
-}
-
-.btn-add-panel-landing:active {
-  background: #2E7D32;
-}
-
 .panel-file-view {
   display: flex;
   flex-direction: column;
   background: white;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .file-content {
@@ -1916,12 +1915,24 @@ hr {
   flex-shrink: 0;
 }
 
+#btn-sidebar-add-panel {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+}
+
 #sidebar-toolbar button:hover {
   background: rgba(0, 0, 0, 0.08);
 }
 
 #sidebar-toolbar button:active {
   background: rgba(0, 0, 0, 0.14);
+}
+
+#sidebar-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
 }
 
 /* Alert badge */
