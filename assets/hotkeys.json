@@ -45,6 +45,11 @@
       "key": "Tab",
       "default": "Tab"
     },
+    "focus_path_bar": {
+      "label": "Focus Path Bar",
+      "key": "Ctrl+l",
+      "default": "Ctrl+l"
+    },
     "enter_path": {
       "label": "Enter Path",
       "key": "Enter",

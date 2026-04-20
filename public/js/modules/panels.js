@@ -1035,19 +1035,23 @@ function attachPanelToolbarEventListeners(panelId) {
 		}
 	});
 
-	$tb.find('.panel-tb-search').off('keydown input').on('keydown', function (e) {
+	$tb.find('.panel-tb-search').off('keydown blur').on('keydown', function (e) {
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			applyPanelToolbarSearch(panelId, this.value);
+			this.blur();
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
-			this.value = '';
-			applyPanelToolbarSearch(panelId, '');
+			e.stopPropagation();
+			this.value = panelState[panelId].toolbarSearch || '';
+			this.blur();
 		}
+	}).on('blur', function () {
+		this.value = panelState[panelId].toolbarSearch || '';
 	});
 }
 
-function applyPanelToolbarSearch(panelId, value) {
+export function applyPanelToolbarSearch(panelId, value) {
 	const state = panelState[panelId];
 	if (!state) return;
 	const query = String(value || '').trim();
@@ -3579,6 +3583,18 @@ export function setActivePanelId(panelId) {
 		$(`#panel-${panelId}`).addClass('panel-active');
 		refreshItemPropertiesInAllPanels();
 	}
+}
+
+export function focusSearchBarWithChar(panelId, char) {
+	const state = panelState[panelId];
+	if (!state) return;
+	const toolbar = getPanelToolbarElement(panelId);
+	if (!toolbar) return;
+	const input = toolbar.querySelector('.panel-tb-search');
+	if (!input) return;
+	input.value = char;
+	input.focus();
+	input.setSelectionRange(char.length, char.length);
 }
 
 export function setGridFocusedPanelId(panelId) {

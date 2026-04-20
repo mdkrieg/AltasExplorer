@@ -34,9 +34,9 @@ Philosophy:
 
 ### ROADMAP:
 [x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
-[ ] Add SVGs onto the back and parent nav buttons
-[ ] CTRL+L to change path. Maybe CTRL+SHIFT+L opens a special segmented path edit?
-[ ] Search and Filter, make it so that if I start typing it will start searching by name automatically.
+[x] Add SVGs onto the back and parent nav buttons
+[x] CTRL+L to change path
+[x] Search and Filter, make it so that if I start typing it will start searching by name automatically.
 [x] Update title bar to show the styled colors of the folder category
 [ ] Right click on favorites to send to particular panel
 [ ] Tags in notes, add "archive" type, which is just #tag instead of @#tag. tags always update to database. If a user removes a tag that is present in a note it becomes archived. If a user adds a tag that is archived in notes they back-update in the note. 

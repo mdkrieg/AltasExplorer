@@ -246,6 +246,9 @@ async function initialize() {
     }
 
     console.log('Initialization complete');
+
+    panels.setActivePanelId(1);
+    panels.setGridFocusedPanelId(1);
   } catch (err) {
     console.error('Error initializing app:', err);
     alert('Fatal error during initialization: ' + err.message);
@@ -301,6 +304,7 @@ export async function loadHotkeysFromStorage() {
       navigate_up: normalizeHotkeyCombo('Alt+Up'),
       add_panel: normalizeHotkeyCombo('Ctrl+T'),
       close_panel: normalizeHotkeyCombo('Ctrl+W'),
+      focus_path_bar: normalizeHotkeyCombo('Ctrl+L'),
       enter_path: normalizeHotkeyCombo('Enter'),
       cancel_path: normalizeHotkeyCombo('Escape'),
       edit_file: normalizeHotkeyCombo('F2'),
@@ -491,6 +495,25 @@ function attachEventListeners() {
       }
     }
 
+    // Printable key while grid/gallery has focus → redirect to search bar
+    if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      const target = event.target;
+      const isRealInput = target && (
+        target.tagName === 'INPUT' || target.tagName === 'SELECT' ||
+        target.contentEditable === 'true' ||
+        (target.tagName === 'TEXTAREA' && $(target).closest('.panel-grid').length === 0)
+      );
+      if (!isRealInput) {
+        const viewType = panels.getPanelViewType(activePanelId);
+        if (viewType === 'gallery' || viewType === 'grid') {
+          event.preventDefault();
+          event.stopPropagation();
+          panels.focusSearchBarWithChar(activePanelId, event.key);
+          return;
+        }
+      }
+    }
+
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown' ||
          event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
         !event.altKey && !event.ctrlKey && !event.metaKey) {
@@ -547,6 +570,28 @@ function attachEventListeners() {
   $(document).keydown(async function (event) {
     if (event.key === 'Escape' && panels.handleTransientEscape()) {
       return;
+    }
+
+    // Escape with no input focused: clear active panel search
+    if (event.key === 'Escape') {
+      const tgt = event.target;
+      const inInput = tgt && (
+        tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+        tgt.contentEditable === 'true' ||
+        (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0)
+      );
+      if (!inInput) {
+        const viewType = panels.getPanelViewType(activePanelId);
+        if ((viewType === 'grid' || viewType === 'gallery') && panelState[activePanelId]?.toolbarSearch) {
+          panels.applyPanelToolbarSearch(activePanelId, '');
+          const toolbar = document.querySelector(`#panel-${activePanelId} .panel-toolbar`);
+          if (toolbar) {
+            const input = toolbar.querySelector('.panel-tb-search');
+            if (input) input.value = '';
+          }
+          return;
+        }
+      }
     }
 
     // Escape key: close item properties modal if open
@@ -655,6 +700,10 @@ function attachEventListeners() {
       case 'close_panel':
         event.preventDefault();
         panels.closeActivePanel();
+        break;
+      case 'focus_path_bar':
+        event.preventDefault();
+        panels.activatePathEditMode(activePanelId);
         break;
       case 'enter_path': {
         const tgt = event.target;

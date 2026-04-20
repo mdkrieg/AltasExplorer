@@ -305,6 +305,12 @@ button:active {
   background: #dce9f5;
   border-color: #90caf9;
 }
+/* Input within active panel focused → use unfocused selection style */
+.panel-active:has(.panel-tb-search:focus) .gallery-item.gallery-item-selected,
+.panel-active:has(.panel-path-input:focus) .gallery-item.gallery-item-selected {
+  background: #e0e0e0;
+  border-color: #bdbdbd;
+}
 .gallery-item img,
 .gallery-item video {
   width: 64px;
@@ -1478,7 +1484,20 @@ hr {
 .panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr td.w2ui-selected,
 .panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr td.w2ui-selected,
 .panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr.w2ui-inactive,
-.panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-inactive {
+.panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-inactive,
+/* Active panel with search or path input focused → same grey style */
+.panel-active:has(.panel-tb-search:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr.w2ui-selected,
+.panel-active:has(.panel-tb-search:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-selected,
+.panel-active:has(.panel-tb-search:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr td.w2ui-selected,
+.panel-active:has(.panel-tb-search:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr td.w2ui-selected,
+.panel-active:has(.panel-tb-search:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr.w2ui-inactive,
+.panel-active:has(.panel-tb-search:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-inactive,
+.panel-active:has(.panel-path-input:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr.w2ui-selected,
+.panel-active:has(.panel-path-input:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-selected,
+.panel-active:has(.panel-path-input:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr td.w2ui-selected,
+.panel-active:has(.panel-path-input:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr td.w2ui-selected,
+.panel-active:has(.panel-path-input:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr.w2ui-inactive,
+.panel-active:has(.panel-path-input:focus) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-inactive {
   background-color: #e0e0e0 !important;
   color: #555 !important;
 }
