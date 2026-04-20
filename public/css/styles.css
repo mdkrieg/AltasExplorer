@@ -3237,6 +3237,14 @@ hr {
   margin: 3px 4px;
 }
 
+.custom-ctx-item-danger {
+  color: #c0392b;
+}
+.custom-ctx-item-danger.active {
+  background: #fdecea;
+  color: #c0392b;
+}
+
 /* Item Overview Enhancements */
 .btn-section-toggle {
   background: none;

@@ -11,6 +11,7 @@
 
 import { w2sidebar } from './vendor/w2ui.es6.min.js';
 import { navigateToDirectory, visiblePanels, addPanel, setActivePanelId, setGridFocusedPanelId } from './panels.js';
+import { hideCustomContextMenu } from './contexts.js';
 import {
   panelState,
   sidebarState,
@@ -29,7 +30,6 @@ let sidebarFocusIndex = -1;
 let previouslyFocusedPanelId = 1;
 
 let w2uiFavoritesSidebar = null;
-let favoritesContextMenuTarget = null;
 let favIconMap = {};
 let favEditMode = false;
 let favoritesEditSnapshot = null;
@@ -870,8 +870,8 @@ async function initializeFavoritesSidebar() {
         event.preventDefault();
         const node = w2uiFavoritesSidebar.get(event.target);
         if (node) {
-          favoritesContextMenuTarget = node;
-          showFavoritesContextMenu(event.clientX, event.clientY, node.group ? 'group' : 'item');
+          const origEvent = event.detail?.originalEvent ?? event;
+          showFavoritesContextMenu(origEvent.clientX, origEvent.clientY, node.group ? 'group' : 'item', node);
         }
       },
       onRefresh(event) {
@@ -1315,138 +1315,108 @@ async function deleteGroup(node) {
 }
 
 /**
- * Show the favorites context menu
+ * Show the favorites context menu using the shared custom-ctx-menu style.
  */
-function showFavoritesContextMenu(x, y, targetType = 'item') {
-  let $menu = $('#favorites-context-menu');
-  if ($menu.length === 0) {
-    $menu = $('<div>').attr('id', 'favorites-context-menu');
-    $('body').append($menu);
-  }
+function showFavoritesContextMenu(x, y, targetType = 'item', node = null) {
+  hideCustomContextMenu();
 
-  $menu.empty();
+  const menu = document.createElement('div');
+  menu.id = 'custom-ctx-menu';
+  menu.className = 'custom-ctx-menu';
 
-  if (targetType === 'item') {
-    // Panel open options: one entry per visible panel
+  const addRow = (text, action, extraClass = '') => {
+    const row = document.createElement('div');
+    row.className = 'custom-ctx-item' + (extraClass ? ' ' + extraClass : '');
+    const label = document.createElement('span');
+    label.className = 'custom-ctx-label';
+    label.textContent = text;
+    row.appendChild(label);
+    row.addEventListener('mouseenter', () => {
+      menu.querySelectorAll('.custom-ctx-item').forEach(r => r.classList.remove('active'));
+      row.classList.add('active');
+    });
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideCustomContextMenu();
+      action();
+    });
+    menu.appendChild(row);
+  };
+
+  const addSeparator = () => {
+    const sep = document.createElement('div');
+    sep.className = 'custom-ctx-separator';
+    menu.appendChild(sep);
+  };
+
+  if (targetType === 'item' && node) {
+    // One top-level entry per visible panel
     for (let i = 1; i <= visiblePanels; i++) {
       const panelId = i;
-      $menu.append(
-        $('<div>').addClass('fav-menu-item')
-          .text(`Open in Panel ${panelId}`)
-          .on('click', async function (e) {
-            e.stopPropagation();
-            if (favoritesContextMenuTarget && favoritesContextMenuTarget.path) {
-              await navigateToDirectory(favoritesContextMenuTarget.path, panelId);
-              setActivePanelId(panelId);
-              setGridFocusedPanelId(panelId);
-            }
-            hideFavoritesContextMenu();
-          })
-      );
+      addRow(`Open in Panel ${panelId}`, async () => {
+        if (node.path) {
+          await navigateToDirectory(node.path, panelId);
+          setActivePanelId(panelId);
+          setGridFocusedPanelId(panelId);
+        }
+      });
     }
-    // N+1: open a new panel (if under the 4-panel max)
+    // N+1: open a new panel (capped at 4)
     if (visiblePanels < 4) {
       const newPanelId = visiblePanels + 1;
-      $menu.append(
-        $('<div>').addClass('fav-menu-item')
-          .text(`Open in new Panel ${newPanelId}`)
-          .on('click', async function (e) {
-            e.stopPropagation();
-            if (favoritesContextMenuTarget && favoritesContextMenuTarget.path) {
-              const created = addPanel();
-              const targetId = created ?? newPanelId;
-              await navigateToDirectory(favoritesContextMenuTarget.path, targetId);
-              setActivePanelId(targetId);
-              setGridFocusedPanelId(targetId);
-            }
-            hideFavoritesContextMenu();
-          })
-      );
+      addRow(`Open in new Panel ${newPanelId}`, async () => {
+        if (node.path) {
+          const created = addPanel();
+          const targetId = created ?? newPanelId;
+          await navigateToDirectory(node.path, targetId);
+          setActivePanelId(targetId);
+          setGridFocusedPanelId(targetId);
+        }
+      });
     }
-    // Separator
-    $menu.append($('<div>').addClass('fav-menu-separator'));
-    // Remove option
-    $menu.append(
-      $('<div>').addClass('fav-menu-item fav-menu-item-remove')
-        .text('Remove from Favorites')
-        .on('click', async function (e) {
-          e.stopPropagation();
-          if (favoritesContextMenuTarget && favoritesContextMenuTarget.path) {
-            await removeFromFavorites(favoritesContextMenuTarget.path);
-          }
-          hideFavoritesContextMenu();
-        })
-    );
-  } else if (targetType === 'group') {
-    // Group context menu
-    $menu.append(
-      $('<div>').addClass('fav-menu-item')
-        .text('Rename')
-        .on('click', async function (e) {
-          e.stopPropagation();
-          if (favoritesContextMenuTarget) {
-            const newName = await showInputPrompt('Enter new group name:', favoritesContextMenuTarget.text);
-            if (newName && newName.trim()) {
-              await renameGroup(favoritesContextMenuTarget, newName.trim());
-            }
-          }
-          hideFavoritesContextMenu();
-        })
-    );
-    $menu.append(
-      $('<div>').addClass('fav-menu-item')
-        .text('Add to Group')
-        .on('click', async function (e) {
-          e.stopPropagation();
-          await showAddGroupPrompt();
-          hideFavoritesContextMenu();
-        })
-    );
-    $menu.append(
-      $('<div>').addClass('fav-menu-item')
-        .text('Delete')
-        .on('click', async function (e) {
-          e.stopPropagation();
-          if (favoritesContextMenuTarget) {
-            await deleteGroup(favoritesContextMenuTarget);
-          }
-          hideFavoritesContextMenu();
-        })
-    );
+    addSeparator();
+    addRow('Remove from Favorites', async () => {
+      if (node.path) await removeFromFavorites(node.path);
+    }, 'custom-ctx-item-danger');
+  } else if (targetType === 'group' && node) {
+    addRow('Rename', async () => {
+      const newName = await showInputPrompt('Enter new group name:', node.text);
+      if (newName && newName.trim()) await renameGroup(node, newName.trim());
+    });
+    addRow('Delete', async () => {
+      await deleteGroup(node);
+    }, 'custom-ctx-item-danger');
   }
 
-  $menu.css({
-    position: 'fixed',
-    left: x,
-    top: y,
-    display: 'block',
-    background: 'white',
-    border: '1px solid #ccc',
-    borderRadius: '4px',
-    minWidth: '160px',
-    zIndex: 10001
+  if (!menu.children.length) return;
+
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  document.body.appendChild(menu);
+
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
   });
 
-  // Ensure menu stays in viewport
-  const menuRect = $menu[0].getBoundingClientRect();
-  if (menuRect.right > window.innerWidth) {
-    $menu.css('left', x - menuRect.width);
-  }
-  if (menuRect.bottom > window.innerHeight) {
-    $menu.css('top', y - menuRect.height);
-  }
+  const onOutside = (e) => {
+    if (!e.target.closest?.('#custom-ctx-menu')) {
+      hideCustomContextMenu();
+      document.removeEventListener('click', onOutside);
+      document.removeEventListener('keydown', onEsc);
+    }
+  };
+  const onEsc = (e) => {
+    if (e.key === 'Escape') {
+      hideCustomContextMenu();
+      document.removeEventListener('click', onOutside);
+      document.removeEventListener('keydown', onEsc);
+    }
+  };
+  document.addEventListener('click', onOutside);
+  document.addEventListener('keydown', onEsc);
 }
-
-function hideFavoritesContextMenu() {
-  $('#favorites-context-menu').hide();
-}
-
-// Hide context menu on outside click
-$(document).on('click', function (e) {
-  if (!$(e.target).closest('#favorites-context-menu').length) {
-    hideFavoritesContextMenu();
-  }
-});
 
 // ── Favorites Edit Mode ────────────────────────────────────────────────────
 
