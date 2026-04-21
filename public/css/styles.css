@@ -1585,14 +1585,30 @@ hr {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   cursor: pointer;
+  margin: 2px;
 }
 
-.notes-cell-icon-image {
-  object-fit: contain;
-  opacity: 0.7;
+.notes-cell-icon-view {
+  border: 1px solid #F0F0F0;
+  border-radius: 3px;
+  color: #5c6670;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.notes-cell-icon-view:hover {
+  background: #cce4ff;
+  border-color: #83b2d8;
+}
+
+.notes-cell-icon-view img{
+  width:16px;
+  height:16px;
+  opacity: 0.8;
 }
 
 .notes-cell-icon-add {
@@ -1607,7 +1623,13 @@ hr {
 .notes-cell-icon-add:hover {
   background: #cce4ff;
   border-color: #83b2d8;
-  /* color: #1976d2; */
+}
+
+.notes-cell-icon-add img {
+  padding-top: 1px; /* align the plus icon better */
+  width:16px;
+  height:16px;
+  opacity: 0.4;
 }
 
 .grid-tags-cell {
@@ -1633,17 +1655,22 @@ hr {
   justify-content: center;
   width: 18px;
   height: 18px;
-  border: 0;
   background: transparent;
+  border: 1px solid #F0F0F0;
+  border-radius: 3px;
   color: #5c6670;
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .grid-tags-add-btn:hover {
-  background: #eef6ff;
-  border-color: #2196f3;
+  background: #cce4ff;
+  border-color: #83b2d8;
   color: #1976d2;
+}
+
+.grid-tags-add-btn img{
+  opacity:0.4;
 }
 
 /* Settings Button Styles */
@@ -3321,35 +3348,75 @@ hr {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
-  border: 1px solid #d3d7dc;
+  background: transparent;
+  border: 1px solid #F0F0F0;
   border-radius: 3px;
   cursor: pointer;
-  padding: 1px 6px;
-  font-size: 10px;
-  line-height: 1.4;
-  color: #52606d;
+  padding: 0;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
 }
 .btn-copy-value:hover {
-  background: #f4f7fa;
-  border-color: #aeb7c2;
-  color: #243447;
+  background: #cce4ff;
+  border-color: #83b2d8;
+}
+.btn-copy-value img {
+  opacity: 0.4;
 }
 
 .grid-attr-copy-cell {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   width: 100%;
   min-width: 0;
 }
 
 .grid-attr-copy-text {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.btn-attr-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  height: 18px;
+  padding: 0;
+  margin-left: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: width 0.12s ease, margin-left 0.12s ease, opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.grid-attr-copy-cell:hover .btn-attr-edit {
+  width: 18px;
+  margin-left: 4px;
+  opacity: 1;
+  border-color: #F0F0F0;
+}
+
+.btn-attr-edit:hover {
+  background: #cce4ff;
+  border-color: #83b2d8;
+}
+
+.btn-attr-edit img {
+  opacity: 0.4;
+}
+
+.grid-attr-copy-cell .btn-copy-value {
+  margin-left: 4px;
 }
 .item-props-icon.clickable {
   cursor: pointer;

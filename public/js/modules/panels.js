@@ -312,7 +312,9 @@ function getHeaderFilterButtonHtml(panelId, field) {
 	const state = ensureFilterState(panelId);
 	const isActive = isFilterFieldActive(panelId, field);
 	const isOpen = state?.filterMenuField === field;
-	return `<button type="button" class="grid-header-filter-btn${isActive ? ' is-active' : ''}${isOpen ? ' is-open' : ''}" data-panel-id="${panelId}" data-filter-menu-field="${field}" title="${utils.escapeHtml(getFilterButtonTitle(panelId, field))}">f</button>`;
+	return `<button type="button" class="grid-header-filter-btn${isActive ? ' is-active' : ''}${isOpen ? ' is-open' : ''}" data-panel-id="${panelId}" data-filter-menu-field="${field}" title="${utils.escapeHtml(getFilterButtonTitle(panelId, field))}">
+		<img src="assets/icons/filter.svg">
+	</button>`;
 }
 
 function getColumnHeaderText(panelId, field, label) {
@@ -1001,6 +1003,10 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 				<input id="depth-input-${panelId}" type="number" min="0" max="99" value="${depth}">
 			</div>
 		` : ''}
+		<span class="panel-tb-break"></span>
+		<button id="btn-toolbar-terminal-${panelId}" class="panel-tb-btn" title="Terminal">
+			<img src="assets/icons/terminal.svg" style="width: 16px; height: 16px; pointer-events: none;">
+		</button>
 		<div class="panel-tb-scan">
 			<button id="btn-stop-scan-${panelId}" class="panel-tb-stop-scan" style="display:none;" title="Stop the current scan">&#9632; Stop</button>
 			<span id="scan-status-${panelId}" class="panel-tb-scan-status" style="display:none;">Scanning…</span>
@@ -2725,14 +2731,15 @@ async function initializeGridForPanel(panelId) {
 		{ field: 'checksum', headerLabel: 'Checksum', text: getColumnHeaderText(panelId, 'checksum', 'Checksum'), size: '70px', resizable: true, sortable: false },
 		{
 			field: 'tags', headerLabel: 'Tags', text: getColumnHeaderText(panelId, 'tags', 'Tags'), size: '190px', resizable: true, sortable: false, render: (record) => {
-				return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M12.146.854a.5.5 0 0 1 .708 0l2.292 2.292a.5.5 0 0 1 0 .708L5.854 13.146a.5.5 0 0 1-.22.128l-3.5 1.167a.5.5 0 0 1-.632-.632l1.167-3.5a.5.5 0 0 1 .128-.22L12.146.854zM11.5 2.707 13.293 4.5 14.293 3.5 12.5 1.707 11.5 2.707zM12.586 5.207 10.793 3.414 4 10.207V10.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.793-6.793z"/></svg></button></div>`;
+				// return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M12.146.854a.5.5 0 0 1 .708 0l2.292 2.292a.5.5 0 0 1 0 .708L5.854 13.146a.5.5 0 0 1-.22.128l-3.5 1.167a.5.5 0 0 1-.632-.632l1.167-3.5a.5.5 0 0 1 .128-.22L12.146.854zM11.5 2.707 13.293 4.5 14.293 3.5 12.5 1.707 11.5 2.707zM12.586 5.207 10.793 3.414 4 10.207V10.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.793-6.793z"/></svg></button></div>`;
+				return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true"><img src="assets/icons/edit.svg" width="16" height="16"></button></div>`;
 			}
 		},
 		{
 			field: 'notes', headerLabel: 'Notes', text: getColumnHeaderText(panelId, 'notes', 'Notes'), size: '32px', resizable: false, sortable: false, render: (record) => {
 				return record.hasNotes
-					? `<img src="assets/icons/note-book-icon.svg" class="notes-cell-icon notes-cell-icon-image" title="Notes" data-notes-icon="true">`
-					: '<span class="notes-cell-icon notes-cell-icon-add" title="Add notes" data-notes-icon="true"><img src="assets/icons/add-notes.png" style="width:16px; height:16px;"></span>';
+					? `<span class="notes-cell-icon notes-cell-icon-view" title="Open Notes" data-notes-icon="true"><img src="assets/icons/note-book-icon.svg"></span>`
+					: '<span class="notes-cell-icon notes-cell-icon-add" title="Add Notes" data-notes-icon="true"><img src="assets/icons/add-notes.png"></span>';
 			}
 		},
 		{
@@ -2771,6 +2778,7 @@ async function initializeGridForPanel(panelId) {
 		},
 	    multiSelect: true,
 	    multiSearch: false,
+	    advanceOnEdit: false,
 		searches:[
 			{ field: 'filename', caption: 'Filename', type: 'text' },
 		],
@@ -2799,6 +2807,33 @@ async function initializeGridForPanel(panelId) {
 					if (record) {
 						updateSelectedItemFromRecord(record, panelId);
 						openTagConfigModal(record, panelId);
+						return;
+					}
+				}
+			}
+
+			if (originalTarget && originalTarget.closest && originalTarget.closest('[data-attr-edit-trigger="true"]')) {
+				event.preventDefault();
+				event.stopPropagation();
+				if (event.detail.recid) {
+					const record = this.records.find(r => r.recid === event.detail.recid);
+					if (record) {
+						const btn = originalTarget.closest('[data-attr-edit-trigger="true"]');
+						const attrName = btn.getAttribute('data-attr-name');
+						const attrDefinition = panelState[panelId].currentAttrDefinitions?.[attrName];
+						const grid = panelState[panelId].w2uiGrid;
+						const colIndex = grid ? grid.columns.findIndex(c => c.field === `attr_${attrName}`) : -1;
+						if (!grid || colIndex === -1) return;
+						// Normalize yes-no to string so the list picker highlights the current value
+						const attrType = (attrDefinition?.type || 'string').toLowerCase();
+						if (attrType === 'yes-no') {
+							const raw = record[`attr_${attrName}`];
+							if (raw !== null && raw !== undefined && raw !== '') {
+								record[`attr_${attrName}`] = (raw === true || raw === 'true' || raw === 'Yes') ? 'Yes' : 'No';
+							}
+						}
+						grid.columns[colIndex].editable = getAttrEditableConfig(attrDefinition);
+						grid.editField(record.recid, colIndex);
 						return;
 					}
 				}
@@ -2929,6 +2964,44 @@ async function initializeGridForPanel(panelId) {
 				}
 				refreshFilterHeaderButtons(panelId);
 			};
+		},
+		onChange: function (event) {
+			// event.detail has `column` (index), not `field` — derive field from column index
+			const colIndex = event.detail?.column;
+			if (colIndex == null) return;
+			const field = this.columns[colIndex]?.field;
+			if (!field || !field.startsWith('attr_')) return;
+			const grid = this;
+			event.onComplete = async () => {
+				const record = grid.records.find(r => r.recid === event.detail.recid);
+				if (!record) return;
+				// event.detail.value is { new, previous, original } — extract .new
+				// For list type, .new is {id, text}; normalize to just the id string
+				let newValue = event.detail.value?.new ?? event.detail.value;
+				if (newValue !== null && typeof newValue === 'object' && 'id' in newValue) {
+					newValue = newValue.id;
+				}
+				// Write normalized value directly to the record
+				record[field] = newValue;
+				// Clear w2ui change tracking so editDone removes w2ui-changed class
+				// and re-renders the cell via our custom render function
+				if (record.w2ui?.changes) {
+					delete record.w2ui.changes[field];
+					if (Object.keys(record.w2ui.changes).length === 0) delete record.w2ui.changes;
+				}
+				// Remove editable to prevent unintended double-click editing
+				if (colIndex !== -1) delete grid.columns[colIndex].editable;
+				// Persist
+				const attrName = field.substring(5);
+				const inode = record.inode;
+				const dirId = record.dir_id;
+				if (!inode || !dirId) return;
+				try {
+					await window.electronAPI.setFileAttributes(inode, dirId, { [attrName]: newValue });
+				} catch (err) {
+					w2alert('Error saving attribute: ' + err.message);
+				}
+			};
 		}
 	});
 	panelState[panelId].w2uiGrid = w2ui[gridName];
@@ -2951,6 +3024,12 @@ async function initializeGridForPanel(panelId) {
 			if (panelState[panelId].currentPath) {
 				navigateToDirectory(panelState[panelId].currentPath, panelId, false);
 			}
+		});
+
+	$(document).off(`click.toolbar-terminal-${panelId}`, `#btn-toolbar-terminal-${panelId}`)
+		.on(`click.toolbar-terminal-${panelId}`, `#btn-toolbar-terminal-${panelId}`, function () {
+			const cwd = panelState[panelId]?.currentPath;
+			terminal.openTerminalModal(cwd);
 		});
 
 	bindGridFilterControls(panelId);
@@ -3451,6 +3530,20 @@ function renderGallery(panelId, tagDefs) {
 	});
 }
 
+function getAttrEditableConfig(attrDefinition) {
+	const type = (attrDefinition?.type || 'string').toLowerCase();
+	if (type === 'yes-no') {
+		return { type: 'list', items: [{ id: 'Yes', text: 'Yes' }, { id: 'No', text: 'No' }], showAll: true, openOnFocus: true };
+	}
+	if (type === 'selectable' && attrDefinition?.options?.length > 0) {
+		return { type: 'list', items: attrDefinition.options.map(o => ({ id: o, text: o })), showAll: true, openOnFocus: true };
+	}
+	if (type === 'numeric') {
+		return { type: 'float' };
+	}
+	return { type: 'text' };
+}
+
 function openInitialsEditor(record, panelId) {
 	const existing = document.getElementById('initials-editor-popup');
 	if (existing) existing.remove();
@@ -3602,7 +3695,7 @@ function decodeCopyValue(encodedValue) {
 function renderCopyValueButton(value, extraClass = '') {
 	if (value === null || value === undefined || value === '') return '';
 	const encodedValue = encodeURIComponent(String(value));
-	return `<button class="btn-copy-value${extraClass}" data-copy-value="${encodedValue}" title="Copy">Copy</button>`;
+	return `<button class="btn-copy-value${extraClass}" data-copy-value="${encodedValue}" title="Copy"><img src="assets/icons/copy.svg" width="16" height="16"></button>`;
 }
 
 function showCopySuccessTooltip(anchor) {
@@ -3646,12 +3739,13 @@ function formatCustomAttributeValue(value, type) {
 function renderGridAttributeCell(record, attrName, attrDefinition) {
 	const rawValue = record[`attr_${attrName}`];
 	const displayValue = formatCustomAttributeValue(rawValue, attrDefinition?.type);
-	if (!displayValue) return '';
-	const safeValue = utils.escapeHtml(displayValue);
-	if (!attrDefinition?.copyable) {
-		return `<span title="${safeValue}">${safeValue}</span>`;
+	const safeAttrName = utils.escapeHtml(attrName);
+	const editBtn = `<button class="btn-attr-edit" data-attr-edit-trigger="true" data-attr-name="${safeAttrName}" title="Edit"><img src="assets/icons/edit.svg" width="16" height="16"></button>`;
+	if (!displayValue) {
+		return `<div class="grid-attr-copy-cell"><span class="grid-attr-copy-text"></span>${editBtn}</div>`;
 	}
-	return `<div class="grid-attr-copy-cell" title="${safeValue}"><span class="grid-attr-copy-text">${safeValue}</span>${renderCopyValueButton(displayValue, ' grid-copy-value-btn')}</div>`;
+	const safeValue = utils.escapeHtml(displayValue);
+	return `<div class="grid-attr-copy-cell" title="${safeValue}"><span class="grid-attr-copy-text">${safeValue}</span>${editBtn}${renderCopyValueButton(displayValue, ' grid-copy-value-btn')}</div>`;
 }
 
 function getDateModifiedCell(file, changeState) {
