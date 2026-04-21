@@ -16,7 +16,7 @@ import {
 	panelState,
 	loadHotkeysFromStorage
 } from '../renderer.js';
-import { showFormError, showFormSuccess, clearFormStatus } from './utils.js';
+import { showFormError, showFormSuccess, clearFormStatus, enforceTagNameInput } from './utils.js';
 
 let initializedSettingsTabs = new Set();
 let initializedTaggingTabs = new Set();
@@ -1027,6 +1027,7 @@ async function initializeTagsGrid() {
 async function initializeTagsForm() {
 	initializeColorPickers();
 	clearTagForm();
+	enforceTagNameInput(document.getElementById('form-tag-name'));
 }
 
 function populateTagForm(record) {

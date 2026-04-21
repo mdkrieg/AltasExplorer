@@ -412,6 +412,53 @@ function updateTodoItemStates(sectionContent, updates) {
   return lines.join('\n');
 }
 
+/**
+ * Extract all @#tag references from a notes section.
+ * A valid tag must be followed by whitespace or end-of-line.
+ * Tags with illegal characters in the name are silently ignored.
+ *
+ * @param {string} sectionContent - Content of a single notes section
+ * @returns {string[]} Deduplicated array of tag name strings (without the @# prefix)
+ */
+function extractNoteTags(sectionContent) {
+  if (!sectionContent) return [];
+  const TAG_PATTERN = /@#([a-zA-Z0-9_-]+)(?=[\s]|$)/gm;
+  const found = new Set();
+  let match;
+  while ((match = TAG_PATTERN.exec(sectionContent)) !== null) {
+    found.add(match[1]);
+  }
+  return Array.from(found);
+}
+
+/**
+ * Demote a tag in a notes section: replace @#tagName with #tagName (archive).
+ * Only replaces whole-word occurrences (not followed by word characters).
+ *
+ * @param {string} sectionContent - Content of a single notes section
+ * @param {string} tagName - The tag name to demote (without any prefix)
+ * @returns {string} Updated section content
+ */
+function demoteTagInSection(sectionContent, tagName) {
+  if (!sectionContent) return sectionContent;
+  const escaped = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return sectionContent.replace(new RegExp(`@#(${escaped})(?!\\w)`, 'g'), '#$1');
+}
+
+/**
+ * Promote an archived tag in a notes section: replace #tagName with @#tagName.
+ * Only promotes occurrences that are NOT already preceded by @.
+ *
+ * @param {string} sectionContent - Content of a single notes section
+ * @param {string} tagName - The tag name to promote (without any prefix)
+ * @returns {string} Updated section content
+ */
+function promoteTagInSection(sectionContent, tagName) {
+  if (!sectionContent) return sectionContent;
+  const escaped = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return sectionContent.replace(new RegExp(`(?<!@)#(${escaped})(?!\\w)`, 'g'), '@#$1');
+}
+
 // Export public API
 const notesParserAPI = {
   parseNotesFileSections,
@@ -426,7 +473,10 @@ const notesParserAPI = {
   parseTodoBlocks,
   countTodoItems,
   normalizeTodoBlock,
-  updateTodoItemStates
+  updateTodoItemStates,
+  extractNoteTags,
+  demoteTagInSection,
+  promoteTagInSection
 };
 
 if (typeof module !== 'undefined' && module.exports) {

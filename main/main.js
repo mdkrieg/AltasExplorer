@@ -1131,12 +1131,58 @@ ipcMain.handle('get-item-stats', (event, { itemPath }) => {
 /**
  * Tags: Add a tag to a directory or file
  */
-ipcMain.handle('add-tag-to-item', (event, { path, tagName, isDirectory, inode, dir_id }) => {
+/**
+ * Sync a tag addition/removal to the notes.txt file for an item.
+ * Operates synchronously and silently skips if notes.txt or the section is absent.
+ *
+ * @param {string} filePath - Absolute path of the file or directory
+ * @param {boolean} isDirectory - True if the item is a directory
+ * @param {string} tagName - Tag name (no prefix)
+ * @param {'promote'|'demote'} action - promote: #tag→@#tag, demote: @#tag→#tag
+ */
+function updateNotesTagSync(filePath, isDirectory, tagName, action) {
+  const notesFilePath = isDirectory
+    ? path.join(filePath, 'notes.txt')
+    : path.join(path.dirname(filePath), 'notes.txt');
+  const sectionKey = isDirectory ? '__dir__' : path.basename(filePath);
+
+  if (!fsSync.existsSync(notesFilePath)) return;
+
+  let existingContent;
+  try {
+    existingContent = fsSync.readFileSync(notesFilePath, 'utf-8');
+  } catch (err) {
+    logger.warn(`updateNotesTagSync: could not read ${notesFilePath}: ${err.message}`);
+    return;
+  }
+
+  const sections = notesParser.parseNotesFileSections(existingContent);
+  if (!(sectionKey in sections)) return;
+
+  const original = sections[sectionKey];
+  const updated = action === 'promote'
+    ? notesParser.promoteTagInSection(original, tagName)
+    : notesParser.demoteTagInSection(original, tagName);
+
+  if (updated === original) return; // nothing changed
+
+  const newContent = notesParser.writeNotesSection(existingContent, sectionKey, updated);
+  try {
+    fsSync.writeFileSync(notesFilePath, newContent, 'utf-8');
+  } catch (err) {
+    logger.warn(`updateNotesTagSync: could not write ${notesFilePath}: ${err.message}`);
+  }
+}
+
+ipcMain.handle('add-tag-to-item', (event, { path: itemPath, tagName, isDirectory, inode, dir_id }) => {
   try {
     if (isDirectory) {
-      db.addTagToDirectory(path, tagName);
+      db.addTagToDirectory(itemPath, tagName);
     } else {
       db.addTagToFile(inode, dir_id, tagName);
+    }
+    try { updateNotesTagSync(itemPath, isDirectory, tagName, 'promote'); } catch (err) {
+      logger.warn(`add-tag-to-item: notes sync failed for '${tagName}': ${err.message}`);
     }
     return { success: true };
   } catch (err) {
@@ -1148,12 +1194,15 @@ ipcMain.handle('add-tag-to-item', (event, { path, tagName, isDirectory, inode, d
 /**
  * Tags: Remove a tag from a directory or file
  */
-ipcMain.handle('remove-tag-from-item', (event, { path, tagName, isDirectory, inode, dir_id }) => {
+ipcMain.handle('remove-tag-from-item', (event, { path: itemPath, tagName, isDirectory, inode, dir_id }) => {
   try {
     if (isDirectory) {
-      db.removeTagFromDirectory(path, tagName);
+      db.removeTagFromDirectory(itemPath, tagName);
     } else {
       db.removeTagFromFile(inode, dir_id, tagName);
+    }
+    try { updateNotesTagSync(itemPath, isDirectory, tagName, 'demote'); } catch (err) {
+      logger.warn(`remove-tag-from-item: notes sync failed for '${tagName}': ${err.message}`);
     }
     return { success: true };
   } catch (err) {
@@ -3020,6 +3069,18 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           : notesParser.extractDirectoryNotes(dirNotesContent || '');
         const dirTodoCounts = notesParser.countTodoItems(dirSection);
         entry.todoCounts = dirTodoCounts.total > 0 ? dirTodoCounts : null;
+
+        // Promote @#tags from notes into the DB (idempotent)
+        const noteDirTags = notesParser.extractNoteTags(dirSection);
+        if (noteDirTags.length > 0) {
+          const targetDirPath = entry.filename === '.' ? normalizedPath : entry.path;
+          for (const tagName of noteDirTags) {
+            try { db.addTagToDirectory(targetDirPath, tagName); } catch (err) {
+              logger.warn(`notes-tag: failed to add tag '${tagName}' to dir '${targetDirPath}': ${err.message}`);
+            }
+          }
+          entry.tags = db.getTagsForDirectoryId(entry.dir_id);
+        }
       } else {
         // For files, check if they have file-specific notes
         entry.hasNotes = filesWithNotes.has(entry.filename);
@@ -3028,6 +3089,17 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         const fileSection = localNotesSections[entry.filename] || '';
         const fileTodoCounts = notesParser.countTodoItems(fileSection);
         entry.todoCounts = fileTodoCounts.total > 0 ? fileTodoCounts : null;
+
+        // Promote @#tags from notes into the DB (idempotent)
+        const noteFileTags = notesParser.extractNoteTags(fileSection);
+        if (noteFileTags.length > 0) {
+          for (const tagName of noteFileTags) {
+            try { db.addTagToFile(entry.inode, entry.dir_id, tagName); } catch (err) {
+              logger.warn(`notes-tag: failed to add tag '${tagName}' to file '${entry.filename}': ${err.message}`);
+            }
+          }
+          entry.tags = db.getFileByInode(entry.inode, entry.dir_id)?.tags || null;
+        }
       }
     }
 

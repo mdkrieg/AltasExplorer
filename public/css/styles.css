@@ -844,6 +844,8 @@ textarea {
   gap: 6px;
   align-items: center;
   margin-bottom: 8px;
+  max-height: 140px;
+  overflow-y: auto;
 }
 
 .item-props-tag-helper {
@@ -970,7 +972,7 @@ textarea {
   display: flex;
   flex-direction: column;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .item-tags-modal-header,
@@ -984,6 +986,7 @@ textarea {
 
 .item-tags-modal-header {
   border-bottom: 1px solid #ddd;
+  border-radius: 8px 8px 0 0;
 }
 
 .item-tags-modal-footer {
@@ -993,7 +996,7 @@ textarea {
 
 .item-tags-modal-body {
   padding: 16px 18px;
-  overflow-y: auto;
+  overflow: visible;
   background: #fff;
 }
 

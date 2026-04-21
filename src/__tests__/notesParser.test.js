@@ -16,7 +16,10 @@ const {
   extractAllHeaders,
   extractDirectoryNotes,
   extractFileNotes,
-  getAllSectionsInfo
+  getAllSectionsInfo,
+  extractNoteTags,
+  demoteTagInSection,
+  promoteTagInSection
 } = require('../notesParser');
 
 describe('notesParser - isValidFileHeader', () => {
@@ -888,5 +891,141 @@ describe('notesParser - normalizeTodoBlock — COMMENT/REPLY coercion', () => {
     const result = normalizeTodoBlock(content);
     const lines = result.split('\n');
     expect(lines[1]).toBe('COMMENT: not a todo comment');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractNoteTags
+// ---------------------------------------------------------------------------
+
+describe('notesParser - extractNoteTags', () => {
+  test('finds a single @#tag followed by a space', () => {
+    expect(extractNoteTags('some text @#foo bar')).toEqual(['foo']);
+  });
+
+  test('finds a @#tag at end of line (newline terminates)', () => {
+    expect(extractNoteTags('text @#foo\nmore')).toEqual(['foo']);
+  });
+
+  test('finds a @#tag at very end of string', () => {
+    expect(extractNoteTags('text @#foo')).toEqual(['foo']);
+  });
+
+  test('finds multiple distinct @#tags', () => {
+    const result = extractNoteTags('@#foo bar @#baz');
+    expect(result).toContain('foo');
+    expect(result).toContain('baz');
+    expect(result).toHaveLength(2);
+  });
+
+  test('deduplicates repeated @#tags', () => {
+    expect(extractNoteTags('@#foo @#foo @#foo')).toEqual(['foo']);
+  });
+
+  test('ignores lone #tag (archive format)', () => {
+    expect(extractNoteTags('some #bar text')).toEqual([]);
+  });
+
+  test('ignores @#tag followed immediately by an illegal character (no whitespace boundary)', () => {
+    expect(extractNoteTags('@#foo!')).toEqual([]);
+    expect(extractNoteTags('@#foo.bar')).toEqual([]);
+  });
+
+  test('allows hyphens and underscores in tag names', () => {
+    expect(extractNoteTags('@#my-tag ')).toEqual(['my-tag']);
+    expect(extractNoteTags('@#my_tag ')).toEqual(['my_tag']);
+  });
+
+  test('returns empty array for empty content', () => {
+    expect(extractNoteTags('')).toEqual([]);
+    expect(extractNoteTags(null)).toEqual([]);
+    expect(extractNoteTags(undefined)).toEqual([]);
+  });
+
+  test('handles tab as valid whitespace boundary', () => {
+    expect(extractNoteTags('@#foo\tbar')).toEqual(['foo']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// demoteTagInSection
+// ---------------------------------------------------------------------------
+
+describe('notesParser - demoteTagInSection', () => {
+  test('replaces @#tag with #tag', () => {
+    expect(demoteTagInSection('text @#foo more', 'foo')).toBe('text #foo more');
+  });
+
+  test('replaces all occurrences', () => {
+    expect(demoteTagInSection('@#foo and @#foo again', 'foo')).toBe('#foo and #foo again');
+  });
+
+  test('does not touch a plain #tag that is already archived', () => {
+    expect(demoteTagInSection('text #foo more', 'foo')).toBe('text #foo more');
+  });
+
+  test('does not touch a different tag name', () => {
+    expect(demoteTagInSection('@#bar text', 'foo')).toBe('@#bar text');
+  });
+
+  test('does not demote a prefix-matched longer tag (word boundary)', () => {
+    expect(demoteTagInSection('@#foobar text', 'foo')).toBe('@#foobar text');
+  });
+
+  test('returns unchanged content when tag not present', () => {
+    expect(demoteTagInSection('no tags here', 'foo')).toBe('no tags here');
+  });
+
+  test('handles empty/null content gracefully', () => {
+    expect(demoteTagInSection('', 'foo')).toBe('');
+    expect(demoteTagInSection(null, 'foo')).toBe(null);
+  });
+
+  test('escapes regex special characters in tag name', () => {
+    // Tag names cannot have dots (enforced by input validation), but the
+    // escaping should be safe regardless - nothing should crash
+    expect(() => demoteTagInSection('@#foo text', 'f.o')).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// promoteTagInSection
+// ---------------------------------------------------------------------------
+
+describe('notesParser - promoteTagInSection', () => {
+  test('promotes #tag to @#tag', () => {
+    expect(promoteTagInSection('text #foo more', 'foo')).toBe('text @#foo more');
+  });
+
+  test('promotes all occurrences', () => {
+    expect(promoteTagInSection('#foo and #foo again', 'foo')).toBe('@#foo and @#foo again');
+  });
+
+  test('does not double-promote an already @#tag', () => {
+    expect(promoteTagInSection('@#foo text', 'foo')).toBe('@#foo text');
+  });
+
+  test('does not affect a different tag name', () => {
+    expect(promoteTagInSection('#bar text', 'foo')).toBe('#bar text');
+  });
+
+  test('does not promote a prefix-matched longer tag (word boundary)', () => {
+    expect(promoteTagInSection('#foobar text', 'foo')).toBe('#foobar text');
+  });
+
+  test('returns unchanged content when archived tag not present', () => {
+    expect(promoteTagInSection('no tags here', 'foo')).toBe('no tags here');
+  });
+
+  test('handles empty/null content gracefully', () => {
+    expect(promoteTagInSection('', 'foo')).toBe('');
+    expect(promoteTagInSection(null, 'foo')).toBe(null);
+  });
+
+  test('roundtrip: demote then promote restores original', () => {
+    const original = 'notes with @#foo tag';
+    const demoted = demoteTagInSection(original, 'foo');
+    const promoted = promoteTagInSection(demoted, 'foo');
+    expect(promoted).toBe(original);
   });
 });

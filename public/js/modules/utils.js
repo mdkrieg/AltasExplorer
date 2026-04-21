@@ -249,3 +249,26 @@ export function clearFormStatus(formId, statusId) {
     status.textContent = '';
   }
 }
+
+/**
+ * Attach a live input validator to a tag name input element.
+ * Strips any character that is not in [a-zA-Z0-9_-] on every keystroke or paste,
+ * preserving the cursor position so the field does not feel jumpy.
+ *
+ * @param {HTMLInputElement} inputEl - The input element to enforce
+ */
+export function enforceTagNameInput(inputEl) {
+  if (!inputEl || inputEl._tagNameEnforced) return;
+  inputEl._tagNameEnforced = true;
+  inputEl.addEventListener('input', function () {
+    const before = this.selectionStart;
+    const raw = this.value;
+    const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '');
+    if (cleaned !== raw) {
+      const removed = raw.length - cleaned.length;
+      this.value = cleaned;
+      const newPos = Math.max(0, before - removed);
+      this.setSelectionRange(newPos, newPos);
+    }
+  });
+}

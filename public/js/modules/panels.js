@@ -2108,6 +2108,7 @@ async function openCreateTagModal(panelId, initialName, options = {}) {
 	createTagModalState.addHandler = options.addHandler || null;
 	createTagModalState.afterCreate = options.afterCreate || null;
 	$('#item-tag-create-name').val(initialName || '');
+	utils.enforceTagNameInput(document.getElementById('item-tag-create-name'));
 
 	// Set color pickers (w2field stores without #)
 	document.getElementById('item-tag-create-bgColor').value = 'efe4b0';
