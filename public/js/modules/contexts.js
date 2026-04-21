@@ -10,7 +10,6 @@ import {
 	panelState,
 	selectedItemState,
 	activePanelId,
-	openHistoryModal,
 	openNotesModal,
 	getAllCategories,
 	getAllTags
@@ -197,8 +196,8 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 
 	if (!isMultiSelect) {
 		addSeparator(contextMenu);
-		contextMenu.push({ id: 'view-history', text: 'History', icon: 'fa fa-history' });
 		contextMenu.push({ id: 'view-notes', text: 'Notes', icon: 'fa fa-sticky-note' });
+		contextMenu.push({ id: 'view-properties', text: 'Properties', icon: 'fa fa-info-circle' });
 	}
 
 	if (fileCount > 0) {
@@ -328,17 +327,14 @@ async function handleContextMenuClick(event, panelId) {
 		}
 	}
 
-	if (menuItemId === 'view-history') {
+	if (menuItemId === 'view-properties') {
 		const selectedRecord = selectedRecords[0];
-		if (!selectedRecord) {
-			alert('Please select a file or directory to view history');
-			return;
-		}
+		if (!selectedRecord) return;
 
 		try {
-			await openHistoryModal(selectedRecord);
+			await panels.showItemPropsModal(selectedRecord, activePanelId);
 		} catch (err) {
-			alert('Error opening history: ' + err.message);
+			alert('Error opening properties: ' + err.message);
 		}
 	}
 

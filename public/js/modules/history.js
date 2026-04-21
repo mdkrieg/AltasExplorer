@@ -4,7 +4,7 @@
  */
 
 import * as utils from './utils.js';
-import { w2ui } from './vendor/w2ui.es6.min.js';
+import { w2ui, w2grid } from './vendor/w2ui.es6.min.js';
 
 const EVENT_LABELS = {
   INITIAL: 'INITIAL',
@@ -52,8 +52,10 @@ export async function openHistoryModal(selectedRecord) {
     const fullState = buildCompleteFileState(result.data || [], selectedRecord);
     const historyData = formatHistoryData(result.data || [], fullState);
 
-    $('#history-grid').w2grid({
+    $('#history-grid').empty();
+    w2ui['history-grid'] = new w2grid({
       name: 'history-grid',
+      box: document.getElementById('history-grid'),
       columns: [
         { field: 'detectedAt', text: 'Detected At', size: '160px', resizable: true, sortable: true },
         { field: 'changeValue', text: 'Change', size: '200px', resizable: true, sortable: true },

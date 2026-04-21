@@ -21,6 +21,7 @@ import {
 	generateW2UIContextMenu,
 	showCustomContextMenu,
 	openNotesModal,
+	openHistoryModal,
 	showFileView,
 	hideFileView,
 	toggleFileEditMode,
@@ -4869,6 +4870,20 @@ export function attachPanelEventListeners(panelId) {
 			$panel.find('.item-props-notes').show();
 		});
 
+		$panel.find('.item-properties-content').off('click.openHistoryModal').on('click.openHistoryModal', '.btn-open-history-modal', async function (e) {
+			e.stopPropagation();
+			const record = selectedItemState.record;
+			if (!record) return;
+			if (panelId === 0) {
+				hideItemPropsModal();
+			}
+			try {
+				await openHistoryModal(record);
+			} catch (err) {
+				w2alert('Error opening history: ' + err.message);
+			}
+		});
+
 	}
 }
 
@@ -5402,7 +5417,8 @@ export async function showItemPropsModal(record, sourcePanelId) {
 	for (let p = 2; p <= maxPanel; p++) {
 		const targetPanel = p;
 		$('<button>')
-			.text(`Open in Panel ${targetPanel}`)
+			// Open in Panel X
+			.text(`P${targetPanel}`)
 			.css({
 				padding: '4px 10px',
 				background: '#2196F3',
@@ -5435,6 +5451,7 @@ async function openItemPropsInPanel(targetPanel) {
 		updatePanelLayout();
 	}
 	const $panel = $(`#panel-${targetPanel}`);
+	$panel.find('.panel-header').removeClass('active');
 	$panel.find('.panel-grid').hide();
 	$panel.find('.panel-file-view').hide();
 	$panel.find('.panel-landing-page').show();
