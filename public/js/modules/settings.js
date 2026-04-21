@@ -85,7 +85,7 @@ export async function showSettingsModal() {
 	await initializeBrowserSettingsForm();
 }
 
-export async function showTaggingModal() {
+export async function showLabelManagerModal() {
 	initializedTaggingTabs = new Set(['category']);
 	$('#tagging-modal').show();
 	switchTaggingTab('category');
@@ -1317,7 +1317,7 @@ function populateFileTypeForm(record) {
 	$('#form-ft-pattern').val(record.pattern).prop('disabled', record.locked);
 	$('#form-ft-type').val(record.type).prop('disabled', record.locked);
 	setFtIconSelection(record.icon || 'user-file.png');
-	$('#form-ft-open-with').val(record.openWith || 'none').prop('disabled', record.locked);
+	$('#form-ft-open-with').val(record.openWith || 'os-default').prop('disabled', record.locked);
 	$('#btn-ft-icon-trigger').prop('disabled', record.locked);
 	if (record.locked) {
 		$('#btn-ft-delete').hide();
@@ -1333,7 +1333,7 @@ export function clearFileTypeForm() {
 	$('#form-ft-pattern').val('').prop('disabled', false);
 	$('#form-ft-type').val('').prop('disabled', false);
 	setFtIconSelection('user-file.png');
-	$('#form-ft-open-with').val('none').prop('disabled', false);
+	$('#form-ft-open-with').val('os-default').prop('disabled', false);
 	$('#btn-ft-icon-trigger').prop('disabled', false);
 	$('#btn-ft-delete').show();
 	$('#btn-ft-save').prop('disabled', false);
@@ -1364,7 +1364,7 @@ export async function saveFileTypeFromForm() {
 				pattern,
 				type,
 				fileTypeFormState.selectedIcon || null,
-				$('#form-ft-open-with').val() || 'none'
+				$('#form-ft-open-with').val() || 'os-default'
 			);
 			if (result && result.error) {
 				showFormError('form-ft-status', 'Error: ' + result.error);
@@ -1375,7 +1375,7 @@ export async function saveFileTypeFromForm() {
 				pattern,
 				type,
 				fileTypeFormState.selectedIcon || null,
-				$('#form-ft-open-with').val() || 'none'
+				$('#form-ft-open-with').val() || 'os-default'
 			);
 			if (result && result.error) {
 				showFormError('form-ft-status', 'Error: ' + result.error);

@@ -2731,7 +2731,7 @@ async function initializeGridForPanel(panelId) {
 			field: 'notes', headerLabel: 'Notes', text: getColumnHeaderText(panelId, 'notes', 'Notes'), size: '32px', resizable: false, sortable: false, render: (record) => {
 				return record.hasNotes
 					? `<img src="assets/icons/note-book-icon.svg" class="notes-cell-icon notes-cell-icon-image" title="Notes" data-notes-icon="true">`
-					: '<span class="notes-cell-icon notes-cell-icon-add" title="Add notes" data-notes-icon="true">+</span>';
+					: '<span class="notes-cell-icon notes-cell-icon-add" title="Add notes" data-notes-icon="true"><img src="assets/icons/add-notes.png" style="width:16px; height:16px;"></span>';
 			}
 		},
 		{
@@ -4468,14 +4468,18 @@ export function attachPanelEventListeners(panelId) {
 		});
 
 		$panel.find('.btn-terminal-close').off('click').on('click', async function () {
-			await terminal.destroyTerminalPanel(panelId);
+			removePanel(panelId);
 		});
 
 		$panel.find('.item-props-icon').off('click').on('click', async function () {
 			if (!$(this).hasClass('clickable')) return;
 			const openWith = panelState[panelId].currentItemOpenWith;
 			if (!openWith || openWith === 'none') return;
-			if (openWith === 'image-viewer') {
+			if (openWith === 'os-default') {
+				await window.electronAPI.openInDefaultApp(selectedItemState.path);
+			} else if (openWith === 'item-properties') {
+				if (selectedItemState.record) await showItemPropsModal(selectedItemState.record, panelId);
+			} else if (openWith === 'image-viewer') {
 				openImageViewerModal(selectedItemState.path);
 			} else if (openWith === 'builtin-editor') {
 				showFileView(panelId, selectedItemState.path);

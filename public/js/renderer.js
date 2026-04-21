@@ -910,8 +910,116 @@ function attachEventListeners() {
   });
 
   // Sidebar toolbar: Tagging
-  $('#btn-sidebar-tagging').click(function () {
-    settings.showTaggingModal();
+  $('#btn-sidebar-label-manager').click(function () {
+    settings.showLabelManagerModal();
+  });
+
+  // Sidebar toolbar: Terminal — left click opens modal, right click opens panel context menu
+  $('#btn-sidebar-terminal').click(function () {
+    const activePanel = Object.keys(panelState).find(id => $(`#panel-${id}`).hasClass('panel-active'));
+    const cwd = activePanel && panelState[activePanel] ? panelState[activePanel].currentPath : undefined;
+    terminal.updateTerminalModalPanelButtons(panels.visiblePanels, (targetPanelId) => {
+      terminal.snapModalTerminalToPanel(targetPanelId, (panelId) => {
+        if (panelId > panels.visiblePanels) {
+          panels.setVisiblePanels(panelId);
+          $(`#panel-${panelId}`).show();
+          panels.attachPanelEventListeners(panelId);
+          panels.updatePanelLayout();
+        }
+      });
+    });
+    terminal.openTerminalModal(cwd);
+  });
+
+  $('#btn-sidebar-terminal').on('contextmenu', function (e) {
+    e.preventDefault();
+    const activePanel = Object.keys(panelState).find(id => $(`#panel-${id}`).hasClass('panel-active'));
+    const cwd = activePanel && panelState[activePanel] ? panelState[activePanel].currentPath : undefined;
+
+    contexts.hideCustomContextMenu();
+
+    const menu = document.createElement('div');
+    menu.id = 'custom-ctx-menu';
+    menu.className = 'custom-ctx-menu';
+
+    const addRow = (text, action) => {
+      const row = document.createElement('div');
+      row.className = 'custom-ctx-item';
+      const label = document.createElement('span');
+      label.className = 'custom-ctx-label';
+      label.textContent = text;
+      row.appendChild(label);
+      row.addEventListener('mouseenter', () => {
+        menu.querySelectorAll('.custom-ctx-item').forEach(r => r.classList.remove('active'));
+        row.classList.add('active');
+      });
+      row.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        contexts.hideCustomContextMenu();
+        action();
+      });
+      menu.appendChild(row);
+    };
+
+    // Existing panels 2-4 (panel 1 has no terminal container)
+    for (let i = 2; i <= panels.visiblePanels; i++) {
+      const targetPanelId = i;
+      addRow(`Open in Panel ${targetPanelId}`, async () => {
+        await terminal.createTerminalPanel(targetPanelId, cwd);
+        panels.setActivePanelId(targetPanelId);
+      });
+    }
+    // N+1: open a new panel (capped at 4)
+    if (panels.visiblePanels < 4) {
+      const newPanelId = panels.visiblePanels + 1;
+      addRow(`Open in new Panel ${newPanelId}`, async () => {
+        const created = panels.addPanel();
+        const targetId = created ?? newPanelId;
+        await terminal.createTerminalPanel(targetId, cwd);
+        panels.setActivePanelId(targetId);
+      });
+    }
+
+    if (!menu.children.length) return;
+
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    document.body.appendChild(menu);
+
+    requestAnimationFrame(() => {
+      const mr = menu.getBoundingClientRect();
+      if (mr.right > window.innerWidth) menu.style.left = (e.clientX - mr.width) + 'px';
+      if (mr.bottom > window.innerHeight) menu.style.top = (e.clientY - mr.height) + 'px';
+    });
+
+    const onOutside = (ev) => {
+      if (!ev.target.closest?.('#custom-ctx-menu')) {
+        contexts.hideCustomContextMenu();
+        document.removeEventListener('click', onOutside);
+        document.removeEventListener('keydown', onEsc);
+      }
+    };
+    const onEsc = (ev) => {
+      if (ev.key === 'Escape') {
+        contexts.hideCustomContextMenu();
+        document.removeEventListener('click', onOutside);
+        document.removeEventListener('keydown', onEsc);
+      }
+    };
+    document.addEventListener('click', onOutside);
+    document.addEventListener('keydown', onEsc);
+  });
+
+  // Terminal modal: close button
+  $('#btn-terminal-modal-close').click(function () {
+    terminal.closeTerminalModal();
+  });
+
+  // Terminal modal: overlay click to close
+  $('#terminal-modal').click(function (e) {
+    if (e.target === this) {
+      terminal.closeTerminalModal();
+    }
   });
 
   // Tagging modal close button

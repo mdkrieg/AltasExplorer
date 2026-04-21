@@ -1593,8 +1593,8 @@ hr {
 }
 
 .notes-cell-icon-add {
-  border: 1px solid #b9c2cc;
-  border-radius: 50%;
+  border: 1px solid #F0F0F0;
+  border-radius: 3px;
   color: #5c6670;
   font-size: 14px;
   font-weight: 600;
@@ -1602,9 +1602,9 @@ hr {
 }
 
 .notes-cell-icon-add:hover {
-  background: #eef6ff;
-  border-color: #2196f3;
-  color: #1976d2;
+  background: #cce4ff;
+  border-color: #83b2d8;
+  /* color: #1976d2; */
 }
 
 .grid-tags-cell {
@@ -2122,7 +2122,7 @@ hr {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
+  width: 22px;
   height: 28px;
   padding: 0;
   font-size: 15px;
@@ -2334,7 +2334,7 @@ hr {
 
 #sidebar-content.sidebar-collapsed #btn-sidebar-settings-toolbar,
 #sidebar-content.sidebar-collapsed #btn-sidebar-alerts,
-#sidebar-content.sidebar-collapsed #btn-sidebar-tagging {
+#sidebar-content.sidebar-collapsed #btn-sidebar-label-manager {
   display: none;
 }
 

@@ -43,7 +43,8 @@ Philosophy:
 [x] Right click on favorites to send to particular panel
 [ ] Tags in notes get set to file / db
 [ ] Tags in notes, add "archive" type, which is just #tag instead of @#tag. tags always update to database. If a user removes a tag that is present in a note it becomes archived. If a user adds a tag that is archived in notes they back-update in the note. 
-[ ] Option for Folder initials do inherit down to child directories
+[x] Option for Folder initials do inherit down to child directories
+[x] Display names that appear in app title and optionally inherit like initials
 [x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
 [ ] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need
 [-] CTRL + Enter to do same as double click in grid --- nvm, change this:

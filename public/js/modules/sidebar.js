@@ -372,16 +372,21 @@ function resizeSidebarGrids() {
 
 function syncSidebarCollapsedUi() {
   const $sidebar = $('#sidebar-content');
+  const $btn = $('#btn-sidebar-collapse');
 
   if (sidebarCollapsed) {
     if (favEditMode) {
       void exitFavoritesEditMode({ saveChanges: false });
     }
     $sidebar.addClass('sidebar-collapsed');
-    $('#btn-sidebar-collapse').html('&#10095;').attr('title', 'Expand sidebar');
+    $btn.find('.sidebar-icon-collapse').hide();
+    $btn.find('.sidebar-icon-expand').show();
+    $btn.attr('title', 'Expand sidebar');
   } else {
     $sidebar.removeClass('sidebar-collapsed');
-    $('#btn-sidebar-collapse').html('&#10094;').attr('title', 'Collapse sidebar');
+    $btn.find('.sidebar-icon-collapse').show();
+    $btn.find('.sidebar-icon-expand').hide();
+    $btn.attr('title', 'Collapse sidebar');
   }
 }
 
