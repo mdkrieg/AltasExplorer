@@ -215,6 +215,8 @@ export async function initializeBrowserSettingsForm() {
 	const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
 	const backgroundRefreshInterval = settings.background_refresh_interval || 30;
 	const checksumMaxConcurrent = settings.checksum_max_concurrent || 1;
+	const titleDefaultFormat = settings.title_default_format || 'folder-name';
+	const titleDisplayNameFormat = settings.title_display_name_format || 'name-relative-path';
 
 	$('#browser-home-directory').val(homeDirectory);
 	$('#browser-notes-format').val(fileFormat);
@@ -225,6 +227,8 @@ export async function initializeBrowserSettingsForm() {
 	$('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
 	$('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
 	$('#browser-checksum-max-concurrent').val(checksumMaxConcurrent);
+	$('#browser-title-default-format').val(titleDefaultFormat);
+	$('#browser-title-display-name-format').val(titleDisplayNameFormat);
 
 	await updateHomeDirectoryWarning(homeDirectory);
 	setupBrowserSettingsEventListeners();
@@ -270,6 +274,8 @@ async function saveBrowserSettings() {
 		const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
 		let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
 		let checksumMaxConcurrent = parseInt($('#browser-checksum-max-concurrent').val() || '1');
+		const titleDefaultFormat = $('#browser-title-default-format').val() || 'folder-name';
+		const titleDisplayNameFormat = $('#browser-title-display-name-format').val() || 'name-relative-path';
 
 		if (isNaN(recordHeight) || recordHeight < 20) {
 			recordHeight = 20;
@@ -307,6 +313,8 @@ async function saveBrowserSettings() {
 		settings.background_refresh_interval = backgroundRefreshInterval;
 		settings.show_folder_name_with_dot_entries = showFolderNameWithDotEntries;
 		settings.checksum_max_concurrent = checksumMaxConcurrent;
+		settings.title_default_format = titleDefaultFormat;
+		settings.title_display_name_format = titleDisplayNameFormat;
 
 		const result = await window.electronAPI.saveSettings(settings);
 		if (!result || result.success === false) {
@@ -319,6 +327,9 @@ async function saveBrowserSettings() {
 		showFormSuccess('browser-settings-status', 'Settings saved.');
 
 		window.electronAPI.startBackgroundRefresh(backgroundRefreshEnabled, backgroundRefreshInterval);
+
+		// Refresh window title immediately with new format settings
+		await panels.maybeRefreshPanel1TitleAndIcon();
 
 		const state = panelState[panels.activePanelId];
 		if (state && state.currentPath) {

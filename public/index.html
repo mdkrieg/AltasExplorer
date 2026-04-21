@@ -493,6 +493,30 @@
                 <span style="color: #666; font-size: 12px;">Displays entries as ". (Current Folder)" and ".. (Parent Folder)"</span>
               </div>
               <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="font-weight: bold; font-size: 13px;">Window Title</div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <label style="font-size: 12px; font-weight: bold;">Default Title Format</label>
+                  <select id="browser-title-default-format" style="padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 260px;">
+                    <option value="folder-name">Folder Name Only</option>
+                    <option value="full-path">Full Path</option>
+                    <option value="full-path-reversed">Full Path Reversed</option>
+                  </select>
+                  <span style="color: #666; font-size: 12px;">Used when no Display Name is set. "Reversed" reverses the path segments and uses "|" as separator.</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <label style="font-size: 12px; font-weight: bold;">Display Name Format</label>
+                  <select id="browser-title-display-name-format" style="padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 260px;">
+                    <option value="name-only">Name Only</option>
+                    <option value="name-folder">Name + Folder Name</option>
+                    <option value="name-relative-path">Name + Relative Path</option>
+                    <option value="name-relative-path-reversed">Name + Relative Path Reversed</option>
+                    <option value="name-full-path">Name + Full Path</option>
+                    <option value="name-full-path-reversed">Name + Full Path Reversed</option>
+                  </select>
+                  <span style="color: #666; font-size: 12px;">Used when a Display Name is set. The path portion is shown in parentheses after the name.</span>
+                </div>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
                 <div style="font-weight: bold; font-size: 13px;">File Grid Row Height</div>
                 <div style="display: flex; gap: 10px; align-items: center;">
                   <input id="browser-record-height" type="number" min="20" max="35" placeholder="30" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 80px;">

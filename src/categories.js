@@ -296,6 +296,12 @@ class CategoryService {
       if (typeof settings.checksum_max_concurrent === 'undefined') {
         settings.checksum_max_concurrent = 1;
       }
+      if (typeof settings.title_default_format === 'undefined') {
+        settings.title_default_format = 'folder-name';
+      }
+      if (typeof settings.title_display_name_format === 'undefined') {
+        settings.title_display_name_format = 'name-relative-path';
+      }
       if (typeof settings.monitoring_enabled === 'undefined') {
         settings.monitoring_enabled = false;
       }
@@ -326,6 +332,8 @@ class CategoryService {
         background_refresh_enabled: false,
         background_refresh_interval: 30,
         checksum_max_concurrent: 1,
+        title_default_format: 'folder-name',
+        title_display_name_format: 'name-relative-path',
         monitoring_enabled: false,
         monitoring_scheduler_interval: 15,
         monitoring_max_dirs_per_pass: 10,

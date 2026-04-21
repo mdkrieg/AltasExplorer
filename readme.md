@@ -43,6 +43,7 @@ Philosophy:
 [x] Right click on favorites to send to particular panel
 [ ] Tags in notes get set to file / db
 [ ] Tags in notes, add "archive" type, which is just #tag instead of @#tag. tags always update to database. If a user removes a tag that is present in a note it becomes archived. If a user adds a tag that is archived in notes they back-update in the note. 
+[ ] Option for Folder initials do inherit down to child directories
 [x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
 [ ] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need
 [-] CTRL + Enter to do same as double click in grid --- nvm, change this:
@@ -54,12 +55,14 @@ Philosophy:
 [x] Update the forms to not throw alert popups but instead use inline styling and remarks like a modern webform
 [x] Add option on custom attributes for "copyable" which adds a copy button in the grid to copy its value to clipboard
 [ ] Add a "pin" to Item Properties that prevents it from updating to the selected item
+[ ] Consider what to do with the item properties - has double "X" buttons and a non-functional title bar. I think maybe use a URI like \folder\path\file#properties to point to this page would be good but that would have implications for the "browser-only in panel 1" philosophy
+[ ] Instead of having the "History" option in the context menu, change this to the Properties page - check if history modal is vestigial and/or still needed
 * I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
 * Forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)
 * Would it be possible to have a global hotkey (fires even without focus) that opens an always-on-top popup which offers a list of every path of all currently open directories and all favorites?
 [ ] LOCAL FAVORITES - instead of links, the user can populate local favorites. I'm thinking this should be in notes.txt - possibly without any special directive but anything that is a valid path gets shown in the sidebar when the user is browsing that dir.
 [x] TODOs in notes get aggregated
-[ ] Copy as Path in context menu (there is a perfect demo for this: https://w2ui.com/web/demos/#/grid/36)
+[ ] Copy as Path in context menu
 [-] Tags in notes (and monaco autocomplete)
   [ ] Doesn't seem like these get promoted to the item, perhaps this broke at some point?
   [ ] Make some kind of connection where a tag that came from notes will point the user to the notes mentioning it

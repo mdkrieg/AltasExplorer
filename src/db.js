@@ -34,6 +34,11 @@ class DatabaseService {
         category_force INTEGER NOT NULL DEFAULT 0,
         description VARCHAR(256),
         initials VARCHAR(8),
+        initials_inherit INTEGER NOT NULL DEFAULT 0,
+        initials_force INTEGER NOT NULL DEFAULT 0,
+        display_name TEXT,
+        display_name_inherit INTEGER NOT NULL DEFAULT 0,
+        display_name_force INTEGER NOT NULL DEFAULT 0,
         last_observed_at INTEGER,
         last_observed_source TEXT,
         FOREIGN KEY (parent_id) REFERENCES dirs(id)
@@ -229,6 +234,24 @@ class DatabaseService {
       this.db.exec('ALTER TABLE alert_rules ADD COLUMN name TEXT');
     }
     this.populateMissingAlertRuleNames();
+
+    // Runtime migration: add label inheritance columns to dirs table
+    const dirColNames = new Set(dirCols.map(c => c.name));
+    if (!dirColNames.has('initials_inherit')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN initials_inherit INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!dirColNames.has('initials_force')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN initials_force INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!dirColNames.has('display_name')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN display_name TEXT');
+    }
+    if (!dirColNames.has('display_name_inherit')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN display_name_inherit INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!dirColNames.has('display_name_force')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN display_name_force INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   normalizeAlertRuleName(name) {
@@ -313,6 +336,111 @@ class DatabaseService {
     `);
 
     return stmt.run(dirname, inode, parentId, category, categoryForce, description, initials);
+  }
+
+  /**
+   * Update all label fields for a directory (initials + display_name with inheritance flags)
+   */
+  updateDirectoryLabels(dirname, {
+    initials = undefined,
+    initialsInherit = undefined,
+    initialsForce = undefined,
+    displayName = undefined,
+    displayNameInherit = undefined,
+    displayNameForce = undefined
+  } = {}) {
+    const sets = [];
+    const params = [];
+    if (initials !== undefined) { sets.push('initials = ?'); params.push(initials ? initials.slice(0, 2).toUpperCase() : null); }
+    if (initialsInherit !== undefined) { sets.push('initials_inherit = ?'); params.push(initialsInherit ? 1 : 0); }
+    if (initialsForce !== undefined) { sets.push('initials_force = ?'); params.push(initialsForce ? 1 : 0); }
+    if (displayName !== undefined) { sets.push('display_name = ?'); params.push(displayName || null); }
+    if (displayNameInherit !== undefined) { sets.push('display_name_inherit = ?'); params.push(displayNameInherit ? 1 : 0); }
+    if (displayNameForce !== undefined) { sets.push('display_name_force = ?'); params.push(displayNameForce ? 1 : 0); }
+    if (sets.length === 0) return null;
+    params.push(dirname);
+    return this.db.prepare(`UPDATE dirs SET ${sets.join(', ')} WHERE dirname = ?`).run(...params);
+  }
+
+  /**
+   * Resolve effective initials for a directory by walking up the ancestor chain.
+   * Returns { value, isInherited, sourceDir } — fully recursive, broken only by
+   * a forced value or an ancestor with initials_inherit = 0 that has initials.
+   */
+  resolveDirectoryInitials(dirPath) {
+    const self = this.getDirectory(dirPath);
+    if (!self) return { value: null, isInherited: false, sourceDir: null };
+
+    // Forced: use own value regardless of ancestry
+    if (self.initials_force) {
+      return { value: self.initials || null, isInherited: false, sourceDir: dirPath };
+    }
+
+    // Walk up ancestor chain looking for an inheritable initials
+    let current = path.dirname(dirPath);
+    while (current && current !== dirPath) {
+      const ancestor = this.getDirectory(current);
+      if (ancestor) {
+        if (ancestor.initials_force) {
+          // Forced ancestor breaks the chain — only inherits if inherit is also on
+          if (ancestor.initials_inherit && ancestor.initials) {
+            return { value: ancestor.initials, isInherited: true, sourceDir: current };
+          }
+          break; // chain broken
+        }
+        if (ancestor.initials_inherit && ancestor.initials) {
+          return { value: ancestor.initials, isInherited: true, sourceDir: current };
+        }
+        if (ancestor.initials && !ancestor.initials_inherit) {
+          break; // ancestor has initials but doesn't inherit them — chain stops
+        }
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+
+    // Fall back to own stored value
+    return { value: self.initials || null, isInherited: false, sourceDir: dirPath };
+  }
+
+  /**
+   * Resolve effective display name for a directory by walking up the ancestor chain.
+   * Returns { value, isInherited, sourceDir } — same walk-up rules as initials.
+   */
+  resolveDirectoryDisplayName(dirPath) {
+    const self = this.getDirectory(dirPath);
+    if (!self) return { value: null, isInherited: false, sourceDir: null };
+
+    // Forced: use own value
+    if (self.display_name_force) {
+      return { value: self.display_name || null, isInherited: false, sourceDir: dirPath };
+    }
+
+    // Walk up
+    let current = path.dirname(dirPath);
+    while (current && current !== dirPath) {
+      const ancestor = this.getDirectory(current);
+      if (ancestor) {
+        if (ancestor.display_name_force) {
+          if (ancestor.display_name_inherit && ancestor.display_name) {
+            return { value: ancestor.display_name, isInherited: true, sourceDir: current };
+          }
+          break;
+        }
+        if (ancestor.display_name_inherit && ancestor.display_name) {
+          return { value: ancestor.display_name, isInherited: true, sourceDir: current };
+        }
+        if (ancestor.display_name && !ancestor.display_name_inherit) {
+          break;
+        }
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+
+    return { value: self.display_name || null, isInherited: false, sourceDir: dirPath };
   }
 
   /**

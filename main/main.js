@@ -1364,6 +1364,70 @@ ipcMain.handle('save-directory-initials', (event, { dirPath, initials }) => {
 });
 
 /**
+ * Directory Labels: Get all label fields (stored + resolved) for a directory
+ */
+ipcMain.handle('get-directory-labels', (event, dirPath) => {
+  try {
+    const dir = db.getDirectory(dirPath);
+    if (!dir) {
+      return {
+        initials: null, initialsInherit: false, initialsForce: false,
+        displayName: null, displayNameInherit: false, displayNameForce: false,
+        resolvedInitials: null, initialsIsInherited: false,
+        resolvedDisplayName: null, displayNameIsInherited: false,
+        displayNameSourceDir: null
+      };
+    }
+    const resolvedInitials = db.resolveDirectoryInitials(dirPath);
+    const resolvedDisplayName = db.resolveDirectoryDisplayName(dirPath);
+    return {
+      initials: dir.initials || null,
+      initialsInherit: Boolean(dir.initials_inherit),
+      initialsForce: Boolean(dir.initials_force),
+      displayName: dir.display_name || null,
+      displayNameInherit: Boolean(dir.display_name_inherit),
+      displayNameForce: Boolean(dir.display_name_force),
+      resolvedInitials: resolvedInitials.value,
+      initialsIsInherited: resolvedInitials.isInherited,
+      resolvedDisplayName: resolvedDisplayName.value,
+      displayNameIsInherited: resolvedDisplayName.isInherited,
+      displayNameSourceDir: resolvedDisplayName.sourceDir
+    };
+  } catch (err) {
+    logger.error('Error getting directory labels:', err.message);
+    return null;
+  }
+});
+
+/**
+ * Directory Labels: Save label fields for a directory
+ */
+ipcMain.handle('save-directory-labels', (event, { dirPath, labels }) => {
+  try {
+    db.updateDirectoryLabels(dirPath, labels);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error saving directory labels:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Window title: Set the main window title
+ */
+ipcMain.handle('set-window-title', (event, { title }) => {
+  try {
+    if (mainWindow) {
+      mainWindow.setTitle(title || 'Atlas Explorer');
+    }
+    return { success: true };
+  } catch (err) {
+    logger.error('Error setting window title:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * Notes: Read notes.txt file
  */
 ipcMain.handle('read-file-content', async (event, filePath) => {
@@ -2424,6 +2488,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           ...entry,
           changeState,
           initials: existingDir ? (existingDir.initials || null) : null,
+          resolvedInitials: existingDir ? (db.resolveDirectoryInitials(entry.path).value) : null,
+          displayName: existingDir ? (existingDir.display_name || null) : null,
           perms: entry.perms || { read: true, write: false },
           mode: entry.mode ?? null,
           tags: existingDir ? db.getTagsForDirectory(entry.path) : null,
@@ -2514,6 +2580,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             changeState: 'moved',
             dir_id: childDir.id,
             initials: childDir.initials || null,
+            resolvedInitials: db.resolveDirectoryInitials(childDir.dirname).value,
+            displayName: childDir.display_name || null,
             tags: db.getTagsForDirectoryId(childDir.id),
             attributes: db.getAttributesForDirectoryId(childDir.id),
             orphan_id: orphanId,
@@ -2542,6 +2610,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             changeState: 'orphan',
             dir_id: childDir.id,
             initials: childDir.initials || null,
+            resolvedInitials: db.resolveDirectoryInitials(childDir.dirname).value,
+            displayName: childDir.display_name || null,
             tags: db.getTagsForDirectoryId(childDir.id),
             attributes: db.getAttributesForDirectoryId(childDir.id),
             orphan_id: orphanId,
@@ -2831,6 +2901,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     if (dotFileRecord && dotFileRecord.filename === '.') {
       // Read current dir record to get saved initials
       const dirRecord = db.getDirectory(normalizedPath);
+      const resolvedInitialsResult = db.resolveDirectoryInitials(normalizedPath);
+      const resolvedDisplayNameResult = db.resolveDirectoryDisplayName(normalizedPath);
       entriesWithChanges.unshift({
         inode: dirInode,
         filename: '.',
@@ -2844,6 +2916,11 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         changeState: 'unchanged',
         dir_id: dirId,
         initials: dirRecord ? (dirRecord.initials || null) : null,
+        resolvedInitials: resolvedInitialsResult.value,
+        displayName: dirRecord ? (dirRecord.display_name || null) : null,
+        resolvedDisplayName: resolvedDisplayNameResult.value,
+        displayNameIsInherited: resolvedDisplayNameResult.isInherited,
+        displayNameSourceDir: resolvedDisplayNameResult.sourceDir,
         tags: dotFileRecord.tags || null,
         attributes: dotFileRecord.attributes || null,
         orphan_id: null,

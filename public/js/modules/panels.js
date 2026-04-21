@@ -1380,6 +1380,91 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 			</div>
 		`;
 
+	// Build initials and display name controls for directories
+	let initialsGroupHtml = '';
+	let displayNameGroupHtml = '';
+	if (stats.isDirectory && selectedItemState.path) {
+		const dirLabels = await window.electronAPI.getDirectoryLabels(selectedItemState.path);
+		if (dirLabels) {
+			const ini = dirLabels.initials || '';
+			const iniInherit = dirLabels.initialsInherit;
+			const iniForce = dirLabels.initialsForce;
+			const iniIsInherited = dirLabels.initialsIsInherited;
+			const iniResolved = dirLabels.resolvedInitials || '';
+			const iniDisabled = iniIsInherited && !iniForce;
+			const iniDetailText = iniIsInherited
+				? `Inherited from ${dirLabels.displayNameSourceDir ? dirLabels.displayNameSourceDir.split(/[\\/]/).filter(Boolean).pop() : 'parent'}`
+				: '';
+
+			initialsGroupHtml = `
+				<div class="item-props-label-group">
+					<div class="item-props-label-group-title">Initials</div>
+					<div class="item-props-label-group-value">
+						<div class="item-props-label-inline-row">
+							<input
+								class="item-props-initials-input"
+								type="text"
+								maxlength="2"
+								value="${utils.escapeHtml(iniDisabled ? iniResolved : ini)}"
+								placeholder="AB"
+								${iniDisabled ? 'disabled' : ''}
+								style="width:40px;text-align:center;text-transform:uppercase;font-weight:bold;"
+							>
+							<label class="item-props-label-flag">
+								<input class="item-props-initials-inherit-toggle" type="checkbox" ${iniInherit ? 'checked' : ''}>
+								<span>Inheritable</span>
+							</label>
+							${iniIsInherited ? `
+							<label class="item-props-label-flag">
+								<input class="item-props-initials-force-toggle" type="checkbox" ${iniForce ? 'checked' : ''}>
+								<span>Force</span>
+							</label>` : ''}
+						</div>
+						${iniIsInherited && !iniForce ? `<div class="item-props-label-detail">${utils.escapeHtml(iniDetailText)}</div>` : ''}
+					</div>
+				</div>
+			`;
+
+			const dn = dirLabels.displayName || '';
+			const dnInherit = dirLabels.displayNameInherit;
+			const dnForce = dirLabels.displayNameForce;
+			const dnIsInherited = dirLabels.displayNameIsInherited;
+			const dnResolved = dirLabels.resolvedDisplayName || '';
+			const dnDisabled = dnIsInherited && !dnForce;
+			const dnDetailText = dnIsInherited && dirLabels.displayNameSourceDir
+				? `Inherited from ${dirLabels.displayNameSourceDir.split(/[\\/]/).filter(Boolean).pop()}`
+				: '';
+
+			displayNameGroupHtml = `
+				<div class="item-props-label-group">
+					<div class="item-props-label-group-title">Display Name</div>
+					<div class="item-props-label-group-value">
+						<div class="item-props-label-inline-row">
+							<input
+								class="item-props-display-name-input"
+								type="text"
+								value="${utils.escapeHtml(dnDisabled ? dnResolved : dn)}"
+								placeholder="Custom name"
+								${dnDisabled ? 'disabled' : ''}
+								style="flex:1;min-width:80px;"
+							>
+							<label class="item-props-label-flag">
+								<input class="item-props-display-name-inherit-toggle" type="checkbox" ${dnInherit ? 'checked' : ''}>
+								<span>Inheritable</span>
+							</label>
+							${dnIsInherited ? `
+							<label class="item-props-label-flag">
+								<input class="item-props-display-name-force-toggle" type="checkbox" ${dnForce ? 'checked' : ''}>
+								<span>Force</span>
+							</label>` : ''}
+						</div>
+						${dnIsInherited && !dnForce ? `<div class="item-props-label-detail">${utils.escapeHtml(dnDetailText)}</div>` : ''}
+					</div>
+				</div>
+			`;
+		}
+	}
+
 	$container.html(`
 		<div class="item-props-label-group">
 			<div class="item-props-label-group-title">Tags</div>
@@ -1393,6 +1478,8 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 				${categoryControlHtml}
 			</div>
 		</div>
+		${initialsGroupHtml}
+		${displayNameGroupHtml}
 	`);
 
 	if (options.restoreFocus) {
@@ -1842,6 +1929,101 @@ async function refreshCategoryAfterLabelsUpdate(panelId) {
 	if (refreshedStats) {
 		await updateSelectedDirectoryCategory(refreshedStats.categoryName);
 	}
+}
+
+/**
+ * Build the window title string for Panel 1 based on settings.
+ * @param {string} dirPath  - The current (normalized, forward-slash) directory path
+ * @param {object|null} labels - Object with resolvedDisplayName, displayNameIsInherited, displayNameSourceDir
+ * @param {object} settings - App settings with title_default_format and title_display_name_format
+ */
+function buildWindowTitle(dirPath, labels, settings) {
+	const normalizedPath = (dirPath || '').replace(/\\/g, '/');
+	const parts = normalizedPath.split('/').filter(Boolean);
+	const folderBasename = parts[parts.length - 1] || dirPath;
+	const defaultFmt = (settings && settings.title_default_format) || 'folder-name';
+	const dnFmt = (settings && settings.title_display_name_format) || 'name-relative-path';
+
+	const resolvedDisplayName = labels && labels.resolvedDisplayName;
+
+	// Helper: build default-format title (no display name path)
+	function defaultTitle() {
+		if (defaultFmt === 'full-path') {
+			return normalizedPath.replace(/\//g, '\\');
+		}
+		if (defaultFmt === 'full-path-reversed') {
+			return [...parts].reverse().join('|');
+		}
+		return folderBasename;
+	}
+
+	if (!resolvedDisplayName) {
+		return defaultTitle();
+	}
+
+	// Helper: reverse a backslash-separated path string into pipe-separated
+	function reversePath(pathStr) {
+		return pathStr.split('\\').filter(Boolean).reverse().join('|');
+	}
+
+	if (dnFmt === 'name-only') {
+		return resolvedDisplayName;
+	}
+
+	if (dnFmt === 'name-folder') {
+		return `${resolvedDisplayName} (${folderBasename})`;
+	}
+
+	if (dnFmt === 'name-full-path') {
+		return `${resolvedDisplayName} (${normalizedPath.replace(/\//g, '\\')})`;
+	}
+
+	if (dnFmt === 'name-full-path-reversed') {
+		return `${resolvedDisplayName} (${[...parts].reverse().join('|')})`;
+	}
+
+	// name-relative-path and name-relative-path-reversed — need source dir for inherited names
+	const isInherited = labels.displayNameIsInherited && labels.displayNameSourceDir;
+
+	if (dnFmt === 'name-relative-path') {
+		if (isInherited) {
+			const srcParts = labels.displayNameSourceDir.replace(/\\/g, '/').split('/').filter(Boolean);
+			const sourceBasename = srcParts[srcParts.length - 1] || labels.displayNameSourceDir;
+			const relative = parts.slice(srcParts.length).join('\\');
+			return relative
+				? `${resolvedDisplayName} (${sourceBasename}\\${relative})`
+				: `${resolvedDisplayName} (${sourceBasename})`;
+		}
+		return `${resolvedDisplayName} (${folderBasename})`;
+	}
+
+	if (dnFmt === 'name-relative-path-reversed') {
+		if (isInherited) {
+			const srcParts = labels.displayNameSourceDir.replace(/\\/g, '/').split('/').filter(Boolean);
+			const sourceBasename = srcParts[srcParts.length - 1] || labels.displayNameSourceDir;
+			const relParts = parts.slice(srcParts.length);
+			const combined = [sourceBasename, ...relParts];
+			const reversed = [...combined].reverse().join('|');
+			return `${resolvedDisplayName} (${reversed})`;
+		}
+		return `${resolvedDisplayName} (${folderBasename})`;
+	}
+
+	// Fallback
+	return `${resolvedDisplayName} (${folderBasename})`;
+}
+
+export async function maybeRefreshPanel1TitleAndIcon() {
+	const panel1Path = panelState[1]?.currentPath;
+	if (!panel1Path) return;
+	const category = await window.electronAPI.getCategoryForDirectory(panel1Path);
+	if (!category) return;
+	const labels = await window.electronAPI.getDirectoryLabels(panel1Path);
+	const resolvedInitials = labels ? labels.resolvedInitials : null;
+	await window.electronAPI.updateWindowIcon(category.name, resolvedInitials);
+	const settings = await window.electronAPI.getSettings();
+	const windowTitle = buildWindowTitle(panel1Path, labels, settings);
+	await window.electronAPI.setWindowTitle(windowTitle);
 }
 
 async function assignCategoryFromLabels(panelId, categoryName, force = true) {
@@ -2408,10 +2590,15 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			await initializeGridForPanel(panelId);
 		}
 
-		if (panelId === activePanelId && category) {
+		if (panelId === 1 && category) {
 			const dotEntry = (scanResult.entries || []).find(e => e.filename === '.' && e.isDirectory);
-			const currentDirInitials = dotEntry ? (dotEntry.initials || null) : null;
+			const currentDirInitials = dotEntry ? (dotEntry.resolvedInitials || dotEntry.initials || null) : null;
 			await window.electronAPI.updateWindowIcon(category.name, currentDirInitials);
+
+			// Build window title from resolved display name (if any)
+			const settings = await window.electronAPI.getSettings();
+			const windowTitle = buildWindowTitle(normalizedPath, dotEntry || null, settings);
+			await window.electronAPI.setWindowTitle(windowTitle);
 		}
 
 		const entries = scanResult.success ? scanResult.entries : [];
@@ -2837,9 +3024,22 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			iconUrl = 'assets/folder-moved.svg';
 		} else {
 			category = await window.electronAPI.getCategoryForDirectory(folder.path);
-			iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, folder.initials || null);
+			const iconInitials = folder.resolvedInitials || folder.initials || null;
+			iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, iconInitials);
 			if (category && category.attributes) {
 				for (const attr of category.attributes) attrColSet.add(attr);
+			}
+		}
+
+		// Build display filename: show direct (non-inherited) display name prefix
+		let gridFilename = folder.displayFilename || folder.filename;
+		if (folder.displayName && !folder.displayNameIsInherited) {
+			if (folder.filename === '.') {
+				gridFilename = `. [${folder.displayName}] (${folder.filename})`;
+			} else if (folder.filename === '..') {
+				gridFilename = `.. [${folder.displayName}] (${folder.filename})`;
+			} else {
+				gridFilename = `[${folder.displayName}] ${folder.filename}`;
 			}
 		}
 
@@ -2848,9 +3048,9 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 		records.push({
 			recid: recordId++,
 			icon: applyClass(`<img src="${iconUrl}" style="width: 20px; height: 20px; object-fit: contain; cursor: pointer;" title="Click to set initials">`, className),
-			filename: applyClass(folder.displayFilename || folder.filename, className),
+			filename: applyClass(gridFilename, className),
 			filenameRaw: folder.filename,
-			filenameText: folder.displayFilename || folder.filename,
+			filenameText: gridFilename,
 			type: applyClass(folder.changeState === 'moved' ? '' : (category ? category.name || '' : ''), className),
 			typeRaw: folder.changeState === 'moved' ? '' : (category ? category.name || '' : ''),
 			size: applyClass('-', className),
@@ -3061,14 +3261,26 @@ async function populateGalleryView(entries, currentDirCategory, panelId = active
 			category = currentDirCategory;
 		}
 		if (category) {
-			iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, folder.initials || null);
+			const iconInitials = folder.resolvedInitials || folder.initials || null;
+			iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, iconInitials);
 		} else {
 			iconUrl = 'assets/icons/folder-icon.png';
+		}
+		// Build display filename with direct (non-inherited) display name
+		let galleryFilename = folder.displayFilename || folder.filename;
+		if (folder.displayName && !folder.displayNameIsInherited) {
+			if (folder.filename === '.') {
+				galleryFilename = `. [${folder.displayName}] (${folder.filename})`;
+			} else if (folder.filename === '..') {
+				galleryFilename = `.. [${folder.displayName}] (${folder.filename})`;
+			} else {
+				galleryFilename = `[${folder.displayName}] ${folder.filename}`;
+			}
 		}
 		galleryRecords.push({
 			recid: recordId++,
 			icon: iconUrl,
-			filename: folder.displayFilename || folder.filename,
+			filename: galleryFilename,
 			filenameRaw: folder.filename,
 			path: folder.path,
 			isFolder: true,
@@ -4456,6 +4668,96 @@ export function attachPanelEventListeners(panelId) {
 				}
 			} catch (err) {
 				w2alert('Error updating category force: ' + err.message);
+			}
+		});
+
+		// --- Initials handlers ---
+		let initialsDebounceTimer = null;
+		$panel.find('.item-properties-content').off('input.initialsInput').on('input.initialsInput', '.item-props-initials-input', function () {
+			this.value = this.value.toUpperCase().slice(0, 2);
+			const val = this.value;
+			clearTimeout(initialsDebounceTimer);
+			initialsDebounceTimer = setTimeout(async () => {
+				if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+				try {
+					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { initials: val || null, initialsForce: val ? 1 : 0 });
+					await rerenderLabelsSection(panelId);
+					await maybeRefreshPanel1TitleAndIcon();
+				} catch (err) {
+					w2alert('Error saving initials: ' + err.message);
+				}
+			}, 400);
+		});
+
+		$panel.find('.item-properties-content').off('change.initialsInherit').on('change.initialsInherit', '.item-props-initials-inherit-toggle', async function () {
+			if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+			try {
+				await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { initialsInherit: $(this).is(':checked') ? 1 : 0 });
+				await rerenderLabelsSection(panelId);
+				await maybeRefreshPanel1TitleAndIcon();
+			} catch (err) {
+				w2alert('Error saving initials inherit: ' + err.message);
+			}
+		});
+
+		$panel.find('.item-properties-content').off('change.initialsForce').on('change.initialsForce', '.item-props-initials-force-toggle', async function () {
+			if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+			const isForced = $(this).is(':checked');
+			try {
+				if (!isForced) {
+					// Unchecking force: clear the stored initials + force flag so inherited value takes over
+					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { initials: null, initialsForce: 0 });
+				} else {
+					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { initialsForce: 1 });
+				}
+				await rerenderLabelsSection(panelId);
+				await maybeRefreshPanel1TitleAndIcon();
+			} catch (err) {
+				w2alert('Error updating initials force: ' + err.message);
+			}
+		});
+
+		// --- Display Name handlers ---
+		let displayNameDebounceTimer = null;
+		$panel.find('.item-properties-content').off('input.displayNameInput').on('input.displayNameInput', '.item-props-display-name-input', function () {
+			const val = this.value;
+			clearTimeout(displayNameDebounceTimer);
+			displayNameDebounceTimer = setTimeout(async () => {
+				if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+				try {
+					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { displayName: val || null, displayNameForce: val ? 1 : 0 });
+					await rerenderLabelsSection(panelId);
+					await maybeRefreshPanel1TitleAndIcon();
+				} catch (err) {
+					w2alert('Error saving display name: ' + err.message);
+				}
+			}, 400);
+		});
+
+		$panel.find('.item-properties-content').off('change.displayNameInherit').on('change.displayNameInherit', '.item-props-display-name-inherit-toggle', async function () {
+			if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+			try {
+				await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { displayNameInherit: $(this).is(':checked') ? 1 : 0 });
+				await rerenderLabelsSection(panelId);
+				await maybeRefreshPanel1TitleAndIcon();
+			} catch (err) {
+				w2alert('Error saving display name inherit: ' + err.message);
+			}
+		});
+
+		$panel.find('.item-properties-content').off('change.displayNameForce').on('change.displayNameForce', '.item-props-display-name-force-toggle', async function () {
+			if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+			const isForced = $(this).is(':checked');
+			try {
+				if (!isForced) {
+					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { displayName: null, displayNameForce: 0 });
+				} else {
+					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { displayNameForce: 1 });
+				}
+				await rerenderLabelsSection(panelId);
+				await maybeRefreshPanel1TitleAndIcon();
+			} catch (err) {
+				w2alert('Error updating display name force: ' + err.message);
 			}
 		});
 

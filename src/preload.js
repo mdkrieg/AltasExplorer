@@ -135,6 +135,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-directory-initials', dirPath),
   saveDirectoryInitials: (dirPath, initials) =>
     ipcRenderer.invoke('save-directory-initials', { dirPath, initials }),
+
+  // Directory labels (initials + display name with inheritance)
+  getDirectoryLabels: (dirPath) =>
+    ipcRenderer.invoke('get-directory-labels', dirPath),
+  saveDirectoryLabels: (dirPath, labels) =>
+    ipcRenderer.invoke('save-directory-labels', { dirPath, labels }),
+
+  // Window title
+  setWindowTitle: (title) =>
+    ipcRenderer.invoke('set-window-title', { title }),
   
   // Window control
   closeWindow: () => ipcRenderer.invoke('close-window'),

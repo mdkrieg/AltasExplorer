@@ -1099,6 +1099,60 @@ textarea {
   margin: 0;
 }
 
+/* ---- Initials / Display Name label controls ---- */
+.item-props-label-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.item-props-label-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #333;
+  font-size: 12px;
+  user-select: none;
+}
+
+.item-props-label-flag input {
+  margin: 0;
+}
+
+.item-props-initials-input {
+  width: 40px;
+  text-align: center;
+  font-weight: bold;
+  text-transform: uppercase;
+  font-size: 13px;
+  padding: 2px 4px;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
+}
+
+.item-props-display-name-input {
+  flex: 1;
+  min-width: 80px;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
+}
+
+.item-props-initials-input:disabled,
+.item-props-display-name-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: #f5f5f5;
+}
+
+.item-props-label-detail {
+  margin-top: 4px;
+  color: #777;
+  font-size: 11px;
+}
+
 .item-props-category-menu {
   position: absolute;
   top: calc(100% + 4px);
