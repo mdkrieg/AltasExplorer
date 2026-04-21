@@ -960,13 +960,13 @@ ipcMain.handle('get-attributes-list', () => {
 
 ipcMain.handle('save-attribute', (event, attrData) => {
   try {
-    const { name, description, type, default: defaultValue, options, copyable } = attrData;
+    const { name, description, type, default: defaultValue, options, copyable, appliesTo } = attrData;
     if (!name) throw new Error('Attribute name is required');
     const existing = attributes.getAttribute(name);
     if (existing) {
-      return attributes.updateAttribute(name, description || '', type || 'String', defaultValue || '', options || [], copyable);
+      return attributes.updateAttribute(name, description || '', type || 'String', defaultValue || '', options || [], copyable, appliesTo || 'Both');
     } else {
-      return attributes.createAttribute(name, description || '', type || 'String', defaultValue || '', options || [], copyable);
+      return attributes.createAttribute(name, description || '', type || 'String', defaultValue || '', options || [], copyable, appliesTo || 'Both');
     }
   } catch (err) {
     logger.error('Error saving attribute:', err.message);
@@ -976,13 +976,13 @@ ipcMain.handle('save-attribute', (event, attrData) => {
 
 ipcMain.handle('update-attribute', (event, attrData) => {
   try {
-    const { name, oldName, description, type, default: defaultValue, options, copyable } = attrData;
+    const { name, oldName, description, type, default: defaultValue, options, copyable, appliesTo } = attrData;
     const updateName = name || oldName;
     if (oldName && name && oldName !== name) {
       attributes.deleteAttribute(oldName);
-      return attributes.createAttribute(name, description || '', type || 'String', defaultValue || '', options || [], copyable);
+      return attributes.createAttribute(name, description || '', type || 'String', defaultValue || '', options || [], copyable, appliesTo || 'Both');
     } else {
-      return attributes.updateAttribute(updateName, description || '', type || 'String', defaultValue || '', options || [], copyable);
+      return attributes.updateAttribute(updateName, description || '', type || 'String', defaultValue || '', options || [], copyable, appliesTo || 'Both');
     }
   } catch (err) {
     logger.error('Error updating attribute:', err.message);

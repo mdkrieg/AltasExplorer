@@ -2821,6 +2821,10 @@ async function initializeGridForPanel(panelId) {
 						const btn = originalTarget.closest('[data-attr-edit-trigger="true"]');
 						const attrName = btn.getAttribute('data-attr-name');
 						const attrDefinition = panelState[panelId].currentAttrDefinitions?.[attrName];
+						// Don't allow editing if this attribute doesn't apply to this record type
+						const appliesTo = (attrDefinition?.appliesTo || 'both').toLowerCase();
+						if ((appliesTo === 'directory' && !record.isFolder) ||
+							(appliesTo === 'files' && record.isFolder)) return;
 						const grid = panelState[panelId].w2uiGrid;
 						const colIndex = grid ? grid.columns.findIndex(c => c.field === `attr_${attrName}`) : -1;
 						if (!grid || colIndex === -1) return;
@@ -2980,6 +2984,11 @@ async function initializeGridForPanel(panelId) {
 				let newValue = event.detail.value?.new ?? event.detail.value;
 				if (newValue !== null && typeof newValue === 'object' && 'id' in newValue) {
 					newValue = newValue.id;
+				}
+				// Trim whitespace; convert empty string to null so DB removes the key
+				if (typeof newValue === 'string') {
+					newValue = newValue.trim();
+					if (newValue === '') newValue = null;
 				}
 				// Write normalized value directly to the record
 				record[field] = newValue;
@@ -3737,6 +3746,14 @@ function formatCustomAttributeValue(value, type) {
 }
 
 function renderGridAttributeCell(record, attrName, attrDefinition) {
+	// Determine whether this attribute applies to this record type
+	const appliesTo = (attrDefinition?.appliesTo || 'both').toLowerCase();
+	const notApplicable =
+		(appliesTo === 'directory' && !record.isFolder) ||
+		(appliesTo === 'files' && record.isFolder);
+	if (notApplicable) {
+		return '<div class="grid-attr-copy-cell grid-attr-na"><span class="grid-attr-copy-text grid-attr-na-text">---</span></div>';
+	}
 	const rawValue = record[`attr_${attrName}`];
 	const displayValue = formatCustomAttributeValue(rawValue, attrDefinition?.type);
 	const safeAttrName = utils.escapeHtml(attrName);

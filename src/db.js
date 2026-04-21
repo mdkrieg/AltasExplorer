@@ -1288,10 +1288,24 @@ class DatabaseService {
   }
 
   /**
-   * Set all attribute values for a file (replaces existing)
+   * Merge attribute values for a file into the existing stored attributes.
+   * String values are trimmed; keys set to '', null, or undefined are removed.
+   * An empty result is stored as NULL.
    */
   setFileAttributes(inode, dir_id, attributes) {
-    const json = attributes && Object.keys(attributes).length > 0 ? JSON.stringify(attributes) : null;
+    const existing = this.getFileAttributes(inode, dir_id);
+    const merged = { ...existing, ...(attributes || {}) };
+    for (const key of Object.keys(merged)) {
+      const val = merged[key];
+      if (val === null || val === undefined) {
+        delete merged[key];
+      } else if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (trimmed === '') delete merged[key];
+        else merged[key] = trimmed;
+      }
+    }
+    const json = Object.keys(merged).length > 0 ? JSON.stringify(merged) : null;
     this.db.prepare('UPDATE files SET attributes = ? WHERE inode = ? AND dir_id = ?').run(json, inode, dir_id);
   }
 

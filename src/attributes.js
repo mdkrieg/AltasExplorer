@@ -30,6 +30,7 @@ class AttributeService {
           if (attr.default === undefined) attr.default = '';
           if (!attr.options) attr.options = [];
           if (attr.copyable === undefined) attr.copyable = false;
+          if (!attr.appliesTo) attr.appliesTo = 'Both';
           attributes[attr.name] = attr;
         }
       }
@@ -44,15 +45,15 @@ class AttributeService {
     return attributes[name] || null;
   }
 
-  createAttribute(name, description = '', type = 'String', defaultValue = '', options = [], copyable = false) {
-    const attr = { name, description, type, default: defaultValue, options, copyable: Boolean(copyable) };
+  createAttribute(name, description = '', type = 'String', defaultValue = '', options = [], copyable = false, appliesTo = 'Both') {
+    const attr = { name, description, type, default: defaultValue, options, copyable: Boolean(copyable), appliesTo };
     const filePath = path.join(ATTRIBUTES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(attr, null, 2));
     return attr;
   }
 
-  updateAttribute(name, description = '', type = 'String', defaultValue = '', options = [], copyable = false) {
-    const attr = { name, description, type, default: defaultValue, options, copyable: Boolean(copyable) };
+  updateAttribute(name, description = '', type = 'String', defaultValue = '', options = [], copyable = false, appliesTo = 'Both') {
+    const attr = { name, description, type, default: defaultValue, options, copyable: Boolean(copyable), appliesTo };
     const filePath = path.join(ATTRIBUTES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(attr, null, 2));
     return attr;

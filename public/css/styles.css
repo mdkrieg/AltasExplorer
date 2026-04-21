@@ -3418,6 +3418,11 @@ hr {
 .grid-attr-copy-cell .btn-copy-value {
   margin-left: 4px;
 }
+
+.grid-attr-na-text {
+  color: #bbb;
+  font-style: italic;
+}
 .item-props-icon.clickable {
   cursor: pointer;
   border-radius: 4px;
