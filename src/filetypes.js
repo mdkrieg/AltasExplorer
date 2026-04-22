@@ -7,6 +7,7 @@ const FILETYPES_FILE = path.join(os.homedir(), '.atlasexplorer', 'filetypes.json
 
 const DEFAULT_FILE_TYPES = [
   { pattern: 'notes.txt', type: 'Notes', locked: true },
+  { pattern: '*.aly', type: 'Atlas Layout', icon: 'layout.svg', openWith: 'aly-layout', locked: true },
   { pattern: '*.json', type: 'JSON' },
   { pattern: '*.csv', type: 'CSV' },
   { pattern: '*.png', type: 'Image' },
@@ -32,6 +33,7 @@ const DEFAULT_FILE_TYPES = [
 
 // Entries to add to existing installs that pre-date them being in DEFAULT_FILE_TYPES
 const MIGRATION_TYPES = [
+  { pattern: '*.aly', type: 'Atlas Layout', icon: 'layout.svg', openWith: 'aly-layout', locked: true },
   { pattern: '*.jpg', type: 'Image', icon: 'user-image.png' },
   { pattern: '*.jpeg', type: 'Image', icon: 'user-image.png' },
   { pattern: '*.gif', type: 'Image', icon: 'user-image.png' },
@@ -83,8 +85,19 @@ class FileTypeService {
         types.unshift({ pattern: 'notes.txt', type: 'Notes', locked: true });
         this._save(types);
       } else {
-        // Ensure locked flag is set on the notes.txt entry
         notesEntry.locked = true;
+      }
+      // Ensure the *.aly entry is always present and locked
+      const alyEntry = types.find(t => t.pattern === '*.aly');
+      if (!alyEntry) {
+        // Insert after notes.txt
+        const notesIdx = types.findIndex(t => t.pattern === 'notes.txt');
+        types.splice(notesIdx + 1, 0, { pattern: '*.aly', type: 'Atlas Layout', icon: 'layout.svg', openWith: 'aly-layout', locked: true });
+        this._save(types);
+      } else {
+        alyEntry.locked = true;
+        alyEntry.icon = 'layout.svg';
+        alyEntry.openWith = 'aly-layout';
       }
       return types;
     } catch (err) {
@@ -116,8 +129,8 @@ class FileTypeService {
    * Update an existing file type entry
    */
   updateFileType(pattern, newPattern, newType, icon = null, openWith = null) {
-    if (pattern === 'notes.txt') {
-      throw new Error('The Notes file type cannot be modified');
+    if (pattern === 'notes.txt' || pattern === '*.aly') {
+      throw new Error('This file type cannot be modified');
     }
     if (!newPattern || !newType) {
       throw new Error('Pattern and type are required');
@@ -143,8 +156,8 @@ class FileTypeService {
    * Delete a file type entry
    */
   deleteFileType(pattern) {
-    if (pattern === 'notes.txt') {
-      throw new Error('The Notes file type cannot be deleted');
+    if (pattern === 'notes.txt' || pattern === '*.aly') {
+      throw new Error('This file type cannot be deleted');
     }
     const types = this.getFileTypes();
     const index = types.findIndex(t => t.pattern === pattern);
@@ -173,6 +186,16 @@ class FileTypeService {
         if (!existingPatterns.has(entry.pattern.toLowerCase())) {
           types.push({ ...entry });
           existingPatterns.add(entry.pattern.toLowerCase());
+          changed = true;
+        }
+      }
+      // Always enforce *.aly properties even if entry already existed
+      const alyMigEntry = types.find(t => t.pattern === '*.aly');
+      if (alyMigEntry) {
+        if (alyMigEntry.icon !== 'layout.svg' || alyMigEntry.openWith !== 'aly-layout' || !alyMigEntry.locked) {
+          alyMigEntry.icon = 'layout.svg';
+          alyMigEntry.openWith = 'aly-layout';
+          alyMigEntry.locked = true;
           changed = true;
         }
       }

@@ -422,7 +422,8 @@ async function showLoadLayoutModal() {
     const dateStr = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     const panelLabel = layout.panelCount ? `${layout.panelCount} panel${layout.panelCount > 1 ? 's' : ''}` : '';
     info.innerHTML = `<div style="font-weight: 600; font-size: 14px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${utils.escapeHtml(name)}</div>`
-      + `<div style="font-size: 12px; color: #888;">${dateStr}${panelLabel ? ' &middot; ' + panelLabel : ''}</div>`;
+      + `<div style="font-size: 12px; color: #888;">${dateStr}${panelLabel ? ' &middot; ' + panelLabel : ''}</div>`
+      + (layout.description ? `<div style="font-size: 12px; color: #555; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${utils.escapeHtml(layout.description)}</div>` : '');
 
     const deleteBtn = document.createElement('button');
     deleteBtn.textContent = '\u00D7';
@@ -466,6 +467,17 @@ function attachEventListeners() {
   // Capture-phase key handler for grid navigation and panel cycling.
   // Must be capture phase so we can intercept before the browser or w2ui processes them.
   document.addEventListener('keydown', function (event) {
+    // While a w2ui in-grid confirm message (e.g. delete confirmation) is open,
+    // swallow navigation/shortcut keys so the grid underneath does not move selection.
+    // Allow Enter (to confirm) and Escape (to cancel) to reach the dialog's button handlers.
+    if (document.querySelector('.w2ui-message')) {
+      if (event.key !== 'Enter' && event.key !== 'Escape' && event.key !== 'Tab') {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+
     // Tab / Shift+Tab: cycle focus through sidebar and panels
     if (event.key === 'Tab' && !event.ctrlKey && !event.altKey && !event.metaKey) {
       const tgt = event.target;
@@ -726,6 +738,10 @@ function attachEventListeners() {
         panels.activatePathEditMode(activePanelId);
         break;
       case 'enter_path': {
+        // Don't navigate while a w2ui confirmation dialog is open inside a grid
+        if (document.querySelector('.w2ui-message')) {
+          break;
+        }
         const tgt = event.target;
         const isRealInput = tgt && (
           tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
@@ -745,7 +761,11 @@ function attachEventListeners() {
                 if (record.isFolder && record.changeState !== 'moved') {
                   panels.navigateToDirectory(record.path, targetPanelId);
                 } else if (!record.isFolder) {
-                  panels.showItemPropsModal(record, targetPanelId);
+                  if (record.path && record.path.toLowerCase().endsWith('.aly')) {
+                    panels.openAlyLayoutModal(record.path);
+                  } else {
+                    panels.showItemPropsModal(record, targetPanelId);
+                  }
                 }
               }
             }
@@ -762,7 +782,11 @@ function attachEventListeners() {
                   if (record.isFolder && record.changeState !== 'moved') {
                     panels.navigateToDirectory(record.path, targetPanelId);
                   } else if (!record.isFolder) {
-                    panels.showItemPropsModal(record, targetPanelId);
+                    if (record.path && record.path.toLowerCase().endsWith('.aly')) {
+                      panels.openAlyLayoutModal(record.path);
+                    } else {
+                      panels.showItemPropsModal(record, targetPanelId);
+                    }
                   }
                 }
               }
@@ -861,6 +885,41 @@ function attachEventListeners() {
   });
   $('#load-layout-modal').click(function (e) {
     if (e.target === this) $(this).hide();
+  });
+
+  // Save Layout Global modal
+  $('#btn-save-layout-global-close, #btn-save-layout-global-cancel').click(function () {
+    panels.closeSaveLayoutGlobalModal();
+  });
+  $('#save-layout-global-modal').click(function (e) {
+    if (e.target === this) panels.closeSaveLayoutGlobalModal();
+  });
+  $('#btn-save-layout-global-confirm').click(async function () {
+    await panels.confirmSaveLayoutGlobal();
+  });
+  $('#save-layout-global-name').on('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      panels.confirmSaveLayoutGlobal();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      panels.closeSaveLayoutGlobalModal();
+    }
+  });
+  $('#save-layout-global-desc').on('input', function () {
+    const count = document.getElementById('save-layout-global-desc-count');
+    if (count) count.textContent = this.value.length;
+  });
+
+  // ALY layout open-confirm modal
+  $('#btn-aly-open-close, #btn-aly-open-cancel').click(function () {
+    panels.closeAlyLayoutModal();
+  });
+  $('#aly-open-modal').click(function (e) {
+    if (e.target === this) panels.closeAlyLayoutModal();
+  });
+  $('#btn-aly-open-confirm').click(async function () {
+    await panels.confirmLoadAlyLayout();
   });
 
   // Browse for .aly file (fallback to native dialog)

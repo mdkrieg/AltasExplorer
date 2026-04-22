@@ -107,6 +107,16 @@ class DatabaseService {
         FOREIGN KEY (new_dir_id) REFERENCES dirs(id)
       );
 
+      CREATE TABLE IF NOT EXISTS trash_staging (
+        file_id INTEGER PRIMARY KEY,
+        original_dir_id INTEGER NOT NULL,
+        original_filename TEXT NOT NULL,
+        original_path TEXT NOT NULL,
+        staged_at INTEGER NOT NULL,
+        FOREIGN KEY (file_id) REFERENCES files(id),
+        FOREIGN KEY (original_dir_id) REFERENCES dirs(id)
+      );
+
       CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         rule_id INTEGER,
@@ -195,6 +205,14 @@ class DatabaseService {
         thumbnail BLOB NOT NULL,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
       );
+
+      CREATE TABLE IF NOT EXISTS dir_grid_layouts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dirname TEXT NOT NULL UNIQUE,
+        columns TEXT NOT NULL,
+        sort_data TEXT NOT NULL DEFAULT '[]',
+        saved_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+      );
     `;
 
     this.db.exec(schema);
@@ -226,6 +244,34 @@ class DatabaseService {
     const hasEventTypeCol = fileHistoryCols.some(col => col.name === 'eventType');
     if (!hasEventTypeCol) {
       this.db.exec("ALTER TABLE file_history ADD COLUMN eventType TEXT NOT NULL DEFAULT 'legacy'");
+    }
+
+    // Runtime migration: enforce one orphan row per (inode, dir_id).
+    // Before adding the unique index we must collapse any existing duplicates that were
+    // accumulated prior to the dedup fix. Keep the lowest-id row for each (inode, dir_id) pair.
+    try {
+      this.db.exec(`
+        DELETE FROM orphans
+        WHERE id NOT IN (
+          SELECT MIN(id) FROM orphans GROUP BY inode, dir_id
+        );
+      `);
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orphans_inode_dir ON orphans(inode, dir_id);');
+    } catch (err) {
+      // Non-fatal: log and continue. Later createOrphan upserts will still avoid new duplicates.
+      logger.error('Error migrating orphans uniqueness:', err.message);
+    }
+    // Same for dir_orphans: keep lowest id per (parent_dir_id, dir_id).
+    try {
+      this.db.exec(`
+        DELETE FROM dir_orphans
+        WHERE id NOT IN (
+          SELECT MIN(id) FROM dir_orphans GROUP BY parent_dir_id, dir_id
+        );
+      `);
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_dir_orphans_parent_child ON dir_orphans(parent_dir_id, dir_id);');
+    } catch (err) {
+      logger.error('Error migrating dir_orphans uniqueness:', err.message);
     }
 
     const alertRuleCols = this.db.prepare('PRAGMA table_info(alert_rules)').all();
@@ -684,6 +730,94 @@ class DatabaseService {
     return stmt.run(inode, dir_id);
   }
 
+  // ---------- Trash staging (user-initiated deletions) ----------
+  //
+  // Files pending in-app deletion are re-parented to a sentinel "trash" dir so
+  // background scans never see them in their original dir (no orphan race) and
+  // crash recovery can finalize or roll back based on filesystem truth.
+
+  static TRASH_DIRNAME = '__atlasexplorer_trash__';
+
+  getTrashDirId() {
+    if (this._trashDirIdCache) return this._trashDirIdCache;
+    const existing = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(DatabaseService.TRASH_DIRNAME);
+    if (existing) {
+      this._trashDirIdCache = existing.id;
+      return existing.id;
+    }
+    const result = this.db.prepare(`
+      INSERT INTO dirs (dirname, inode, parent_id, category, category_force)
+      VALUES (?, ?, NULL, 'Default', 0)
+    `).run(DatabaseService.TRASH_DIRNAME, '__trash__');
+    this._trashDirIdCache = result.lastInsertRowid;
+    return this._trashDirIdCache;
+  }
+
+  /**
+   * Move a file row into the trash sentinel dir and record rollback info.
+   * Atomic (transaction). Returns the staging record so callers can log or
+   * trigger reconciliation later.
+   */
+  stageFileForDeletion(inode, original_dir_id, original_path) {
+    const trashDirId = this.getTrashDirId();
+    const stage = this.db.transaction((inodeIn, origDirId, origPath) => {
+      const fileRow = this.db.prepare(
+        'SELECT id, filename FROM files WHERE inode = ? AND dir_id = ?'
+      ).get(inodeIn, origDirId);
+      if (!fileRow) {
+        throw new Error(`File row not found for inode=${inodeIn} dir_id=${origDirId}`);
+      }
+      this.db.prepare(`
+        INSERT OR REPLACE INTO trash_staging (file_id, original_dir_id, original_filename, original_path, staged_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(fileRow.id, origDirId, fileRow.filename, origPath, Date.now());
+      this.db.prepare('UPDATE files SET dir_id = ? WHERE id = ?').run(trashDirId, fileRow.id);
+      return { file_id: fileRow.id, filename: fileRow.filename };
+    });
+    return stage(inode, original_dir_id, original_path);
+  }
+
+  /**
+   * Revert a staged deletion: move the file row back to its original dir and
+   * remove the staging record. Used when shell.trashItem fails.
+   */
+  rollbackFileDeletion(file_id) {
+    const revert = this.db.transaction((fileIdIn) => {
+      const staging = this.db.prepare('SELECT original_dir_id FROM trash_staging WHERE file_id = ?').get(fileIdIn);
+      if (!staging) return { reverted: false };
+      this.db.prepare('UPDATE files SET dir_id = ? WHERE id = ?').run(staging.original_dir_id, fileIdIn);
+      this.db.prepare('DELETE FROM trash_staging WHERE file_id = ?').run(fileIdIn);
+      return { reverted: true, original_dir_id: staging.original_dir_id };
+    });
+    return revert(file_id);
+  }
+
+  /**
+   * Finalize a staged deletion: delete the files row and the staging record.
+   * The file_history audit entry is written by the caller so it can include
+   * caller-specific metadata (source, etc.).
+   */
+  finalizeFileDeletion(file_id) {
+    const finalize = this.db.transaction((fileIdIn) => {
+      this.db.prepare('DELETE FROM files WHERE id = ?').run(fileIdIn);
+      this.db.prepare('DELETE FROM trash_staging WHERE file_id = ?').run(fileIdIn);
+    });
+    finalize(file_id);
+  }
+
+  /**
+   * List files staged for deletion, joined with filesystem path for startup
+   * reconciliation after a crash.
+   */
+  getPendingDeletions() {
+    return this.db.prepare(`
+      SELECT ts.file_id, ts.original_dir_id, ts.original_filename, ts.original_path, ts.staged_at,
+             f.inode
+      FROM trash_staging ts
+      JOIN files f ON f.id = ts.file_id
+    `).all();
+  }
+
   /**
    * Get a single file by inode and dirname
    */
@@ -1035,27 +1169,53 @@ class DatabaseService {
    * @returns {object|null} File record if found, null otherwise
    */
   findInodeInOtherDirectories(inode, exclude_dir_id) {
+    const trashDirId = this.getTrashDirId();
     const stmt = this.db.prepare(`
       SELECT f.*, d.id as dir_id_match FROM files f
       JOIN dirs d ON f.dir_id = d.id
-      WHERE f.inode = ? AND f.dir_id != ?
+      WHERE f.inode = ? AND f.dir_id != ? AND f.dir_id != ?
       LIMIT 1
     `);
-    return stmt.get(inode, exclude_dir_id);
+    return stmt.get(inode, exclude_dir_id, trashDirId);
   }
 
   /**
-   * Create an orphan record for a file that was not found on filesystem
+   * Create an orphan record for a file that was not found on filesystem.
+   * Idempotent: if an orphan row already exists for (inode, dir_id) returns the
+   * existing row with isNew=false. Returns { id, isNew, new_dir_id } so callers
+   * can emit history/alerts only on first detection.
    * @param {number} dir_id - Directory ID where file was expected
    * @param {string} name - Filename of the orphan
-   * @returns {object} Insert result with lastID
+   * @param {string} inode - File inode
+   * @returns {{id:number, isNew:boolean, new_dir_id:number|null}}
    */
   createOrphan(dir_id, name, inode) {
-    const stmt = this.db.prepare(`
+    const insert = this.db.prepare(`
       INSERT INTO orphans (inode, dir_id, name, new_dir_id)
       VALUES (?, ?, ?, NULL)
+      ON CONFLICT(inode, dir_id) DO NOTHING
     `);
-    return stmt.run(inode, dir_id, name);
+    const result = insert.run(inode, dir_id, name);
+    if (result.changes > 0) {
+      return { id: result.lastInsertRowid, isNew: true, new_dir_id: null };
+    }
+    const existing = this.db.prepare(
+      'SELECT id, new_dir_id FROM orphans WHERE inode = ? AND dir_id = ?'
+    ).get(inode, dir_id);
+    return existing
+      ? { id: existing.id, isNew: false, new_dir_id: existing.new_dir_id }
+      : { id: null, isNew: false, new_dir_id: null };
+  }
+
+  /**
+   * Delete an orphan record by the file it represents. Used when the user
+   * deletes a file from within the app so the scan doesn't leave a stale
+   * orphan row behind.
+   */
+  deleteOrphanByFile(inode, dir_id) {
+    return this.db.prepare(
+      'DELETE FROM orphans WHERE inode = ? AND dir_id = ?'
+    ).run(inode, dir_id);
   }
 
   /**
@@ -1096,10 +1256,21 @@ class DatabaseService {
   }
 
   createDirOrphan(parentDirId, dirId, name) {
-    return this.db.prepare(`
+    const insert = this.db.prepare(`
       INSERT INTO dir_orphans (parent_dir_id, dir_id, name, new_dir_id, created_at)
       VALUES (?, ?, ?, NULL, ?)
-    `).run(parentDirId, dirId, name, Date.now());
+      ON CONFLICT(parent_dir_id, dir_id) DO NOTHING
+    `);
+    const result = insert.run(parentDirId, dirId, name, Date.now());
+    if (result.changes > 0) {
+      return { id: result.lastInsertRowid, isNew: true, new_dir_id: null };
+    }
+    const existing = this.db.prepare(
+      'SELECT id, new_dir_id FROM dir_orphans WHERE parent_dir_id = ? AND dir_id = ?'
+    ).get(parentDirId, dirId);
+    return existing
+      ? { id: existing.id, isNew: false, new_dir_id: existing.new_dir_id }
+      : { id: null, isNew: false, new_dir_id: null };
   }
 
   updateDirOrphanNewLocation(orphanId, newDirId) {
@@ -1397,6 +1568,37 @@ class DatabaseService {
     this.db.prepare(
       'INSERT OR REPLACE INTO video_thumbnails (file_path, mtime, thumbnail) VALUES (?, ?, ?)'
     ).run(filePath, mtime, jpegBuffer);
+  }
+
+  // ============================================
+  // Grid Layout (per-directory column/sort state)
+  // ============================================
+
+  saveDirGridLayout(dirname, columns, sortData) {
+    const now = Math.floor(Date.now() / 1000);
+    this.db.prepare(
+      `INSERT INTO dir_grid_layouts (dirname, columns, sort_data, saved_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(dirname) DO UPDATE SET
+         columns = excluded.columns,
+         sort_data = excluded.sort_data,
+         saved_at = excluded.saved_at`
+    ).run(dirname, JSON.stringify(columns), JSON.stringify(sortData), now);
+  }
+
+  getDirGridLayout(dirname) {
+    const row = this.db.prepare(
+      'SELECT columns, sort_data FROM dir_grid_layouts WHERE dirname = ?'
+    ).get(dirname);
+    if (!row) return null;
+    return {
+      columns: JSON.parse(row.columns),
+      sortData: JSON.parse(row.sort_data)
+    };
+  }
+
+  deleteDirGridLayout(dirname) {
+    this.db.prepare('DELETE FROM dir_grid_layouts WHERE dirname = ?').run(dirname);
   }
 
   close() {

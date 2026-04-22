@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileAttributes: (inode, dir_id) => ipcRenderer.invoke('get-file-attributes', { inode, dir_id }),
   setFileAttributes: (inode, dir_id, attributes) => ipcRenderer.invoke('set-file-attributes', { inode, dir_id, attributes }),
   getItemStats: (itemPath) => ipcRenderer.invoke('get-item-stats', { itemPath }),
+  deleteItems: (items) => ipcRenderer.invoke('delete-items', items),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
@@ -204,10 +205,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Layout save/load
   saveLayout: (layoutData) => ipcRenderer.invoke('save-layout', layoutData),
+  saveLayoutToPath: (filePath, layoutData, thumbnailBase64) => ipcRenderer.invoke('save-layout-to-path', { filePath, layoutData, thumbnailBase64 }),
+  captureThumbnail: () => ipcRenderer.invoke('capture-thumbnail'),
   loadLayout: () => ipcRenderer.invoke('load-layout'),
   listLayouts: () => ipcRenderer.invoke('list-layouts'),
   loadLayoutFile: (filePath) => ipcRenderer.invoke('load-layout-file', filePath),
   deleteLayout: (filePath) => ipcRenderer.invoke('delete-layout', filePath),
+
+  // Dir grid layout (per-directory column/sort state)
+  saveDirGridLayout: (dirname, columns, sortData) => ipcRenderer.invoke('save-dir-grid-layout', { dirname, columns, sortData }),
+  getDirGridLayout: (dirname) => ipcRenderer.invoke('get-dir-grid-layout', dirname),
 
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),

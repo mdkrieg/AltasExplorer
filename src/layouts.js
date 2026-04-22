@@ -52,6 +52,7 @@ class LayoutService {
           filePath,
           savedAt: layoutData?.savedAt || stat.mtime.toISOString(),
           panelCount: layoutData?.layout?.currentLayout || null,
+          description: layoutData?.description || null,
           thumbnailBase64,
         });
       } catch (err) {
@@ -101,7 +102,7 @@ class LayoutService {
       thumbnailBase64 = zip.readFile(thumbnailEntry).toString('base64');
     }
 
-    return { layoutData, thumbnailBase64 };
+    return { layoutData, thumbnailBase64, description: layoutData.description || null };
   }
 }
 

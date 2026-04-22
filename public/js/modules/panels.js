@@ -1007,6 +1007,9 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 		<button id="btn-toolbar-terminal-${panelId}" class="panel-tb-btn" title="Terminal">
 			<img src="assets/icons/terminal.svg" style="width: 16px; height: 16px; pointer-events: none;">
 		</button>
+		<button id="btn-toolbar-save-${panelId}" class="panel-tb-btn" title="Save">
+			<img src="assets/icons/save.svg" style="width: 16px; height: 16px; pointer-events: none;">
+		</button>
 		<div class="panel-tb-scan">
 			<button id="btn-stop-scan-${panelId}" class="panel-tb-stop-scan" style="display:none;" title="Stop the current scan">&#9632; Stop</button>
 			<span id="scan-status-${panelId}" class="panel-tb-scan-status" style="display:none;">Scanning…</span>
@@ -1055,6 +1058,11 @@ function attachPanelToolbarEventListeners(panelId) {
 		}
 	}).on('blur', function () {
 		this.value = panelState[panelId].toolbarSearch || '';
+	});
+
+	$(`#btn-toolbar-save-${panelId}`).off('click').on('click', function (e) {
+		e.stopPropagation();
+		showSaveButtonMenu(panelId, this);
 	});
 }
 
@@ -2633,6 +2641,11 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			await populateFileGrid(entries, category, panelId);
 		}
 
+		// Apply per-directory saved grid layout (columns, sort) for grid views
+		if (!isGallery && depth === 0) {
+			await applyDirGridLayoutIfExists(panelId, normalizedPath);
+		}
+
 		if (panelState[panelId].toolbarSearch) {
 			applyPanelToolbarSearch(panelId, panelState[panelId].toolbarSearch);
 		}
@@ -2915,6 +2928,12 @@ async function initializeGridForPanel(panelId) {
 			}
 
 			if (record && !record.isFolder) {
+				// .aly files open the layout confirm modal
+				if (record.path && record.path.toLowerCase().endsWith('.aly')) {
+					openAlyLayoutModal(record.path);
+					return;
+				}
+
 				let hasPropertiesPanel = false;
 				for (let i = 2; i <= visiblePanels; i++) {
 					if (getPanelViewType(i) === 'properties') {
@@ -3011,6 +3030,28 @@ async function initializeGridForPanel(panelId) {
 					w2alert('Error saving attribute: ' + err.message);
 				}
 			};
+		},
+		onDelete: async function(edata) {
+			if (!edata.detail.force) return; // force=false: let confirm dialog show normally
+			edata.preventDefault(); // cancel default grid removal; we handle it manually
+			const grid = this;
+			const selected = grid.getSelection();
+			const records = selected.map(recid => grid.records.find(r => r.recid === recid)).filter(Boolean);
+			const items = records
+				.filter(r => r.path)
+				.map(r => ({ path: r.path, inode: r.inode, dir_id: r.dir_id, isFolder: !!r.isFolder }));
+			if (items.length === 0) return;
+			try {
+				const { succeeded, failed } = await window.electronAPI.deleteItems(items);
+				const succeededSet = new Set(succeeded);
+				const recidsToRemove = records.filter(r => succeededSet.has(r.path)).map(r => r.recid);
+				if (recidsToRemove.length > 0) grid.remove(...recidsToRemove);
+				if (failed.length > 0) {
+					w2alert('Failed to delete:\n' + failed.map(f => `${f.path}: ${f.error}`).join('\n'));
+				}
+			} catch (err) {
+				w2alert('Error deleting items: ' + (err.message || 'Unknown error'));
+			}
 		}
 	});
 	panelState[panelId].w2uiGrid = w2ui[gridName];
@@ -5646,7 +5687,7 @@ function applyColumnOverrides(panelId) {
 	delete panelState[panelId].columnOverrides;
 }
 
-export function serializeLayoutState() {
+export function serializeLayoutState(description = null) {
 	const panels = {};
 	for (let panelId = 1; panelId <= 4; panelId++) {
 		const $panel = $(`#panel-${panelId}`);
@@ -5680,6 +5721,7 @@ export function serializeLayoutState() {
 	return {
 		version: 1,
 		savedAt: new Date().toISOString(),
+		description: description ? String(description).slice(0, 255) : undefined,
 		layout: {
 			currentLayout,
 			visiblePanels,
@@ -5773,4 +5815,325 @@ export async function applyLayoutState(layoutData) {
 
 	// 7. Set active panel to 1
 	setActivePanelId(1);
+}
+
+// ============================================
+// Save Button Menu
+// ============================================
+
+let activeSaveMenu = null;
+
+function closeSaveMenu() {
+	if (activeSaveMenu) {
+		activeSaveMenu.remove();
+		activeSaveMenu = null;
+	}
+}
+
+function showSaveButtonMenu(panelId, anchorEl) {
+	// Close any existing menu first
+	closeSaveMenu();
+
+	const rect = anchorEl.getBoundingClientRect();
+	const menu = document.createElement('div');
+	menu.className = 'tb-save-menu';
+	menu.innerHTML = `
+		<button class="tb-save-menu-item" data-action="remember-grid">
+			<div class="tb-save-menu-label">Remember grid layout</div>
+		</button>
+		<button class="tb-save-menu-item" data-action="save-layout-here">
+			<div class="tb-save-menu-label">Save window layout here</div>
+		</button>
+		<button class="tb-save-menu-item" data-action="save-layout-global">
+			<div class="tb-save-menu-label">Save window layout global</div>
+		</button>
+	`;
+
+	// Position below the button
+	menu.style.left = `${rect.left}px`;
+	menu.style.top = `${rect.bottom + 2}px`;
+	document.body.appendChild(menu);
+	activeSaveMenu = menu;
+
+	menu.querySelector('[data-action="remember-grid"]').addEventListener('click', () => {
+		closeSaveMenu();
+		rememberGridLayout(panelId);
+	});
+
+	menu.querySelector('[data-action="save-layout-here"]').addEventListener('click', () => {
+		closeSaveMenu();
+		saveLayoutToCurrentDir(panelId);
+	});
+
+	menu.querySelector('[data-action="save-layout-global"]').addEventListener('click', () => {
+		closeSaveMenu();
+		openSaveLayoutGlobalModal(panelId);
+	});
+
+	// Close on outside click
+	setTimeout(() => {
+		document.addEventListener('click', closeSaveMenu, { once: true });
+	}, 0);
+}
+
+async function rememberGridLayout(panelId) {
+	const state = panelState[panelId];
+	if (!state || !state.currentPath) {
+		w2alert('No directory is open in this panel.');
+		return;
+	}
+	const grid = state.w2uiGrid;
+	if (!grid) return;
+
+	// Serialize only non-attribute columns or validate that attribute columns still exist
+	const validAttrNames = new Set((state.currentAttrColumns || []).map(n => `attr_${n}`));
+	const columns = grid.columns
+		.filter(col => {
+			// Keep standard columns; skip attr_ columns that aren't currently valid
+			if (col.field && col.field.startsWith('attr_')) {
+				return validAttrNames.has(col.field);
+			}
+			return true;
+		})
+		.map(col => ({ field: col.field, size: col.size, hidden: !!col.hidden }));
+
+	const sortData = (grid.sortData || []).map(s => ({ field: s.field, direction: s.direction }));
+
+	const result = await window.electronAPI.saveDirGridLayout(state.currentPath, columns, sortData);
+	if (result.success) {
+		w2alert('Grid layout remembered for this directory.');
+	} else {
+		w2alert('Failed to save grid layout: ' + (result.error || 'Unknown error'));
+	}
+}
+
+async function saveLayoutToCurrentDir(panelId) {
+	const state = panelState[panelId];
+	if (!state || !state.currentPath) {
+		w2alert('No directory is open in this panel.');
+		return;
+	}
+	await openSaveLayoutModal(panelId, 'here', state.currentPath);
+}
+
+async function openSaveLayoutGlobalModal(panelId) {
+	await openSaveLayoutModal(panelId, 'global', null);
+}
+
+async function openSaveLayoutModal(panelId, mode, dirPath) {
+	// Capture thumbnail first (before modal obscures the window)
+	const thumbResult = await window.electronAPI.captureThumbnail();
+	const thumbnailBase64 = thumbResult.success ? thumbResult.thumbnailBase64 : null;
+
+	const modal = document.getElementById('save-layout-global-modal');
+	const input = document.getElementById('save-layout-global-name');
+	const thumb = document.getElementById('save-layout-global-thumb');
+	const thumbPlaceholder = document.getElementById('save-layout-global-thumb-placeholder');
+	const destLabel = document.getElementById('save-layout-global-dest');
+	const descEl = document.getElementById('save-layout-global-desc');
+	const descCount = document.getElementById('save-layout-global-desc-count');
+	if (descEl) descEl.value = '';
+	if (descCount) descCount.textContent = '0';
+
+	if (mode === 'here') {
+		// Collision-avoid in the current directory
+		const dirEntries = await window.electronAPI.readDirectory(dirPath);
+		const existingAly = new Set(
+			(Array.isArray(dirEntries) ? dirEntries : []).map(e => {
+				const fn = e.filename || e.name || '';
+				return fn.toLowerCase().endsWith('.aly') ? fn.slice(0, -4).toLowerCase() : null;
+			}).filter(Boolean)
+		);
+		let n = 1;
+		let defaultName = 'layout';
+		if (existingAly.has('layout')) {
+			while (existingAly.has(`layout-${n}`)) n++;
+			defaultName = `layout-${n}`;
+		}
+		input.value = defaultName;
+		destLabel.textContent = dirPath;
+		destLabel.title = dirPath;
+	} else {
+		// Collision-avoid in global layouts folder
+		const listResult = await window.electronAPI.listLayouts();
+		const existingNames = new Set(
+			(listResult.success ? listResult.layouts : []).map(l => {
+				const fn = l.fileName || '';
+				return fn.toLowerCase().endsWith('.aly') ? fn.slice(0, -4) : fn;
+			})
+		);
+		let n = 1;
+		while (existingNames.has(`layout-${n}`)) n++;
+		input.value = `layout-${n}`;
+		destLabel.textContent = 'Saved to layouts folder';
+		destLabel.title = '';
+	}
+
+	if (thumbnailBase64) {
+		thumb.src = `data:image/png;base64,${thumbnailBase64}`;
+		thumb.style.display = '';
+		thumbPlaceholder.style.display = 'none';
+	} else {
+		thumb.style.display = 'none';
+		thumbPlaceholder.style.display = '';
+	}
+
+	modal._pendingPanelId = panelId;
+	modal._pendingMode = mode;
+	modal._pendingDirPath = dirPath;
+	modal._pendingThumbnailBase64 = thumbnailBase64 || null;
+	modal.style.display = '';
+	setTimeout(() => input.select(), 50);
+}
+
+export async function confirmSaveLayoutGlobal() {
+	const modal = document.getElementById('save-layout-global-modal');
+	const input = document.getElementById('save-layout-global-name');
+	const descEl = document.getElementById('save-layout-global-desc');
+	let name = input.value.trim();
+
+	if (!name) {
+		input.focus();
+		return;
+	}
+	// Sanitize: strip path separators
+	name = name.replace(/[/\\:*?"<>|]/g, '-');
+	if (!name.toLowerCase().endsWith('.aly')) name += '.aly';
+
+	const description = descEl ? descEl.value.trim().slice(0, 255) || null : null;
+	const layoutData = serializeLayoutState(description);
+	const mode = modal._pendingMode || 'global';
+	const thumbnailBase64 = modal._pendingThumbnailBase64 || null;
+
+	let result;
+	if (mode === 'here') {
+		const dirPath = modal._pendingDirPath;
+		const filePath = await window.electronAPI.invoke('path-join', dirPath, name);
+		result = await window.electronAPI.saveLayoutToPath(filePath, layoutData, thumbnailBase64);
+	} else {
+		result = await window.electronAPI.invoke('save-layout-global-named', { name, layoutData, thumbnailBase64 });
+	}
+
+	if (result.success) {
+		modal.style.display = 'none';
+	} else {
+		w2alert('Failed to save layout: ' + (result.error || 'Unknown error'));
+	}
+}
+
+export function closeSaveLayoutGlobalModal() {
+	const modal = document.getElementById('save-layout-global-modal');
+	if (modal) modal.style.display = 'none';
+}
+
+export async function applyDirGridLayoutIfExists(panelId, dirPath) {
+	const result = await window.electronAPI.getDirGridLayout(dirPath);
+	if (!result.success || !result.layout) return;
+
+	const { columns, sortData } = result.layout;
+	const grid = panelState[panelId]?.w2uiGrid;
+	if (!grid) return;
+
+	// Validate attribute columns — remove any that no longer exist in the current grid
+	const currentFields = new Set(grid.columns.map(c => c.field));
+	const validColumns = columns.filter(col => currentFields.has(col.field));
+
+	if (validColumns.length > 0) {
+		panelState[panelId].columnOverrides = validColumns;
+		applyColumnOverrides(panelId);
+	}
+
+	if (sortData && sortData.length > 0) {
+		grid.sortData = sortData;
+		grid.localSort();
+		grid.refresh();
+	}
+}
+
+// ---------- .aly open-confirm modal ----------
+
+let _pendingAlyPath = null;
+
+export async function openAlyLayoutModal(filePath) {
+	_pendingAlyPath = filePath;
+	const modal = document.getElementById('aly-open-modal');
+	if (!modal) return;
+
+	const titleEl  = document.getElementById('aly-open-modal-title');
+	const thumb    = document.getElementById('aly-open-thumb');
+	const thumbPh  = document.getElementById('aly-open-thumb-placeholder');
+	const nameEl   = document.getElementById('aly-open-name');
+	const descEl   = document.getElementById('aly-open-desc');
+	const metaEl   = document.getElementById('aly-open-meta');
+
+	// Reset
+	thumb.style.display = 'none';
+	thumbPh.style.display = '';
+	nameEl.textContent = '';
+	descEl.style.display = 'none';
+	descEl.textContent = '';
+	metaEl.textContent = '';
+	titleEl.textContent = 'Open Layout';
+
+	modal.style.display = '';
+
+	try {
+		const result = await window.electronAPI.invoke('load-layout-file', filePath);
+		if (!result.success) {
+			w2alert('Failed to read layout file: ' + (result.error || 'Unknown error'));
+			modal.style.display = 'none';
+			return;
+		}
+		const { layoutData, thumbnailBase64, description } = result;
+
+		// File name as display name (strip .aly)
+		const basename = filePath.replace(/\\/g, '/').split('/').pop();
+		const displayName = basename.toLowerCase().endsWith('.aly') ? basename.slice(0, -4) : basename;
+		nameEl.textContent = displayName;
+		titleEl.textContent = 'Open Layout — ' + displayName;
+
+		if (thumbnailBase64) {
+			thumb.src = 'data:image/png;base64,' + thumbnailBase64;
+			thumb.style.display = '';
+			thumbPh.style.display = 'none';
+		}
+
+		const desc = description || layoutData?.description;
+		if (desc) {
+			descEl.textContent = desc;
+			descEl.style.display = '';
+		}
+
+		if (layoutData?.savedAt) {
+			const d = new Date(layoutData.savedAt);
+			metaEl.textContent = 'Saved: ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+		}
+	} catch (err) {
+		w2alert('Error loading layout: ' + err.message);
+		modal.style.display = 'none';
+	}
+}
+
+export async function confirmLoadAlyLayout() {
+	const filePath = _pendingAlyPath;
+	if (!filePath) return;
+	const modal = document.getElementById('aly-open-modal');
+	if (modal) modal.style.display = 'none';
+	try {
+		const result = await window.electronAPI.invoke('load-layout-file', filePath);
+		if (!result.success) {
+			w2alert('Failed to load layout: ' + (result.error || 'Unknown error'));
+			return;
+		}
+		await applyLayoutState(result.layoutData);
+	} catch (err) {
+		w2alert('Error applying layout: ' + err.message);
+	}
+	_pendingAlyPath = null;
+}
+
+export function closeAlyLayoutModal() {
+	_pendingAlyPath = null;
+	const modal = document.getElementById('aly-open-modal');
+	if (modal) modal.style.display = 'none';
 }

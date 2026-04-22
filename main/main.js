@@ -372,12 +372,55 @@ function syncIconAssets() {
 }
 
 /**
+ * Reconcile any files left staged for deletion after a crash. If the file is
+ * still present on disk the staging was aborted — roll back. If it is gone the
+ * trashItem call completed but our DB cleanup did not — finalize (write the
+ * audit entry and purge the rows).
+ */
+function reconcilePendingDeletions() {
+  let pending;
+  try {
+    pending = db.getPendingDeletions();
+  } catch (err) {
+    logger.error('Error reading pending deletions for reconciliation:', err.message);
+    return;
+  }
+  if (!pending || pending.length === 0) return;
+  logger.info(`Reconciling ${pending.length} pending deletion(s) from previous session`);
+  for (const row of pending) {
+    try {
+      const stillOnDisk = fsSync.existsSync(row.original_path);
+      if (stillOnDisk) {
+        db.rollbackFileDeletion(row.file_id);
+        logger.info(`Rolled back pending deletion for ${row.original_path} (file still present)`);
+      } else {
+        try {
+          db.insertFileHistory(row.inode, row.original_dir_id, row.file_id, 'fileRemoved', {
+            filename: row.original_filename,
+            status: 'deleted',
+            source: 'user-app-recovered'
+          });
+        } catch (histErr) {
+          logger.error(`Error writing recovered delete history for ${row.original_path}:`, histErr.message);
+        }
+        db.finalizeFileDeletion(row.file_id);
+        try { db.deleteOrphanByFile(row.inode, row.original_dir_id); } catch (e) { /* ignore */ }
+        logger.info(`Finalized pending deletion for ${row.original_path} (file missing from disk)`);
+      }
+    } catch (err) {
+      logger.error(`Error reconciling pending deletion for ${row.original_path}:`, err.message);
+    }
+  }
+}
+
+/**
  * Initialize the application
  */
 function initialize() {
   logger.info('Initializing application');
   syncIconAssets();
   db.initialize();
+  reconcilePendingDeletions();
   try {
     const result = todoAggregator.refreshAll();
     logger.info(`TODO aggregator: refreshed ${result.changed}/${result.total} notes.txt files at startup`);
@@ -1849,6 +1892,77 @@ ipcMain.handle('save-custom-action', (event, entry) => {
 });
 
 /**
+ * Filesystem: Move items to trash using the DB trash-staging pattern.
+ * For each file we first re-parent the files row into the trash sentinel dir
+ * (so any concurrent scan of the original dir no longer sees the inode as a
+ * missing/orphaned child), then call shell.trashItem. On success we finalize
+ * (delete the row + staging record + any stale orphan row) and insert the
+ * audit entry. On failure we roll back the row to its original dir.
+ *
+ * Accepts { path, inode, dir_id, isFolder } descriptors. Folders go to trash
+ * but their DB rows are not yet staged/finalized (future work).
+ */
+ipcMain.handle('delete-items', async (event, items) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { succeeded: [], failed: [] };
+  }
+  const succeeded = [];
+  const failed = [];
+  for (const item of items) {
+    if (!item || !item.path) {
+      failed.push({ path: String(item?.path || ''), error: 'Missing path' });
+      continue;
+    }
+
+    let stagedFileId = null;
+    let originalFilename = null;
+    const canStage = !item.isFolder && item.inode && item.dir_id;
+
+    if (canStage) {
+      try {
+        const staged = db.stageFileForDeletion(item.inode, item.dir_id, item.path);
+        stagedFileId = staged.file_id;
+        originalFilename = staged.filename;
+      } catch (err) {
+        logger.error(`Error staging deletion for ${item.path}:`, err.message);
+        failed.push({ path: item.path, error: `Staging failed: ${err.message}` });
+        continue;
+      }
+    }
+
+    try {
+      await shell.trashItem(item.path);
+    } catch (err) {
+      if (stagedFileId !== null) {
+        try { db.rollbackFileDeletion(stagedFileId); }
+        catch (rbErr) { logger.error(`Rollback failed for ${item.path}:`, rbErr.message); }
+      }
+      failed.push({ path: item.path, error: err?.message || 'Unknown error' });
+      continue;
+    }
+
+    if (stagedFileId !== null) {
+      try {
+        db.insertFileHistory(item.inode, item.dir_id, stagedFileId, 'fileRemoved', {
+          filename: originalFilename,
+          status: 'deleted',
+          source: 'user-app'
+        });
+      } catch (histErr) {
+        logger.error(`Error recording delete history for ${item.path}:`, histErr.message);
+      }
+      try { db.finalizeFileDeletion(stagedFileId); }
+      catch (finErr) { logger.error(`Error finalizing deletion for ${item.path}:`, finErr.message); }
+      try { db.deleteOrphanByFile(item.inode, item.dir_id); }
+      catch (orphErr) { logger.error(`Error removing stale orphan row for ${item.path}:`, orphErr.message); }
+    }
+
+    succeeded.push(item.path);
+  }
+  return { succeeded, failed };
+});
+
+/**
  * Custom Actions: Delete an action by id
  */
 ipcMain.handle('delete-custom-action', (event, id) => {
@@ -2028,8 +2142,63 @@ ipcMain.handle('pick-file', async (event, { filters, defaultPath } = {}) => {
 });
 
 // ============================================
+// Grid Layout (per-directory column/sort state)
+// ============================================
+
+ipcMain.handle('save-dir-grid-layout', (event, { dirname, columns, sortData }) => {
+  try {
+    db.saveDirGridLayout(dirname, columns, sortData);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error saving dir grid layout:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-dir-grid-layout', (event, dirname) => {
+  try {
+    const layout = db.getDirGridLayout(dirname);
+    return { success: true, layout };
+  } catch (err) {
+    logger.error('Error getting dir grid layout:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ============================================
 // Layout Save/Load (.aly files)
 // ============================================
+
+ipcMain.handle('save-layout-to-path', async (event, { filePath, layoutData, thumbnailBase64 }) => {
+  try {
+    let thumbnailBuffer;
+    if (thumbnailBase64) {
+      thumbnailBuffer = Buffer.from(thumbnailBase64, 'base64');
+    } else {
+      const sharp = require('sharp');
+      const nimg = await mainWindow.webContents.capturePage();
+      thumbnailBuffer = await sharp(nimg.toPNG()).resize(400).png().toBuffer();
+    }
+    layouts.saveLayout(filePath, layoutData, thumbnailBuffer);
+    return { success: true, filePath };
+  } catch (err) {
+    logger.error('Error saving layout to path:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('capture-thumbnail', async () => {
+  try {
+    const sharp = require('sharp');
+    const nimg = await mainWindow.webContents.capturePage();
+    const fullPng = nimg.toPNG();
+    const thumbnailBuffer = await sharp(fullPng).resize(400).png().toBuffer();
+    return { success: true, thumbnailBase64: thumbnailBuffer.toString('base64') };
+  } catch (err) {
+    logger.error('Error capturing thumbnail:', err.message);
+    return { success: false, error: err.message };
+  }
+});
 
 ipcMain.handle('save-layout', async (event, layoutData) => {
   try {
@@ -2061,6 +2230,34 @@ ipcMain.handle('save-layout', async (event, layoutData) => {
     logger.error('Error saving layout:', err.message);
     return { success: false, error: err.message };
   }
+});
+
+ipcMain.handle('save-layout-global-named', async (event, { name, layoutData, thumbnailBase64 }) => {
+  try {
+    let thumbnailBuffer;
+    if (thumbnailBase64) {
+      thumbnailBuffer = Buffer.from(thumbnailBase64, 'base64');
+    } else {
+      const sharp = require('sharp');
+      const nimg = await mainWindow.webContents.capturePage();
+      thumbnailBuffer = await sharp(nimg.toPNG()).resize(400).png().toBuffer();
+    }
+
+    // Ensure name ends with .aly and contains no path separators
+    let safeName = path.basename(name.replace(/[/\\:*?"<>|]/g, '-'));
+    if (!safeName.toLowerCase().endsWith('.aly')) safeName += '.aly';
+
+    const filePath = path.join(layouts.getDefaultDirectory(), safeName);
+    layouts.saveLayout(filePath, layoutData, thumbnailBuffer);
+    return { success: true, filePath };
+  } catch (err) {
+    logger.error('Error saving named global layout:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('path-join', (event, ...parts) => {
+  return path.join(...parts);
 });
 
 ipcMain.handle('load-layout', async () => {
@@ -2095,8 +2292,12 @@ ipcMain.handle('list-layouts', async () => {
 
 ipcMain.handle('load-layout-file', async (event, filePath) => {
   try {
-    const { layoutData, thumbnailBase64 } = layouts.loadLayout(filePath);
-    return { success: true, layoutData, thumbnailBase64 };
+    const resolved = path.resolve(filePath);
+    if (!resolved.toLowerCase().endsWith('.aly')) {
+      return { success: false, error: 'Not an .aly file' };
+    }
+    const { layoutData, thumbnailBase64, description } = layouts.loadLayout(resolved);
+    return { success: true, layoutData, thumbnailBase64, description };
   } catch (err) {
     logger.error('Error loading layout file:', err.message);
     return { success: false, error: err.message };
@@ -2552,8 +2753,13 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       }
     }
 
-    // Process missing files: check for moves vs orphans
+    // Process missing files: check for moves vs orphans.
+    // Orphan rows are state, not a log — createOrphan upserts and reports isNew
+    // so we only emit history / alerts / INFO logs on first detection or when a
+    // state transition is observed (e.g. a previously-unknown orphan becomes
+    // found-elsewhere).
     const orphanedEntries = [];
+    const pendingMovedFiles = [];
     for (const [inode, dbFile] of dbFileMap) {
       try {
         if (dbFile.filename === '.') {
@@ -2565,8 +2771,13 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         if (movedFileRecord) {
           const newDirId = movedFileRecord.dir_id_match;
           const orphanResult = db.createOrphan(dirId, dbFile.filename, inode);
-          const orphanId = orphanResult.lastInsertRowid || orphanResult.lastID;
-          db.updateOrphanNewLocation(orphanId, newDirId);
+          const orphanId = orphanResult.id;
+          const transitioned = orphanResult.isNew || orphanResult.new_dir_id !== newDirId;
+          if (transitioned) {
+            db.updateOrphanNewLocation(orphanId, newDirId);
+            pendingMovedFiles.push({ inode, dbFile, newDirId });
+            logger.info(`File ${dbFile.filename} detected as moved from ${dirPath}`);
+          }
 
           orphanedEntries.push({
             inode,
@@ -2582,10 +2793,9 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             new_dir_id: newDirId,
             dir_id: dirId
           });
-          logger.info(`File ${dbFile.filename} detected as moved from ${dirPath}`);
         } else {
           const orphanResult = db.createOrphan(dirId, dbFile.filename, inode);
-          const orphanId = orphanResult.lastInsertRowid || orphanResult.lastID;
+          const orphanId = orphanResult.id;
 
           orphanedEntries.push({
             inode,
@@ -2601,8 +2811,10 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             new_dir_id: null,
             dir_id: dirId
           });
-          pendingMissingFiles.push({ inode, dbFile });
-          logger.info(`File ${dbFile.filename} marked as orphan in ${dirPath}`);
+          if (orphanResult.isNew) {
+            pendingMissingFiles.push({ inode, dbFile });
+            logger.info(`File ${dbFile.filename} marked as orphan in ${dirPath}`);
+          }
         }
       } catch (err) {
         logger.error(`Error processing missing file ${dbFile.filename}:`, err.message);
@@ -2614,8 +2826,11 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         const movedDirRecord = db.findDirectoryInOtherParents(childDir.inode, dirId);
         if (movedDirRecord) {
           const orphanResult = db.createDirOrphan(dirId, childDir.id, path.basename(childDir.dirname));
-          const orphanId = orphanResult.lastInsertRowid || orphanResult.lastID;
-          db.updateDirOrphanNewLocation(orphanId, movedDirRecord.id);
+          const orphanId = orphanResult.id;
+          const transitioned = orphanResult.isNew || orphanResult.new_dir_id !== movedDirRecord.id;
+          if (transitioned) {
+            db.updateDirOrphanNewLocation(orphanId, movedDirRecord.id);
+          }
 
           entriesWithChanges.push({
             inode: childDir.inode,
@@ -2637,15 +2852,17 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             new_dir_id: movedDirRecord.id
           });
 
-          pendingMissingDirs.push({
-            childDir,
-            eventType: 'dirMoved',
-            orphanId,
-            newDirId: movedDirRecord.id
-          });
+          if (transitioned) {
+            pendingMissingDirs.push({
+              childDir,
+              eventType: 'dirMoved',
+              orphanId,
+              newDirId: movedDirRecord.id
+            });
+          }
         } else {
           const orphanResult = db.createDirOrphan(dirId, childDir.id, path.basename(childDir.dirname));
-          const orphanId = orphanResult.lastInsertRowid || orphanResult.lastID;
+          const orphanId = orphanResult.id;
 
           entriesWithChanges.push({
             inode: childDir.inode,
@@ -2667,12 +2884,14 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             new_dir_id: null
           });
 
-          pendingMissingDirs.push({
-            childDir,
-            eventType: 'dirOrphaned',
-            orphanId,
-            newDirId: null
-          });
+          if (orphanResult.isNew) {
+            pendingMissingDirs.push({
+              childDir,
+              eventType: 'dirOrphaned',
+              orphanId,
+              newDirId: null
+            });
+          }
         }
       } catch (err) {
         logger.error(`Error processing missing directory ${childDir.dirname}:`, err.message);
@@ -2904,6 +3123,26 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         }
       } catch (err) {
         logger.error(`Error processing missing file ${missingFile.dbFile.filename}:`, err.message);
+      }
+    }
+
+    for (const moved of pendingMovedFiles) {
+      try {
+        const newDir = db.getDirById(moved.newDirId);
+        db.insertFileHistory(moved.inode, dirId, moved.dbFile.id, 'fileMoved', {
+          filename: moved.dbFile.filename,
+          status: 'moved',
+          oldPath: path.join(dirPath, moved.dbFile.filename),
+          newPath: newDir ? path.join(newDir.dirname, moved.dbFile.filename) : null
+        }, currentDirHistoryId);
+
+        const movedRule = doesEventMatchRules(alertRules, 'fileMoved', categoryName, dirTagsJson, null);
+        if (movedRule) {
+          db.insertAlert(movedRule.id, null, 'fileMoved', moved.dbFile.filename, categoryName, dirId, moved.inode, null, null);
+          alertsCreated++;
+        }
+      } catch (err) {
+        logger.error(`Error processing moved file ${moved.dbFile.filename}:`, err.message);
       }
     }
 

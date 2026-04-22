@@ -256,6 +256,48 @@ button:active {
   font-style: italic;
 }
 
+/* Save button dropdown menu */
+.tb-save-menu {
+  position: fixed;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 9999;
+  min-width: 220px;
+  padding: 4px 0;
+}
+.tb-save-menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #333;
+  white-space: nowrap;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+.tb-save-menu-item:hover {
+  background: #f0f5ff;
+  color: #1a56db;
+}
+.tb-save-menu-item .tb-save-menu-label {
+  flex: 1;
+  line-height: 1.3;
+}
+.tb-save-menu-item .tb-save-menu-desc {
+  font-size: 11px;
+  color: #888;
+  margin-top: 1px;
+}
+.tb-save-menu-item:hover .tb-save-menu-desc {
+  color: #6d9bf5;
+}
+
 /* Gallery view container */
 .panel-item > .panel-gallery,
 .panel-content > .panel-gallery {

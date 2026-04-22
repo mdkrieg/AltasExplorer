@@ -123,12 +123,12 @@ Both Browser Views:
   [ ] Modal offers the ability to add all items from grid (respecting filter)
 
 Saved Layouts:
-[ ] Add save button in the toolbar for saving layouts in the local directory, the button should offer a dropdown (check demos)/context menu on click with the following:
-  [ ] Save grid layout (columns and sort)
-  [ ] Save window layout here
-  [ ] Save window layout to...
-  [ ] Save window layout globally
-[ ] Double clicking ALY file opens layout
+[x] Add save button in the toolbar for saving layouts in the local directory, the button should offer a dropdown (check demos)/context menu on click with the following:
+  [x] Save grid layout (columns and sort)
+  [x] Save window layout here
+  [x] Save window layout to...
+  [x] Save window layout global
+[x] Double clicking ALY file opens layout
 
 General:
 [ ] All dropdowns for selecting category must have the customized folder icon next to them
