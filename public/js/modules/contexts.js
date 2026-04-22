@@ -79,6 +79,24 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 
 	const contextMenu = [];
 
+	// Pre-generate category folder icons and tag icons in parallel
+	const categoryNames = Object.keys(allCategories);
+	const [categoryIconUrls, tagIconUrls] = await Promise.all([
+		Promise.all(categoryNames.map(name => {
+			const cat = allCategories[name];
+			if (!cat || !cat.bgColor) return Promise.resolve(null);
+			return window.electronAPI.generateFolderIcon(cat.bgColor, cat.textColor).catch(() => null);
+		})),
+		Promise.all(allTags.map(tag => {
+			if (!tag || !tag.bgColor) return Promise.resolve(null);
+			return window.electronAPI.generateTagIcon(tag.bgColor, tag.textColor).catch(() => null);
+		}))
+	]);
+	const categoryIconMap = {};
+	categoryNames.forEach((name, i) => { categoryIconMap[name] = categoryIconUrls[i]; });
+	const tagIconMap = {};
+	allTags.forEach((tag, i) => { tagIconMap[tag.name] = tagIconUrls[i]; });
+
 	if (!isMultiSelect && directoryCount > 0) {
 		contextMenu.push({
 			id: 'open-in',
@@ -93,7 +111,10 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 			text: isMultiSelect ? 'Set Category (all)' : 'Set Category',
 			items: Object.keys(allCategories).map(categoryName => ({
 				id: `set-category-${categoryName}`,
-				text: categoryName
+				text: categoryName,
+				iconHtml: categoryIconMap[categoryName]
+					? `<img src="${categoryIconMap[categoryName]}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;">`
+					: ''
 			}))
 		});
 
@@ -141,7 +162,10 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 			text: isMultiSelect ? 'Add Tag (all)' : 'Add Tag',
 			items: allTags.map(tag => ({
 				id: `add-tag-${tag.name}`,
-				text: tag.name
+				text: tag.name,
+				iconHtml: tagIconMap[tag.name]
+					? `<img src="${tagIconMap[tag.name]}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;">`
+					: ''
 			}))
 		});
 	}
@@ -587,6 +611,13 @@ function buildMenuEl(items, panelId) {
 
 		const row = document.createElement('div');
 		row.className = 'custom-ctx-item';
+
+		if (item.iconHtml) {
+			const iconWrap = document.createElement('span');
+			iconWrap.className = 'custom-ctx-icon';
+			iconWrap.innerHTML = item.iconHtml;
+			row.appendChild(iconWrap);
+		}
 
 		const label = document.createElement('span');
 		label.className = 'custom-ctx-label';

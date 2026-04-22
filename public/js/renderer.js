@@ -1023,14 +1023,18 @@ function attachEventListeners() {
   });
 
   // Tagging modal close button
-  $('#btn-tagging-close').click(function () {
+  $('#btn-tagging-close').click(async function () {
     settings.hideTaggingModal();
+    await loadCategories();
+    await loadTagsList();
   });
 
   // Tagging modal overlay click to close
-  $('#tagging-modal').click(function (e) {
+  $('#tagging-modal').click(async function (e) {
     if (e.target === this) {
       settings.hideTaggingModal();
+      await loadCategories();
+      await loadTagsList();
     }
   });
 
@@ -1056,11 +1060,6 @@ function attachEventListeners() {
   // Category form save button
   $('#btn-cat-save').click(async function () {
     await settings.saveCategoryFromForm();
-  });
-
-  // Category form clear/new button
-  $('#btn-cat-clear').click(function () {
-    settings.clearCategoryForm();
   });
 
   // Category form delete button
@@ -1111,11 +1110,6 @@ function attachEventListeners() {
     await settings.saveTagFromForm();
   });
 
-  // Tag form clear/new button
-  $('#btn-tag-clear').click(function () {
-    settings.clearTagForm();
-  });
-
   // Tag form delete button
   $('#btn-tag-delete').click(async function () {
     await settings.deleteTagFromForm();
@@ -1124,11 +1118,6 @@ function attachEventListeners() {
   // Attribute form save button
   $('#btn-attr-save').click(async function () {
     await settings.saveAttributeFromForm();
-  });
-
-  // Attribute form clear/new button
-  $('#btn-attr-clear').click(function () {
-    settings.clearAttributeForm();
   });
 
   // Attribute form delete button

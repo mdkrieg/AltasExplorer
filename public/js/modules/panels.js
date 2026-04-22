@@ -3058,6 +3058,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 		window.electronAPI.getAttributesList()
 	]);
 	state.currentAttrDefinitions = Object.fromEntries((attributeDefs || []).map(attr => [attr.name, attr]));
+	const globalAttrNames = (attributeDefs || []).filter(attr => attr.global).map(attr => attr.name);
 	const hideDotDirectory = settings.hide_dot_directory || false;
 	const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
 	const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
@@ -3103,6 +3104,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 	}
 
 	const attrColSet = new Set();
+	// Always include global attributes
+	for (const name of globalAttrNames) attrColSet.add(name);
 	if (state.currentCategory && state.currentCategory.attributes) {
 		for (const attr of state.currentCategory.attributes) attrColSet.add(attr);
 	}
@@ -3119,6 +3122,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			if (category && category.attributes) {
 				for (const attr of category.attributes) attrColSet.add(attr);
 			}
+			// (global attrs already added above)
 		}
 
 		// Build display filename: show direct (non-inherited) display name prefix

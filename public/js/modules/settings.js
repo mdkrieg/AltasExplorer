@@ -169,8 +169,9 @@ export function switchTaggingTab(tabName) {
 				checkedValues.push($(this).val());
 			});
 			$container.empty();
-			if (attrList && attrList.length > 0) {
-				attrList.forEach(attr => {
+			const nonGlobalAttrs = (attrList || []).filter(attr => !attr.global);
+			if (nonGlobalAttrs.length > 0) {
+				nonGlobalAttrs.forEach(attr => {
 					const id = `cat-attr-cb-${attr.name.replace(/\s+/g, '-')}`;
 					$container.append(
 						`<label style="display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; cursor: pointer;">
@@ -494,6 +495,48 @@ function initializeColorPickers() {
 	});
 }
 
+/**
+ * Attaches mousedown+mouseup DOM handlers to a rendered w2ui grid container so
+ * that row selection works correctly even when the user drags slightly before
+ * releasing the mouse button (which prevents the native 'click' event and thus
+ * w2ui's onClick from firing).  Also enforces single-row selection.
+ *
+ * @param {string} gridName  - The w2ui grid name AND the id of the container element.
+ * @param {string} statusId  - ID of the status div to clear on selection change.
+ * @param {Function} onRecord - Called with the selected record after selection is committed.
+ */
+function attachGridRowSelection(gridName, statusId, onRecord) {
+	const container = document.getElementById(gridName);
+	if (!container) return;
+	let pendingRecid = null;
+
+	container.addEventListener('mousedown', function (e) {
+		const prefix = `grid_${gridName}_rec_`;
+		const row = e.target.closest(`tr[id^="${prefix}"]`);
+		if (!row) { pendingRecid = null; return; }
+		const raw = row.id.slice(prefix.length);
+		pendingRecid = raw === 'new' ? 'new' : parseInt(raw, 10);
+	}, true);
+
+	container.addEventListener('mouseup', function (e) {
+		const recid = pendingRecid;
+		pendingRecid = null;
+		if (recid === null || recid === undefined) return;
+		setTimeout(() => {
+			const grid = w2ui[gridName];
+			if (!grid) return;
+			const record = grid.records.find(r => r.recid === recid);
+			if (!record) return;
+			// Clear any previous validation status
+			clearFormStatus(null, statusId);
+			// Enforce single selection of the intended row
+			grid.selectNone();
+			grid.select(recid);
+			onRecord(record);
+		}, 0);
+	});
+}
+
 async function initializeCategoriesGrid() {
 	const gridName = 'categories-grid';
 
@@ -531,36 +574,57 @@ async function initializeCategoriesGrid() {
 		console.error('Error generating icons:', err);
 	}
 
+	// Persistent "(new)" sentinel row always at the end
+	records.push({
+		recid: 'new',
+		name: '(new)',
+		description: '',
+		bgColor: '',
+		textColor: '',
+		categoryName: null,
+		enableChecksum: false,
+		autoAssignCategory: '',
+		iconUrl: null,
+		attributes: [],
+		_isNewRow: true
+	});
+
 	w2ui[gridName] = new w2grid({
 		name: gridName,
 		show: { header: false, toolbar: false, footer: false },
 		columns: [
 			{
 				field: 'icon', text: '', size: '40px', resizable: false, sortable: false, render: record => {
+					if (record._isNewRow) return '';
 					if (record.iconUrl) {
 						return `<div style="width: 30px; height: 20px; display: inline-flex; align-items: center; justify-content: center;"><img src="${record.iconUrl}" style="width: 20px; height: 20px; object-fit: contain;"></div>`;
 					}
 					return `<div style="width: 30px; height: 20px; background: ${record.bgColor}; border: 1px solid ${record.textColor}; border-radius: 3px;"></div>`;
 				}
 			},
-			{ field: 'name', text: 'Name', size: '100px', resizable: true, sortable: true },
-			{ field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
+			{
+				field: 'name', text: 'Name', size: '100px', resizable: true, sortable: true,
+				render: record => record._isNewRow
+					? `<span style="color: #aaa; font-style: italic;">(new)</span>`
+					: (record.name || '')
+			},
+			{
+				field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true,
+				render: record => record._isNewRow ? '' : (record.description || '')
+			}
 		],
-		records,
-		onClick: function (event) {
-			event.onComplete = function () {
-				const selection = this.getSelection();
-				if (selection.length > 0) {
-					const record = this.records.find(row => row.recid === selection[0]);
-					if (record) {
-						populateCategoryForm(record);
-					}
-				}
-			};
-		}
+		records
 	});
 
 	w2ui[gridName].render('#categories-grid');
+	attachGridRowSelection('categories-grid', 'form-cat-status', record => {
+		if (record._isNewRow) clearCategoryForm();
+		else populateCategoryForm(record);
+	});
+
+	$('#btn-cat-grid-new').off('click.catGridNew').on('click.catGridNew', function () {
+		clearCategoryForm();
+	});
 }
 
 async function initializeCategoriesForm() {
@@ -568,8 +632,9 @@ async function initializeCategoriesForm() {
 		const attrList = await window.electronAPI.getAttributesList();
 		const $container = $('#form-cat-attributes');
 		$container.empty();
-		if (attrList && attrList.length > 0) {
-			attrList.forEach(attr => {
+		const nonGlobalAttrs = (attrList || []).filter(attr => !attr.global);
+		if (nonGlobalAttrs.length > 0) {
+			nonGlobalAttrs.forEach(attr => {
 				const id = `cat-attr-cb-${attr.name.replace(/\s+/g, '-')}`;
 				$container.append(
 					`<label style="display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; cursor: pointer;">
@@ -632,7 +697,12 @@ export function clearCategoryForm() {
 
 	const grid = w2ui['categories-grid'];
 	if (grid) {
-		grid.selectNone();
+		const newRow = grid.records.find(r => r._isNewRow);
+		if (newRow) {
+			grid.select(newRow.recid);
+		} else {
+			grid.selectNone();
+		}
 	}
 }
 
@@ -647,8 +717,11 @@ async function updateGridAfterCategorySave(updatedCategory, isNew = false, oldNa
 	try {
 		const iconUrl = await window.electronAPI.generateFolderIcon(updatedCategory.bgColor, updatedCategory.textColor);
 		if (isNew) {
-			const newRecid = Math.max(...grid.records.map(row => row.recid), -1) + 1;
-			grid.add({
+			// Extract the sentinel row, add the new record, then re-append sentinel
+			const sentinelIdx = grid.records.findIndex(r => r._isNewRow);
+			const sentinel = sentinelIdx >= 0 ? grid.records.splice(sentinelIdx, 1)[0] : null;
+			const newRecid = Math.max(...grid.records.map(row => row.recid).filter(id => typeof id === 'number'), -1) + 1;
+			grid.records.push({
 				recid: newRecid,
 				name: updatedCategory.name,
 				description: updatedCategory.description || '',
@@ -660,6 +733,8 @@ async function updateGridAfterCategorySave(updatedCategory, isNew = false, oldNa
 				iconUrl,
 				attributes: updatedCategory.attributes || []
 			});
+			if (sentinel) grid.records.push(sentinel);
+			grid.refresh();
 		} else {
 			const recordIndex = grid.records.findIndex(row => row.categoryName === oldName);
 			if (recordIndex >= 0) {
@@ -694,6 +769,20 @@ export async function saveCategoryFromForm() {
 		return;
 	}
 
+	// Duplicate name check
+	const grid = w2ui['categories-grid'];
+	if (grid) {
+		const duplicate = grid.records.find(r =>
+			!r._isNewRow &&
+			r.categoryName !== categoryFormState.editingName &&
+			r.name.toLowerCase() === name.toLowerCase()
+		);
+		if (duplicate) {
+			showFormError('form-cat-status', `A category named "${duplicate.name}" already exists.`, 'form-cat-name');
+			return;
+		}
+	}
+
 	try {
 		const selectedAttributes = [];
 		$('#form-cat-attributes').find('input[type="checkbox"]:checked').each(function () {
@@ -722,7 +811,15 @@ export async function saveCategoryFromForm() {
 		}
 
 		await updateGridAfterCategorySave(categoryData, isNew, oldName);
-		clearCategoryForm();
+
+		// Update editing state to the (possibly renamed) saved item and keep it selected
+		categoryFormState.editingName = categoryData.name;
+		const savedGrid = w2ui['categories-grid'];
+		if (savedGrid) {
+			const savedRecord = savedGrid.records.find(r => r.categoryName === categoryData.name);
+			if (savedRecord) savedGrid.select(savedRecord.recid);
+		}
+
 		showFormSuccess('form-cat-status', isNew ? 'Category created.' : 'Category updated.');
 	} catch (err) {
 		showFormError('form-cat-status', 'Error saving category: ' + err.message);
@@ -784,32 +881,71 @@ async function initializeAttributesGrid() {
 		options: Array.isArray(attr.options) ? attr.options.join(', ') : '',
 		copyable: Boolean(attr.copyable),
 		copyableLabel: attr.copyable ? 'Yes' : 'No',
-		appliesTo: attr.appliesTo || 'Both'
+		appliesTo: attr.appliesTo || 'Both',
+		global: Boolean(attr.global),
+		globalLabel: attr.global ? 'Yes' : 'No'
 	}));
+
+	// Persistent "(new)" sentinel row always at the end
+	records.push({
+		recid: 'new',
+		name: '(new)',
+		type: '',
+		description: '',
+		attrName: null,
+		default: '',
+		options: '',
+		copyable: false,
+		copyableLabel: '',
+		appliesTo: '',
+		global: false,
+		globalLabel: '',
+		_isNewRow: true
+	});
 
 	w2ui[gridName] = new w2grid({
 		name: gridName,
 		show: { header: false, toolbar: false, footer: false },
 		columns: [
-			{ field: 'name', text: 'Name', size: '120px', resizable: true, sortable: true },
-			{ field: 'type', text: 'Type', size: '80px', resizable: true, sortable: true },
-			{ field: 'appliesTo', text: 'Applies To', size: '80px', resizable: true, sortable: true },
-			{ field: 'copyableLabel', text: 'Copy', size: '60px', resizable: true, sortable: true },
-			{ field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
+			{
+				field: 'name', text: 'Name', size: '120px', resizable: true, sortable: true,
+				render: record => record._isNewRow
+					? `<span style="color: #aaa; font-style: italic;">(new)</span>`
+					: (record.name || '')
+			},
+			{
+				field: 'type', text: 'Type', size: '80px', resizable: true, sortable: true,
+				render: record => record._isNewRow ? '' : (record.type || '')
+			},
+			{
+				field: 'appliesTo', text: 'Applies To', size: '80px', resizable: true, sortable: true,
+				render: record => record._isNewRow ? '' : (record.appliesTo || '')
+			},
+			{
+				field: 'globalLabel', text: 'Global', size: '60px', resizable: true, sortable: true,
+				render: record => record._isNewRow ? '' : (record.globalLabel || '')
+			},
+			{
+				field: 'copyableLabel', text: 'Copy', size: '60px', resizable: true, sortable: true,
+				render: record => record._isNewRow ? '' : (record.copyableLabel || '')
+			},
+			{
+				field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true,
+				render: record => record._isNewRow ? '' : (record.description || '')
+			}
 		],
-		records,
-		onClick: function (event) {
-			event.onComplete = function () {
-				const selection = this.getSelection();
-				if (selection.length > 0) {
-					const record = this.records.find(row => row.recid === selection[0]);
-					if (record) populateAttributeForm(record);
-				}
-			};
-		}
+		records
 	});
 
 	w2ui[gridName].render('#attributes-grid');
+	attachGridRowSelection('attributes-grid', 'form-attr-status', record => {
+		if (record._isNewRow) clearAttributeForm();
+		else populateAttributeForm(record);
+	});
+
+	$('#btn-attr-grid-new').off('click.attrGridNew').on('click.attrGridNew', function () {
+		clearAttributeForm();
+	});
 }
 
 async function initializeAttributesForm() {
@@ -823,6 +959,7 @@ function populateAttributeForm(record) {
 	$('#form-attr-type').val(record.type || 'String');
 	$('#form-attr-copyable').val(record.copyable ? 'yes' : 'no');
 	$('#form-attr-applies-to').val(record.appliesTo || 'Both');
+	$('#form-attr-global').val(record.global ? 'yes' : 'no');
 	$('#form-attr-options-list').empty();
 	const options = record.options ? record.options.split(',').map(item => item.trim()).filter(Boolean) : [];
 	options.forEach(option => addAttrOption(option));
@@ -841,12 +978,20 @@ export function clearAttributeForm() {
 	$('#form-attr-type').val('String');
 	$('#form-attr-default').val('');
 	$('#form-attr-copyable').val('no');
-	$('#form-attr-applies-to').val('Both');
+	$('#form-attr-applies-to').val('Directory');
+	$('#form-attr-global').val('no');
 	$('#form-attr-options-list').empty();
 	updateAttrDefaultDropdown();
 	toggleAttrOptionsSection();
 	const grid = w2ui['attributes-grid'];
-	if (grid) grid.selectNone();
+	if (grid) {
+		const newRow = grid.records.find(r => r._isNewRow);
+		if (newRow) {
+			grid.select(newRow.recid);
+		} else {
+			grid.selectNone();
+		}
+	}
 }
 
 export function toggleAttrOptionsSection() {
@@ -910,6 +1055,7 @@ export async function saveAttributeFromForm() {
 	const type = $('#form-attr-type').val();
 	const copyable = $('#form-attr-copyable').val() === 'yes';
 	const appliesTo = $('#form-attr-applies-to').val() || 'Both';
+	const global = $('#form-attr-global').val() === 'yes';
 	let defaultVal;
 	const options = type === 'Selectable' ? getAttrOptionValues() : [];
 
@@ -924,7 +1070,22 @@ export async function saveAttributeFromForm() {
 		return;
 	}
 
-	const attrData = { name, description, type, default: defaultVal, options, copyable, appliesTo };
+	// Duplicate name check
+	const grid = w2ui['attributes-grid'];
+	if (grid) {
+		const duplicate = grid.records.find(r =>
+			!r._isNewRow &&
+			r.attrName !== attributeFormState.editingName &&
+			r.name.toLowerCase() === name.toLowerCase()
+		);
+		if (duplicate) {
+			showFormError('form-attr-status', `An attribute named "${duplicate.name}" already exists.`, 'form-attr-name');
+			return;
+		}
+	}
+
+	const isNew = !attributeFormState.editingName;
+	const attrData = { name, description, type, default: defaultVal, options, copyable, appliesTo, global };
 
 	try {
 		if (attributeFormState.editingName) {
@@ -933,9 +1094,18 @@ export async function saveAttributeFromForm() {
 			await window.electronAPI.saveAttribute(attrData);
 		}
 		await initializeAttributesGrid();
-		clearAttributeForm();
-		showFormSuccess('form-attr-status', attributeFormState.editingName ? 'Attribute updated.' : 'Attribute created.');
-		attributeFormState.editingName = null;
+
+		// Re-select and repopulate the saved attribute (grid was fully rebuilt)
+		const savedGrid = w2ui['attributes-grid'];
+		if (savedGrid) {
+			const savedRecord = savedGrid.records.find(r => r.attrName === attrData.name);
+			if (savedRecord) {
+				savedGrid.select(savedRecord.recid);
+				populateAttributeForm(savedRecord);
+			}
+		}
+		attributeFormState.editingName = attrData.name;
+		showFormSuccess('form-attr-status', isNew ? 'Attribute created.' : 'Attribute updated.');
 	} catch (err) {
 		showFormError('form-attr-status', 'Error saving attribute: ' + err.message);
 	}
@@ -997,36 +1167,54 @@ async function initializeTagsGrid() {
 		console.error('Error generating tag icons:', err);
 	}
 
+	// Persistent "(new)" sentinel row always at the end
+	records.push({
+		recid: 'new',
+		name: '(new)',
+		description: '',
+		bgColor: '',
+		textColor: '',
+		tagName: null,
+		iconUrl: null,
+		_isNewRow: true
+	});
+
 	w2ui[gridName] = new w2grid({
 		name: gridName,
 		show: { header: false, toolbar: false, footer: false },
 		columns: [
 			{
 				field: 'icon', text: '', size: '40px', resizable: false, sortable: false, render: record => {
+					if (record._isNewRow) return '';
 					if (record.iconUrl) {
 						return `<div style="width: 30px; height: 20px; display: inline-flex; align-items: center; justify-content: center;"><img src="${record.iconUrl}" style="width: 20px; height: 20px; object-fit: contain;"></div>`;
 					}
 					return `<div style="width: 30px; height: 20px; background: ${record.bgColor}; border: 1px solid ${record.textColor}; border-radius: 3px;"></div>`;
 				}
 			},
-			{ field: 'name', text: 'Name', size: '100px', resizable: true, sortable: true },
-			{ field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true }
+			{
+				field: 'name', text: 'Name', size: '100px', resizable: true, sortable: true,
+				render: record => record._isNewRow
+					? `<span style="color: #aaa; font-style: italic;">(new)</span>`
+					: (record.name || '')
+			},
+			{
+				field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true,
+				render: record => record._isNewRow ? '' : (record.description || '')
+			}
 		],
-		records,
-		onClick: function (event) {
-			event.onComplete = function () {
-				const selection = this.getSelection();
-				if (selection.length > 0) {
-					const record = this.records.find(row => row.recid === selection[0]);
-					if (record) {
-						populateTagForm(record);
-					}
-				}
-			};
-		}
+		records
 	});
 
 	w2ui[gridName].render('#tags-grid');
+	attachGridRowSelection('tags-grid', 'form-tag-status', record => {
+		if (record._isNewRow) clearTagForm();
+		else populateTagForm(record);
+	});
+
+	$('#btn-tag-grid-new').off('click.tagGridNew').on('click.tagGridNew', function () {
+		clearTagForm();
+	});
 }
 
 async function initializeTagsForm() {
@@ -1063,7 +1251,12 @@ export function clearTagForm() {
 	$('#form-tag-description').val('');
 	const grid = w2ui['tags-grid'];
 	if (grid) {
-		grid.selectNone();
+		const newRow = grid.records.find(r => r._isNewRow);
+		if (newRow) {
+			grid.select(newRow.recid);
+		} else {
+			grid.selectNone();
+		}
 	}
 }
 
@@ -1076,10 +1269,13 @@ async function updateGridAfterTagSave(updatedTag, isNew = false, oldName = null)
 
 	const grid = w2ui[gridName];
 	try {
-		const iconUrl = await window.electronAPI.generateFolderIcon(updatedTag.bgColor, updatedTag.textColor);
+		const iconUrl = await window.electronAPI.generateTagIcon(updatedTag.bgColor, updatedTag.textColor);
 		if (isNew) {
-			const newRecid = Math.max(...grid.records.map(row => row.recid), -1) + 1;
-			grid.add({
+			// Extract the sentinel row, add the new record, then re-append sentinel
+			const sentinelIdx = grid.records.findIndex(r => r._isNewRow);
+			const sentinel = sentinelIdx >= 0 ? grid.records.splice(sentinelIdx, 1)[0] : null;
+			const newRecid = Math.max(...grid.records.map(row => row.recid).filter(id => typeof id === 'number'), -1) + 1;
+			grid.records.push({
 				recid: newRecid,
 				name: updatedTag.name,
 				description: updatedTag.description || '',
@@ -1088,6 +1284,8 @@ async function updateGridAfterTagSave(updatedTag, isNew = false, oldName = null)
 				tagName: updatedTag.name,
 				iconUrl
 			});
+			if (sentinel) grid.records.push(sentinel);
+			grid.refresh();
 		} else {
 			const recordIndex = grid.records.findIndex(row => row.tagName === oldName);
 			if (recordIndex >= 0) {
@@ -1119,6 +1317,20 @@ export async function saveTagFromForm() {
 		return;
 	}
 
+	// Duplicate name check
+	const grid = w2ui['tags-grid'];
+	if (grid) {
+		const duplicate = grid.records.find(r =>
+			!r._isNewRow &&
+			r.tagName !== tagFormState.editingName &&
+			r.name.toLowerCase() === name.toLowerCase()
+		);
+		if (duplicate) {
+			showFormError('form-tag-status', `A tag named "${duplicate.name}" already exists.`, 'form-tag-name');
+			return;
+		}
+	}
+
 	try {
 		const tagData = {
 			name,
@@ -1138,7 +1350,15 @@ export async function saveTagFromForm() {
 		}
 
 		await updateGridAfterTagSave(tagData, isNew, oldName);
-		clearTagForm();
+
+		// Update editing state to the (possibly renamed) saved item and keep it selected
+		tagFormState.editingName = tagData.name;
+		const savedGrid = w2ui['tags-grid'];
+		if (savedGrid) {
+			const savedRecord = savedGrid.records.find(r => r.tagName === tagData.name);
+			if (savedRecord) savedGrid.select(savedRecord.recid);
+		}
+
 		showFormSuccess('form-tag-status', isNew ? 'Tag created.' : 'Tag updated.');
 	} catch (err) {
 		showFormError('form-tag-status', 'Error saving tag: ' + err.message);

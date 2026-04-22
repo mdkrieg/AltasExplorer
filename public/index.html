@@ -774,8 +774,9 @@
         <div id="tab-category" class="tagging-tab-content" style="display: flex; flex-direction: row; overflow: hidden; flex: 1;">
           <!-- Grid section (left) -->
           <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #ddd;">
-            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
-              Categories List
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px; display: flex; align-items: center;">
+              <span style="flex: 1;">Categories List</span>
+              <button id="btn-cat-grid-new" style="padding: 3px 8px; background: #2196F3; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: normal;">New</button>
             </div>
             <div id="categories-grid" style="flex: 1; overflow: hidden;"></div>
           </div>
@@ -834,10 +835,9 @@
               </form>
             </div>
             <div style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
+              <div id="form-cat-status" style="display: none; font-size: 11px;"></div>
               <button id="btn-cat-save" style="width: 100%; padding: 8px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save</button>
-              <button id="btn-cat-clear" style="width: 100%; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">New</button>
               <button id="btn-cat-delete" style="width: 100%; padding: 8px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Delete</button>
-              <div id="form-cat-status" style="display: none; font-size: 11px; margin-top: 4px;"></div>
             </div>
           </div>
         </div>
@@ -846,8 +846,9 @@
         <div id="tab-tag" class="tagging-tab-content" style="display: none; flex-direction: row; overflow: hidden; flex: 1;">
           <!-- Grid section (left) -->
           <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #ddd;">
-            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
-              Tags List
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px; display: flex; align-items: center;">
+              <span style="flex: 1;">Tags List</span>
+              <button id="btn-tag-grid-new" style="padding: 3px 8px; background: #2196F3; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: normal;">New</button>
             </div>
             <div id="tags-grid" style="flex: 1; overflow: hidden;"></div>
           </div>
@@ -881,10 +882,9 @@
               </form>
             </div>
             <div style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
+              <div id="form-tag-status" style="display: none; font-size: 11px;"></div>
               <button id="btn-tag-save" style="width: 100%; padding: 8px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save</button>
-              <button id="btn-tag-clear" style="width: 100%; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">New</button>
               <button id="btn-tag-delete" style="width: 100%; padding: 8px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Delete</button>
-              <div id="form-tag-status" style="display: none; font-size: 11px; margin-top: 4px;"></div>
             </div>
           </div>
         </div>
@@ -893,8 +893,9 @@
         <div id="tab-attribute" class="tagging-tab-content" style="display: none; flex-direction: row; overflow: hidden; flex: 1;">
           <!-- Grid section (left) -->
           <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #ddd;">
-            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
-              Attributes List
+            <div style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px; display: flex; align-items: center;">
+              <span style="flex: 1;">Attributes List</span>
+              <button id="btn-attr-grid-new" style="padding: 3px 8px; background: #2196F3; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: normal;">New</button>
             </div>
             <div id="attributes-grid" style="flex: 1; overflow: hidden;"></div>
           </div>
@@ -917,38 +918,47 @@
                   <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Description</label>
                   <input type="text" id="form-attr-description" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
                 </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Type</label>
-                  <select id="form-attr-type" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                    <option value="String">String � any text</option>
-                    <option value="Selectable">Selectable � choose from options</option>
-                    <option value="Numeric">Numeric � any number</option>
-                    <option value="Yes-No">Yes/No � boolean</option>
-                  </select>
+                <div style="display: flex; gap: 8px;">
+                  <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+                    <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Type</label>
+                    <select id="form-attr-type" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                      <option value="String">Text</option>
+                      <option value="Selectable">Options</option>
+                      <option value="Numeric">Numeric</option>
+                      <option value="Yes-No">Yes/No</option>
+                    </select>
+                  </div>
+                  <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+                    <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Default Value</label>
+                    <input type="text" id="form-attr-default" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;" placeholder="Leave blank for none">
+                    <select id="form-attr-default-select" style="display: none; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                      <option value="">(none)</option>
+                    </select>
+                  </div>
                 </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Default Value</label>
-                  <input type="text" id="form-attr-default" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;" placeholder="Leave blank for none">
-                  <select id="form-attr-default-select" style="display: none; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                    <option value="">(none)</option>
-                  </select>
-                </div>
-                <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Copyable</label>
-                  <select id="form-attr-copyable" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                    <option value="no">No</option>
-                    <option value="yes">Yes</option>
-                  </select>
-                  <span style="font-size: 10px; color: #888; margin-top: 2px;">Shows a copy-to-clipboard button in the grid and item properties view.</span>
+                <div style="display: flex; gap: 8px;">
+                  <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+                    <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Copyable</label>
+                    <select id="form-attr-copyable" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                      <option value="no">No</option>
+                      <option value="yes">Yes</option>
+                    </select>
+                  </div>
+                  <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+                    <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Global</label>
+                    <select id="form-attr-global" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                      <option value="no">No</option>
+                      <option value="yes">Yes</option>
+                    </select>
+                  </div>
                 </div>
                 <div style="display: flex; flex-direction: column;">
                   <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Applies To</label>
                   <select id="form-attr-applies-to" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                    <option value="Both">Both — directories and files</option>
-                    <option value="Directory">Directory — directory entries only</option>
-                    <option value="Files">Files — file entries only</option>
+                    <option value="Directory" selected>Directory only</option>
+                    <option value="File">File only</option>
+                    <option value="Both">Both Directory and Files</option>
                   </select>
-                  <span style="font-size: 10px; color: #888; margin-top: 2px;">Controls which row types show this attribute column in the grid.</span>
                 </div>
                 <div id="form-attr-options-section" style="display: none; flex-direction: column; gap: 6px;">
                   <label style="font-size: 11px; font-weight: bold;">Options</label>
@@ -961,10 +971,9 @@
               </form>
             </div>
             <div style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
+              <div id="form-attr-status" style="display: none; font-size: 11px;"></div>
               <button id="btn-attr-save" style="width: 100%; padding: 8px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Save</button>
-              <button id="btn-attr-clear" style="width: 100%; padding: 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">New</button>
               <button id="btn-attr-delete" style="width: 100%; padding: 8px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Delete</button>
-              <div id="form-attr-status" style="display: none; font-size: 11px; margin-top: 4px;"></div>
             </div>
           </div>
         </div>

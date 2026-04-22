@@ -32,6 +32,7 @@ Philosophy:
   [x] the parent (..) folder shows the incorrect styling, seeing current folder style instead of parent style
   [x] Not seeing the toolbar (no search or refresh) on the gallery view (should gallery view have a depth feature?)
 [ ] Still getting erroneous title bar when opening a new panel with Ctrl+T
+[ ] selectable list attrs need a clear option
 
 ### ROADMAP:
 [x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
@@ -89,6 +90,57 @@ Philosophy:
 [x] Filetype profiles (icon and editability)
 [x] exif data
 [ ] exif GPS data aggregated to map
+
+Label Manager
+[x] Fix the way the form sometimes ignores what I have clicked in the grid - figured out it is when the click drags a bit
+[x] Clicking a new item in the grid should clear any validation and styling in the form
+[x] Instead of a New button, have an item at the bottom that says (New) and to assist in selecting it add a button in the header that says +New and merely functions to select it
+[x] Categories once again not available immediately in the grid context menu after adding new
+[test] Add global attributes, with default entry for Description
+[x] Attribute type options show invalid character in dropdown menu
+[x] Attribute applies-to field make Directory the default, move Both to bottom of list
+
+Gallery View:
+[ ] Support coordinate organizing, like the old windows desktops
+[ ] Make the thumbnail size changeable and retentive per directory
+
+Grid View:
+[ ] Add browser option for keeping the meta-directories (./..) always at the top of the sort order regardless of sort (what about filter?)
+[ ] Looks like the sort order gets retained in the column header but may not represent the actual sort order of the view
+  [ ] I think it is time to make the sort order and column sizing retained in the db (see Saved Layouts for proposed UX plan)
+  [ ] (4) But first add some more robust method of sizing the columns, would like to add a scalable portion, min/max etc, maybe a percentile text-fit (ie, minimum width fits 90% of elements)
+[ ] Formatting nitpicks, that tiny bit of whitespace to the left of the grid, and the micro-shift when the path input is selected
+[ ] Make the column organizer context menu only appear on the header above the icons
+  [ ] Add a "Reorder columns" mode checkbox on the column organizer context menu
+[ ] Make the context menu click on the other columns offer a "Filter, Sort Asc, Sort Desc, Size (see pt 4 in this list)" Filter offers the same type of popover we have currently
+[ ] Make the filter popover less ugly
+
+Both Browser Views:
+[ ] Add Tagging button up top which opens a Tagging modal
+  [ ] Shows a badge with any pending auto-tagging rules on button
+  [ ] Shows summary of pending auto-tags (need some way to ignore per-file - should retain in db, no effect in notes, not offered on files with tags already, remove tag from ignored when adding to file)
+  [ ] Modal shows a summary of tags and files containing them, with ability to remove files from a tag (respecting notes file archival rule)
+  [ ] Modal offers the ability to add all items from grid (respecting filter)
+
+Saved Layouts:
+[ ] Add save button in the toolbar for saving layouts in the local directory, the button should offer a dropdown (check demos)/context menu on click with the following:
+  [ ] Save grid layout (columns and sort)
+  [ ] Save window layout here
+  [ ] Save window layout to...
+  [ ] Save window layout globally
+[ ] Double clicking ALY file opens layout
+
+General:
+[ ] All dropdowns for selecting category must have the customized folder icon next to them
+  [ ] Show sample icon when creating a category
+  [ ] Show in dropdown for category "Inherits" field
+[ ] When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
+
+Sidebar:
+[ ] make the icons "squish" when the sidebard is made small
+  
+Other crazy stuff:
+[ ] Make a servable version for hosting a demo on github pages (use source files as part virtual filesystem, plus some additional example things)
 
 Manipulation phase:
 * NOTE: Important here that changes made in the app don't trigger alerts (perhaps option to include?)

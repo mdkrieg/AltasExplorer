@@ -228,7 +228,7 @@ export function showFormSuccess(statusId, message) {
     status.textContent = message;
     status.style.color = '#388e3c';
     status.style.display = 'block';
-    setTimeout(() => { status.style.display = 'none'; }, 2500);
+    setTimeout(() => { status.style.display = 'none'; status.textContent = ''; }, 2500);
   }
 }
 
