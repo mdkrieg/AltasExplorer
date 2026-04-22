@@ -2789,6 +2789,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             mode: dbFile.mode ?? null,
             path: path.join(dirPath, dbFile.filename),
             changeState: 'moved',
+            isStateTransition: transitioned,
             orphan_id: orphanId,
             new_dir_id: newDirId,
             dir_id: dirId
@@ -2807,6 +2808,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             mode: dbFile.mode ?? null,
             path: path.join(dirPath, dbFile.filename),
             changeState: 'orphan',
+            isStateTransition: !!orphanResult.isNew,
             orphan_id: orphanId,
             new_dir_id: null,
             dir_id: dirId
@@ -2842,6 +2844,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             mode: null,
             path: childDir.dirname,
             changeState: 'moved',
+            isStateTransition: transitioned,
             dir_id: childDir.id,
             initials: childDir.initials || null,
             resolvedInitials: db.resolveDirectoryInitials(childDir.dirname).value,
@@ -2874,6 +2877,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             mode: null,
             path: childDir.dirname,
             changeState: 'orphan',
+            isStateTransition: !!orphanResult.isNew,
             dir_id: childDir.id,
             initials: childDir.initials || null,
             resolvedInitials: db.resolveDirectoryInitials(childDir.dirname).value,
@@ -2900,8 +2904,18 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
 
     entriesWithChanges.push(...orphanedEntries);
 
-    const changedFileEntries = entriesWithChanges.filter(entry => !entry.isDirectory && entry.changeState !== 'unchanged');
-    const changedDirEntries = entriesWithChanges.filter(entry => entry.isDirectory && entry.filename !== '.' && entry.changeState !== 'unchanged');
+    // For the "did this scan observe new activity?" tally, treat already-known
+    // orphan/moved entries as quiescent state — only count them when this scan
+    // actually observed a state transition (new orphan, or a moved file now
+    // located in a different directory). Otherwise every scan of a directory
+    // with a persistent orphan would report hasChanges=true forever.
+    const isQuiescentOrphan = (entry) =>
+      (entry.changeState === 'orphan' || entry.changeState === 'moved') &&
+      entry.isStateTransition === false;
+    const changedFileEntries = entriesWithChanges.filter(entry =>
+      !entry.isDirectory && entry.changeState !== 'unchanged' && !isQuiescentOrphan(entry));
+    const changedDirEntries = entriesWithChanges.filter(entry =>
+      entry.isDirectory && entry.filename !== '.' && entry.changeState !== 'unchanged' && !isQuiescentOrphan(entry));
     const hasChanges = changedFileEntries.length > 0 || changedDirEntries.length > 0;
     const currentObservation = recordDirectoryObservation(
       currentDirInfo.dir,
@@ -3346,7 +3360,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       mainWindow.webContents.send('todo-aggregates-changed');
     }
 
-    const changedEntries = entriesWithChanges.filter(e => e.changeState !== 'unchanged');
+    const changedEntries = entriesWithChanges.filter(e =>
+      e.changeState !== 'unchanged' && !isQuiescentOrphan(e));
 
     // Log if browsing to a new directory (manual navigation) or if there are actual changes
     if (isManualNavigation || hasChanges) {
