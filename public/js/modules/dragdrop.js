@@ -117,6 +117,20 @@ export function attachDragDropForPanel(panelId, { panelState, navigateToDirector
 		const items = buildPayloadItems(grid);
 		if (items.length === 0) { e.preventDefault(); return; }
 
+		// Cross-app drag OUT (Alt-modifier): bypass the HTML5 drag entirely and
+		// hand the operation to the OS via webContents.startDrag. Running both
+		// at once produces a hung drag that never delivers a drop on Windows.
+		if (e.altKey) {
+			e.preventDefault();
+			try {
+				const filePaths = items.map(it => it.path).filter(Boolean);
+				if (filePaths.length > 0 && window.electronAPI && typeof window.electronAPI.startExternalDrag === 'function') {
+					window.electronAPI.startExternalDrag(filePaths);
+				}
+			} catch (_) { /* non-fatal */ }
+			return;
+		}
+
 		e.dataTransfer.effectAllowed = 'copyMove';
 		_activeDragSourcePanelId = panelId;
 		try {
@@ -309,6 +323,18 @@ export function attachDragDropForGallery(panelId, { panelState, navigateToDirect
 
 		const items = buildGalleryPayloadItems(panelId, panelState);
 		if (items.length === 0) { e.preventDefault(); return; }
+
+		// Cross-app drag OUT (Alt-modifier): see grid handler above for rationale.
+		if (e.altKey) {
+			e.preventDefault();
+			try {
+				const filePaths = items.map(it => it.path).filter(Boolean);
+				if (filePaths.length > 0 && window.electronAPI && typeof window.electronAPI.startExternalDrag === 'function') {
+					window.electronAPI.startExternalDrag(filePaths);
+				}
+			} catch (_) { /* non-fatal */ }
+			return;
+		}
 
 		e.dataTransfer.effectAllowed = 'copyMove';
 		_activeDragSourcePanelId = panelId;
@@ -613,9 +639,47 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 		if (raw) payload = JSON.parse(raw);
 	} catch (_) { /* ignore */ }
 
+	// External (cross-app) drag-in: when there is no in-app payload but the
+	// browser's `dataTransfer.files` list is populated, treat each dropped OS
+	// file/folder as a copy-source. Older Electron exposed `File.path`
+	// directly; newer versions require `webUtils.getPathForFile()` which we
+	// surface through the preload bridge.
 	if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
-		// External drops are a later phase; ignore for now.
-		return;
+		const dtFiles = event.dataTransfer && event.dataTransfer.files;
+		const dtItems = event.dataTransfer && event.dataTransfer.items;
+		if (dtFiles && dtFiles.length > 0) {
+			// Map filename -> isDirectory using the DataTransferItemList entries
+			// (the only way to detect dropped folders without statting on disk).
+			const folderByName = new Map();
+			if (dtItems && dtItems.length > 0) {
+				for (let i = 0; i < dtItems.length; i++) {
+					try {
+						const it = dtItems[i];
+						if (!it || it.kind !== 'file') continue;
+						const entry = typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null;
+						if (entry && entry.name) folderByName.set(entry.name, !!entry.isDirectory);
+					} catch (_) { /* ignore */ }
+				}
+			}
+			const externalItems = [];
+			for (const f of Array.from(dtFiles)) {
+				let p = '';
+				try {
+					if (window.electronAPI && typeof window.electronAPI.getPathForFile === 'function') {
+						p = window.electronAPI.getPathForFile(f) || '';
+					}
+				} catch (_) { /* ignore */ }
+				if (!p && f && typeof f.path === 'string') p = f.path;
+				if (!p) continue;
+				const filename = f.name || (path.basename ? path.basename(p) : p);
+				const isFolder = folderByName.has(filename) ? folderByName.get(filename) : false;
+				externalItems.push({ path: p, filename, isFolder });
+			}
+			if (externalItems.length === 0) return;
+			payload = { sourcePanelId: null, items: externalItems, external: true };
+		} else {
+			return;
+		}
 	}
 
 	// Filter out ./.. just in case, and drop any item whose parent equals the
@@ -631,8 +695,10 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 		}
 	}
 
-	// Determine operation: move (default) or copy (Ctrl/Cmd).
-	const isCopy = !!(event.ctrlKey || event.metaKey);
+	// Determine operation: move (default) or copy (Ctrl/Cmd). External drops
+	// (from another application) always copy — moving files out of another
+	// app's folder without explicit consent would be surprising.
+	const isCopy = payload.external ? true : !!(event.ctrlKey || event.metaKey);
 
 	// Pre-flight collision check.
 	let collisions = [];
@@ -705,6 +771,52 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 			} catch (_) { /* non-fatal */ }
 		};
 		requestAnimationFrame(() => fade(0));
+	}
+
+	// Per-item confirmation: in every panel currently showing the destination
+	// directory, locate each freshly-landed file/folder, scroll it into view,
+	// and trigger the orange fade. Works for in-app and external drops alike.
+	if (succeededCount > 0) {
+		const landedPaths = result.succeeded
+			.map(s => s && s.targetPath)
+			.filter(Boolean);
+		const wantDir = path.resolve(targetDirPath);
+		const matchingPanels = Object.keys(panelState || {}).filter(id => {
+			const cp = panelState[id]?.currentPath;
+			return cp && path.resolve(cp) === wantDir;
+		});
+		const flashLanded = (attempt = 0) => {
+			let stillMissing = false;
+			for (const id of matchingPanels) {
+				let scrolledOne = false;
+				for (const p of landedPaths) {
+					// Try grid first, then gallery.
+					const row = findRowByPath(id, p);
+					if (row) {
+						if (!scrolledOne) {
+							try { row.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }); } catch (_) { /* ignore */ }
+							scrolledOne = true;
+						}
+						triggerDropFade(row, 'drop-target-folder');
+						continue;
+					}
+					const tile = findGalleryTileByPath(id, p, panelState);
+					if (tile) {
+						if (!scrolledOne) {
+							try { tile.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }); } catch (_) { /* ignore */ }
+							scrolledOne = true;
+						}
+						triggerDropFade(tile, 'drop-target-folder');
+						continue;
+					}
+					stillMissing = true;
+				}
+			}
+			if (stillMissing && attempt < 5) {
+				requestAnimationFrame(() => flashLanded(attempt + 1));
+			}
+		};
+		requestAnimationFrame(() => flashLanded(0));
 	}
 }
 

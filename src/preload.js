@@ -1,4 +1,4 @@
-﻿const { contextBridge, ipcRenderer } = require('electron');
+﻿const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 /**
  * Console Bridging
@@ -112,6 +112,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
   moveItems: (items, targetDirPath, onCollision) => ipcRenderer.invoke('move-items', { items, targetDirPath, onCollision }),
   copyItems: (items, targetDirPath, onCollision) => ipcRenderer.invoke('copy-items', { items, targetDirPath, onCollision }),
   checkCollisions: (items, targetDirPath) => ipcRenderer.invoke('check-collisions', { items, targetDirPath }),
+
+  /**
+   * Cross-app drag IN: turn a renderer-side `File` object (from
+   * `event.dataTransfer.files`) into the absolute filesystem path. Newer
+   * Electron versions removed the legacy `File.path` property; use
+   * `webUtils.getPathForFile()` instead.
+   */
+  getPathForFile: (file) => {
+    try { return webUtils && typeof webUtils.getPathForFile === 'function' ? webUtils.getPathForFile(file) : (file && file.path) || ''; }
+    catch (_) { return (file && file.path) || ''; }
+  },
+
+  /**
+   * Cross-app drag OUT: ask the main process to start an OS-level drag of the
+   * given absolute paths so they can be dropped on Explorer/Finder/etc.
+   *
+   * Uses synchronous IPC (`sendSync`) because `webContents.startDrag` MUST be
+   * called while the renderer's dragstart tick is still alive. Any async hop
+   * (`invoke`, `send`) lets the event loop turn first and the native drag
+   * source is torn down, which on Windows crashes the main process with
+   * "crashpad: not connected".
+   */
+  startExternalDrag: (filePaths) => {
+    try { return ipcRenderer.sendSync('start-external-drag', { filePaths }); }
+    catch (_) { return { ok: false }; }
+  },
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),

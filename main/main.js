@@ -2205,6 +2205,49 @@ ipcMain.handle('copy-items', async (event, { items, targetDirPath, onCollision }
 });
 
 /**
+ * Cross-app drag OUT: start an OS-level drag from the renderer's window so the
+ * given absolute paths can be dropped into another application (Explorer,
+ * Finder, etc.). Must be invoked from a `dragstart` event handler in the
+ * renderer (Electron requires the call to happen during the drag-start tick).
+ */
+ipcMain.on('start-external-drag', (event, { filePaths } = {}) => {
+  // Synchronous IPC: the renderer is blocked in sendSync until we call
+  // event.returnValue, so webContents.startDrag runs inside the dragstart
+  // tick. Any failure path still must set returnValue to unblock.
+  const reply = (payload) => { try { event.returnValue = payload; } catch (_) { /* ignore */ } };
+  if (!Array.isArray(filePaths) || filePaths.length === 0) { reply({ ok: false, reason: 'no-files' }); return; }
+  // Windows crashes startDrag if any supplied path does not exist on disk, so
+  // filter aggressively before handing anything to the native layer.
+  const validPaths = filePaths.filter(p => {
+    if (typeof p !== 'string' || p.length === 0) return false;
+    try { return fsSync.existsSync(p); } catch (_) { return false; }
+  });
+  if (validPaths.length === 0) { reply({ ok: false, reason: 'no-valid-paths' }); return; }
+  try {
+    // Windows webContents.startDrag crashes ("crashpad not connected") when
+    // the icon is empty or sub-16px. Load a real bundled PNG and resize it to
+    // a safe size so the OS always has something valid to render.
+    const iconPath = path.join(__dirname, '..', 'assets', 'icons', 'file-block-alt.png');
+    let icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) {
+      icon = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'icons', 'folder.png'));
+    }
+    if (!icon.isEmpty()) {
+      icon = icon.resize({ width: 32, height: 32 });
+    }
+    event.sender.startDrag({
+      file: validPaths[0],
+      files: validPaths,
+      icon
+    });
+    reply({ ok: true });
+  } catch (err) {
+    logger.error(`start-external-drag failed: ${err && err.message}`);
+    reply({ ok: false, reason: err && err.message });
+  }
+});
+
+/**
  * Custom Actions: Delete an action by id
  */
 ipcMain.handle('delete-custom-action', (event, id) => {

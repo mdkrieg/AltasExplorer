@@ -15,11 +15,13 @@
 
 // Mock the 'fs' module and logger
 jest.mock('fs');
+jest.mock('fs/promises');
 jest.mock('../logger');
 
 // Now require the service we want to test
 // It will use our mocked 'fs' instead of the real one
 const fs = require('fs');
+const fsp = require('fs/promises');
 const FilesystemService = require('../filesystem');
 
 /**
@@ -271,3 +273,188 @@ describe('FilesystemService - getStats()', () => {
     expect(result).toBeNull();
   });
 });
+
+/**
+ * TEST SUITE 4: isAncestorOrSelf()
+ *
+ * Pure function used to block dropping a folder into itself or a descendant
+ * during drag-and-drop. Case-insensitive prefix check that respects path
+ * separators on both Windows and POSIX.
+ */
+describe('FilesystemService - isAncestorOrSelf()', () => {
+  it('should return true when paths are equal', () => {
+    expect(FilesystemService.isAncestorOrSelf('/foo/bar', '/foo/bar')).toBe(true);
+  });
+
+  it('should return true for a descendant', () => {
+    expect(FilesystemService.isAncestorOrSelf('/foo', '/foo/bar/baz')).toBe(true);
+  });
+
+  it('should be case-insensitive', () => {
+    expect(FilesystemService.isAncestorOrSelf('/Foo', '/foo/bar')).toBe(true);
+  });
+
+  it('should not treat a sibling as a descendant', () => {
+    expect(FilesystemService.isAncestorOrSelf('/foo/bar', '/foo/baz')).toBe(false);
+  });
+
+  it('should not treat a name-prefix match as a descendant', () => {
+    // "/foo/bar" must NOT be considered an ancestor of "/foo/barbecue".
+    expect(FilesystemService.isAncestorOrSelf('/foo/bar', '/foo/barbecue')).toBe(false);
+  });
+
+  it('should return false for empty inputs', () => {
+    expect(FilesystemService.isAncestorOrSelf('', '/foo')).toBe(false);
+    expect(FilesystemService.isAncestorOrSelf('/foo', '')).toBe(false);
+    expect(FilesystemService.isAncestorOrSelf(null, '/foo')).toBe(false);
+  });
+});
+
+/**
+ * TEST SUITE 5: pathExists()
+ *
+ * Async helper that returns true iff the path is reachable via stat. Used by
+ * the drag-and-drop pipeline to detect destination collisions.
+ */
+describe('FilesystemService - pathExists()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should return true when stat succeeds', async () => {
+    fsp.stat.mockResolvedValue({ ino: 1 });
+    await expect(FilesystemService.pathExists('/exists')).resolves.toBe(true);
+  });
+
+  it('should return false when stat throws', async () => {
+    fsp.stat.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    await expect(FilesystemService.pathExists('/missing')).resolves.toBe(false);
+  });
+
+  it('should return false for falsy paths', async () => {
+    await expect(FilesystemService.pathExists('')).resolves.toBe(false);
+    await expect(FilesystemService.pathExists(null)).resolves.toBe(false);
+  });
+});
+
+/**
+ * TEST SUITE 6: pickNonCollidingPath()
+ *
+ * Generates "name (2).ext" style replacements when the destination already
+ * has the same filename. Verifies that it preserves the extension and stops
+ * at the first available index.
+ */
+describe('FilesystemService - pickNonCollidingPath()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should append " (2)" before the extension on the first collision', async () => {
+    const path = require('path');
+    // Only "/dir/foo (2).txt" is free.
+    fsp.stat.mockImplementation(async (p) => {
+      if (p === path.join('/dir', 'foo (2).txt')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return { ino: 1 };
+    });
+    const result = await FilesystemService.pickNonCollidingPath('/dir', 'foo.txt');
+    expect(result).toBe(path.join('/dir', 'foo (2).txt'));
+  });
+
+  it('should keep incrementing until it finds a free name', async () => {
+    const path = require('path');
+    fsp.stat.mockImplementation(async (p) => {
+      // Collide for indices 2, 3; (4) is free.
+      if (p.endsWith(' (4).txt')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return { ino: 1 };
+    });
+    const result = await FilesystemService.pickNonCollidingPath('/dir', 'foo.txt');
+    expect(result).toBe(path.join('/dir', 'foo (4).txt'));
+  });
+
+  it('should append " (2)" at the end when there is no extension (folders)', async () => {
+    const path = require('path');
+    fsp.stat.mockImplementation(async (p) => {
+      if (p === path.join('/dir', 'myfolder (2)')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return { ino: 1 };
+    });
+    const result = await FilesystemService.pickNonCollidingPath('/dir', 'myfolder');
+    expect(result).toBe(path.join('/dir', 'myfolder (2)'));
+  });
+});
+
+/**
+ * TEST SUITE 7: moveItem()
+ *
+ * Verifies the rename path and the EXDEV cross-drive fallback (copy + remove).
+ */
+describe('FilesystemService - moveItem()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should reject when source or target is missing', async () => {
+    await expect(FilesystemService.moveItem('', '/dst')).rejects.toThrow(/source and target/);
+    await expect(FilesystemService.moveItem('/src', '')).rejects.toThrow(/source and target/);
+  });
+
+  it('should call fs.rename on the same drive', async () => {
+    fsp.rename.mockResolvedValue(undefined);
+    await FilesystemService.moveItem('/src/a.txt', '/dst/a.txt');
+    expect(fsp.rename).toHaveBeenCalledWith('/src/a.txt', '/dst/a.txt');
+    expect(fsp.cp).not.toHaveBeenCalled();
+  });
+
+  it('should fall back to copy + remove on EXDEV', async () => {
+    fsp.rename.mockRejectedValue(Object.assign(new Error('cross-device link'), { code: 'EXDEV' }));
+    fsp.cp.mockResolvedValue(undefined);
+    fsp.rm.mockResolvedValue(undefined);
+
+    await FilesystemService.moveItem('/srcDrive/folder', '/dstDrive/folder');
+
+    expect(fsp.cp).toHaveBeenCalledWith(
+      '/srcDrive/folder',
+      '/dstDrive/folder',
+      expect.objectContaining({ recursive: true })
+    );
+    expect(fsp.rm).toHaveBeenCalledWith('/srcDrive/folder', expect.objectContaining({ recursive: true, force: true }));
+  });
+
+  it('should re-throw non-EXDEV errors without copying', async () => {
+    fsp.rename.mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(FilesystemService.moveItem('/a', '/b')).rejects.toThrow(/EACCES/);
+    expect(fsp.cp).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * TEST SUITE 8: copyItem()
+ *
+ * Recursive copy used by Ctrl-drag and (later) external drag-in.
+ */
+describe('FilesystemService - copyItem()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should reject when source or target is missing', async () => {
+    await expect(FilesystemService.copyItem('', '/dst')).rejects.toThrow(/source and target/);
+    await expect(FilesystemService.copyItem('/src', '')).rejects.toThrow(/source and target/);
+  });
+
+  it('should delegate to fs.cp with recursive + errorOnExist', async () => {
+    fsp.cp.mockResolvedValue(undefined);
+    await FilesystemService.copyItem('/src/folder', '/dst/folder');
+    expect(fsp.cp).toHaveBeenCalledWith(
+      '/src/folder',
+      '/dst/folder',
+      expect.objectContaining({ recursive: true, errorOnExist: true, force: false })
+    );
+  });
+
+  it('should propagate fs.cp errors', async () => {
+    fsp.cp.mockRejectedValue(new Error('disk full'));
+    await expect(FilesystemService.copyItem('/a', '/b')).rejects.toThrow(/disk full/);
+  });
+});
+
+

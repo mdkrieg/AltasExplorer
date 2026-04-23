@@ -33,6 +33,7 @@ Philosophy:
   [x] Not seeing the toolbar (no search or refresh) on the gallery view (should gallery view have a depth feature?)
 [ ] Still getting erroneous title bar when opening a new panel with Ctrl+T
 [ ] selectable list attrs need a clear option
+[ ] drag-out of app not working (need to hold Alt but still does nothing)
 
 ### ROADMAP:
 [x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
