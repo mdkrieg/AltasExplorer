@@ -212,6 +212,7 @@ export async function initializeBrowserSettingsForm() {
 	const hideDotDirectory = settings.hide_dot_directory || false;
 	const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
 	const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
+	const pinMetaDirs = settings.pin_meta_dirs || false;
 	const recordHeight = settings.record_height || 30;
 	const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
 	const backgroundRefreshInterval = settings.background_refresh_interval || 30;
@@ -224,6 +225,7 @@ export async function initializeBrowserSettingsForm() {
 	$('#browser-hide-dot-directory').prop('checked', hideDotDirectory);
 	$('#browser-hide-dot-dot-directory').prop('checked', hideDotDotDirectory);
 	$('#browser-show-folder-name-with-dot-entries').prop('checked', showFolderNameWithDotEntries);
+	$('#browser-pin-meta-dirs').prop('checked', pinMetaDirs);
 	$('#browser-record-height').val(recordHeight);
 	$('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
 	$('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
@@ -271,6 +273,7 @@ async function saveBrowserSettings() {
 		const hideDotDirectory = $('#browser-hide-dot-directory').is(':checked');
 		const hideDotDotDirectory = $('#browser-hide-dot-dot-directory').is(':checked');
 		const showFolderNameWithDotEntries = $('#browser-show-folder-name-with-dot-entries').is(':checked');
+		const pinMetaDirs = $('#browser-pin-meta-dirs').is(':checked');
 		let recordHeight = parseInt($('#browser-record-height').val() || '30');
 		const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
 		let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
@@ -313,6 +316,7 @@ async function saveBrowserSettings() {
 		settings.background_refresh_enabled = backgroundRefreshEnabled;
 		settings.background_refresh_interval = backgroundRefreshInterval;
 		settings.show_folder_name_with_dot_entries = showFolderNameWithDotEntries;
+		settings.pin_meta_dirs = pinMetaDirs;
 		settings.checksum_max_concurrent = checksumMaxConcurrent;
 		settings.title_default_format = titleDefaultFormat;
 		settings.title_display_name_format = titleDisplayNameFormat;

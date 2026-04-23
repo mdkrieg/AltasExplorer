@@ -284,6 +284,9 @@ class CategoryService {
       if (typeof settings.show_folder_name_with_dot_entries === 'undefined') {
         settings.show_folder_name_with_dot_entries = false;
       }
+      if (typeof settings.pin_meta_dirs === 'undefined') {
+        settings.pin_meta_dirs = false;
+      }
       if (typeof settings.record_height === 'undefined') {
         settings.record_height = 30;
       }
@@ -328,6 +331,7 @@ class CategoryService {
         hide_dot_directory: false,
         hide_dot_dot_directory: false,
         show_folder_name_with_dot_entries: false,
+        pin_meta_dirs: false,
         record_height: 30,
         background_refresh_enabled: false,
         background_refresh_interval: 30,

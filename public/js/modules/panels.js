@@ -2641,9 +2641,15 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			await populateFileGrid(entries, category, panelId);
 		}
 
-		// Apply per-directory saved grid layout (columns, sort) for grid views
+		// Apply per-directory saved grid layout (columns, sort) for grid views.
+		// Session layout (in-memory, from this run) takes priority over the DB layout.
 		if (!isGallery && depth === 0) {
-			await applyDirGridLayoutIfExists(panelId, normalizedPath);
+			const sessionLayout = (panelState[panelId].sessionDirLayouts || {})[normalizedPath];
+			if (sessionLayout) {
+				applySessionDirLayout(panelId, sessionLayout);
+			} else {
+				await applyDirGridLayoutIfExists(panelId, normalizedPath);
+			}
 		}
 
 		if (panelState[panelId].toolbarSearch) {
@@ -2988,6 +2994,27 @@ async function initializeGridForPanel(panelId) {
 				refreshFilterHeaderButtons(panelId);
 			};
 		},
+		onSort: function (event) {
+			const grid = this;
+			const previousOnComplete = event.onComplete;
+			event.onComplete = () => {
+				if (typeof previousOnComplete === 'function') {
+					previousOnComplete.call(grid, event);
+				}
+				repositionMetaDirs(grid, panelId);
+				snapshotSessionDirLayout(panelId);
+			};
+		},
+		onColumnResize: function (event) {
+			const grid = this;
+			const previousOnComplete = event.onComplete;
+			event.onComplete = () => {
+				if (typeof previousOnComplete === 'function') {
+					previousOnComplete.call(grid, event);
+				}
+				snapshotSessionDirLayout(panelId);
+			};
+		},
 		onChange: function (event) {
 			// event.detail has `column` (index), not `field` — derive field from column index
 			const colIndex = event.detail?.column;
@@ -3032,11 +3059,30 @@ async function initializeGridForPanel(panelId) {
 			};
 		},
 		onDelete: async function(edata) {
-			if (!edata.detail.force) return; // force=false: let confirm dialog show normally
-			edata.preventDefault(); // cancel default grid removal; we handle it manually
 			const grid = this;
 			const selected = grid.getSelection();
-			const records = selected.map(recid => grid.records.find(r => r.recid === recid)).filter(Boolean);
+			const allRecords = selected.map(recid => grid.records.find(r => r.recid === recid)).filter(Boolean);
+
+			// Strip meta-directory entries (./ and ../) — they must never be deleted
+			const records = allRecords.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..');
+
+			if (!edata.detail.force) {
+				// Pre-confirm phase: if only meta-dirs were selected, suppress the dialog entirely
+				if (records.length === 0) {
+					edata.preventDefault();
+					return;
+				}
+				// Narrow the selection before the confirm dialog appears
+				if (records.length !== allRecords.length) {
+					grid.selectNone();
+					grid.select(...records.map(r => r.recid));
+				}
+				return; // let w2ui show the confirm dialog for the filtered selection
+			}
+
+			edata.preventDefault(); // cancel default grid removal; we handle it manually
+			if (records.length === 0) return;
+
 			const items = records
 				.filter(r => r.path)
 				.map(r => ({ path: r.path, inode: r.inode, dir_id: r.dir_id, isFolder: !!r.isFolder }));
@@ -3091,6 +3137,36 @@ async function initializeGridForPanel(panelId) {
 	applyColumnOverrides(panelId);
 }
 
+/**
+ * After a localSort(), move isMetaDir records to the top (asc) or bottom (desc)
+ * of grid.records when pin_meta_dirs is enabled. Callers must call grid.refresh()
+ * themselves if needed (onSort onComplete does not require an extra refresh).
+ */
+function repositionMetaDirs(grid, panelId) {
+	if (!panelState[panelId]?.pinMetaDirs) return;
+	if (!grid.sortData || grid.sortData.length === 0) return;
+	const metaRecs = grid.records.filter(r => r.isMetaDir);
+	if (metaRecs.length === 0) return;
+	const otherRecs = grid.records.filter(r => !r.isMetaDir);
+	const direction = grid.sortData[0].direction;
+	grid.records = direction === 'asc' ? [...metaRecs, ...otherRecs] : [...otherRecs, ...metaRecs];
+}
+
+/**
+ * Snapshot the current grid sort + column state into the session-level per-directory
+ * layout cache so it can be restored when the user navigates back to this directory.
+ */
+function snapshotSessionDirLayout(panelId) {
+	const state = panelState[panelId];
+	if (!state || !state.currentPath || !state.w2uiGrid) return;
+	const grid = state.w2uiGrid;
+	if (!state.sessionDirLayouts) state.sessionDirLayouts = {};
+	state.sessionDirLayouts[state.currentPath] = {
+		sortData: grid.sortData ? grid.sortData.map(s => ({ ...s })) : [],
+		columns: grid.columns.map(c => ({ field: c.field, size: c.size, hidden: !!c.hidden }))
+	};
+}
+
 async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {
 	const state = panelState[panelId];
 	const [settings, tagDefs, attributeDefs] = await Promise.all([
@@ -3103,6 +3179,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 	const hideDotDirectory = settings.hide_dot_directory || false;
 	const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
 	const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
+	const pinMetaDirs = settings.pin_meta_dirs || false;
+	state.pinMetaDirs = pinMetaDirs;
 	const currentFolderName = state.currentPath.split(/[\\\/]/).filter(p => p).pop() || state.currentPath;
 
 	let filteredEntries = entries;
@@ -3205,6 +3283,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			tagsRaw: folder.tags || null,
 			tagsText: getTagFilterText(folder.tags || null),
 			isFolder: true,
+			isMetaDir: folder.filename === '.' || folder.filename === '..',
 			path: folder.path,
 			changeState: folder.changeState,
 			inode: folder.inode,
@@ -5807,6 +5886,7 @@ export async function applyLayoutState(layoutData) {
 				if (grid) {
 					grid.sortData = panelData.sortData;
 					grid.localSort();
+					repositionMetaDirs(grid, panelId);
 					grid.refresh();
 				}
 			}
@@ -6026,6 +6106,31 @@ export function closeSaveLayoutGlobalModal() {
 	if (modal) modal.style.display = 'none';
 }
 
+/**
+ * Apply the in-memory session layout (sort + column sizes) for a directory.
+ * Used when navigating back to a directory visited earlier this session.
+ */
+function applySessionDirLayout(panelId, layout) {
+	const grid = panelState[panelId]?.w2uiGrid;
+	if (!grid) return;
+
+	if (layout.columns && layout.columns.length > 0) {
+		const currentFields = new Set(grid.columns.map(c => c.field));
+		const validColumns = layout.columns.filter(c => currentFields.has(c.field));
+		if (validColumns.length > 0) {
+			panelState[panelId].columnOverrides = validColumns;
+			applyColumnOverrides(panelId);
+		}
+	}
+
+	if (layout.sortData && layout.sortData.length > 0) {
+		grid.sortData = layout.sortData;
+		grid.localSort();
+		repositionMetaDirs(grid, panelId);
+		grid.refresh();
+	}
+}
+
 export async function applyDirGridLayoutIfExists(panelId, dirPath) {
 	const result = await window.electronAPI.getDirGridLayout(dirPath);
 	if (!result.success || !result.layout) return;
@@ -6046,6 +6151,7 @@ export async function applyDirGridLayoutIfExists(panelId, dirPath) {
 	if (sortData && sortData.length > 0) {
 		grid.sortData = sortData;
 		grid.localSort();
+		repositionMetaDirs(grid, panelId);
 		grid.refresh();
 	}
 }
