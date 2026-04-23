@@ -28,6 +28,13 @@ const ROW_SELECTOR = '.w2ui-grid-records tr:not(.w2ui-empty-record), .w2ui-grid-
 // counter that tracks enter/leave pairs gives us flicker-free highlighting.
 const enterCounters = new WeakMap();
 
+// The panel id that initiated the current drag (set on dragstart, cleared on
+// dragend). Lets drop-target handlers suppress same-panel background highlight
+// since dragging-within-the-same-panel is a no-op the user shouldn't be
+// invited to do. Reading this from dataTransfer during dragenter/dragover is
+// blocked by the browser, so we stash it here.
+let _activeDragSourcePanelId = null;
+
 // We install a single capturing mousedown listener on the document that kills
 // w2ui's drag-to-select-range (marquee) gesture so plain mouse drag is
 // exclusively for HTML5 drag-and-drop. Click and Shift/Ctrl multi-select use
@@ -111,6 +118,7 @@ export function attachDragDropForPanel(panelId, { panelState, navigateToDirector
 		if (items.length === 0) { e.preventDefault(); return; }
 
 		e.dataTransfer.effectAllowed = 'copyMove';
+		_activeDragSourcePanelId = panelId;
 		try {
 			e.dataTransfer.setData(PAYLOAD_MIME, JSON.stringify({ sourcePanelId: panelId, items }));
 			// Populate text/uri-list so external apps can at least see paths.
@@ -133,6 +141,7 @@ export function attachDragDropForPanel(panelId, { panelState, navigateToDirector
 	$grid.off('dragend.aedd').on('dragend.aedd', ROW_SELECTOR, function () {
 		$grid.find('tr.dragging-source').removeClass('dragging-source');
 		clearDropHighlights($panel);
+		_activeDragSourcePanelId = null;
 	});
 
 	// ---- Drop target: folder rows + ".." row ----
@@ -196,6 +205,7 @@ export function attachDragDropForPanel(panelId, { panelState, navigateToDirector
 		const targetDir = panelState[panelId]?.currentPath;
 		if (!targetDir) return;
 		e.preventDefault();
+		if (_activeDragSourcePanelId === panelId) return; // same-panel: no bg highlight
 		bumpEnterCounter($grid[0]);
 		$grid[0].classList.add('drop-target-panel');
 	}, false);
@@ -234,6 +244,196 @@ export function attachDragDropForPanel(panelId, { panelState, navigateToDirector
 			const targetDir = panelState[panelId]?.currentPath;
 			if (!targetDir) return;
 			e.preventDefault();
+			if (_activeDragSourcePanelId === panelId) return; // same-panel: no bg highlight
+			bumpEnterCounter(headerEl);
+			headerEl.classList.add('drop-target-panel');
+		}, false);
+		headerEl.addEventListener('dragleave', () => {
+			if (decrementEnterCounter(headerEl) <= 0) {
+				headerEl.classList.remove('drop-target-panel');
+			}
+		}, false);
+		headerEl.addEventListener('drop', async (e) => {
+			const targetDir = panelState[panelId]?.currentPath;
+			if (!targetDir) return;
+			e.preventDefault();
+			headerEl.classList.remove('drop-target-panel');
+			enterCounters.delete(headerEl);
+			await handleDrop(e, targetDir, panelId, {
+				panelState,
+				navigateToDirectory,
+				dropContext: { kind: 'panel-header', panelId, element: headerEl }
+			});
+		}, false);
+	}
+}
+
+/**
+ * Public entry point: attach drag-source and drop-target listeners to a
+ * panel rendered in gallery (tile) mode. Mirrors {@link attachDragDropForPanel}
+ * but operates on `.gallery-item` tiles inside `.panel-gallery`.
+ *
+ * Safe to call repeatedly; listeners are namespaced/cleared before rebinding.
+ *
+ * @param {number|string} panelId
+ * @param {object} deps
+ * @param {object} deps.panelState
+ * @param {(path: string, panelId: number|string, addToHistory?: boolean) => Promise<any>} deps.navigateToDirectory
+ */
+export function attachDragDropForGallery(panelId, { panelState, navigateToDirectory }) {
+	const $panel = jQuery(`#panel-${panelId}`);
+	if ($panel.length === 0) return;
+	const $gallery = $panel.find('.panel-gallery');
+	if ($gallery.length === 0 || !$gallery[0]) return;
+	const galleryEl = $gallery[0];
+	const $header = $panel.find('.panel-header');
+
+	// Mark every tile draggable (re-rendered every populateGalleryView call).
+	$gallery.find('.gallery-item').attr('draggable', 'true');
+
+	// ---- Drag source: gallery items ----
+	$gallery.off('dragstart.aedd').on('dragstart.aedd', '.gallery-item', function (ev) {
+		const e = ev.originalEvent || ev;
+		const record = galleryRecordFromEl(this, panelId, panelState);
+		if (!record) { e.preventDefault(); return; }
+		if (record.filenameRaw === '.' || record.filenameRaw === '..') { e.preventDefault(); return; }
+
+		const state = panelState[panelId];
+		if (!state) { e.preventDefault(); return; }
+		state.gallerySelectedRecids = state.gallerySelectedRecids || new Set();
+		if (!state.gallerySelectedRecids.has(record.recid)) {
+			state.gallerySelectedRecids = new Set([record.recid]);
+			$gallery.find('.gallery-item').removeClass('gallery-item-selected');
+			this.classList.add('gallery-item-selected');
+		}
+
+		const items = buildGalleryPayloadItems(panelId, panelState);
+		if (items.length === 0) { e.preventDefault(); return; }
+
+		e.dataTransfer.effectAllowed = 'copyMove';
+		_activeDragSourcePanelId = panelId;
+		try {
+			e.dataTransfer.setData(PAYLOAD_MIME, JSON.stringify({ sourcePanelId: panelId, items }));
+			e.dataTransfer.setData('text/uri-list', items.map(it => fileUri(it.path)).join('\r\n'));
+			e.dataTransfer.setData('text/plain', items.map(it => it.path).join('\n'));
+		} catch (_) { /* ignore */ }
+
+		const sourceRecids = new Set(items.map(it => String(it.recid)));
+		$gallery.find('.gallery-item').each(function () {
+			const r = galleryRecordFromEl(this, panelId, panelState);
+			if (r && sourceRecids.has(String(r.recid))) this.classList.add('dragging-source');
+		});
+	});
+
+	$gallery.off('dragend.aedd').on('dragend.aedd', '.gallery-item', function () {
+		$gallery.find('.gallery-item.dragging-source').removeClass('dragging-source');
+		$gallery.find('.drop-target-folder').removeClass('drop-target-folder');
+		galleryEl.classList.remove('drop-target-panel');
+		_activeDragSourcePanelId = null;
+	});
+
+	// ---- Drop target: folder tiles ----
+	$gallery.off('dragover.aedd dragenter.aedd dragleave.aedd drop.aedd');
+
+	$gallery.on('dragover.aedd', '.gallery-item', function (ev) {
+		const target = resolveGalleryDropTarget(this, panelId, panelState);
+		if (!target) return;
+		const e = ev.originalEvent || ev;
+		e.preventDefault();
+		e.stopPropagation();
+		setDropEffect(e);
+	});
+
+	$gallery.on('dragenter.aedd', '.gallery-item', function (ev) {
+		const target = resolveGalleryDropTarget(this, panelId, panelState);
+		if (!target) return;
+		const e = ev.originalEvent || ev;
+		e.preventDefault();
+		e.stopPropagation();
+		bumpEnterCounter(this);
+		this.classList.add('drop-target-folder');
+	});
+
+	$gallery.on('dragleave.aedd', '.gallery-item', function () {
+		if (decrementEnterCounter(this) <= 0) {
+			this.classList.remove('drop-target-folder');
+		}
+	});
+
+	$gallery.on('drop.aedd', '.gallery-item', async function (ev) {
+		const target = resolveGalleryDropTarget(this, panelId, panelState);
+		if (!target) return;
+		const e = ev.originalEvent || ev;
+		e.preventDefault();
+		e.stopPropagation();
+		this.classList.remove('drop-target-folder');
+		enterCounters.delete(this);
+		await handleDrop(e, target.path, panelId, {
+			panelState,
+			navigateToDirectory,
+			dropContext: { kind: 'gallery-tile', panelId, targetPath: target.path }
+		});
+	});
+
+	// ---- Drop target: empty area of gallery (falls back to currentPath) ----
+	galleryEl.addEventListener('dragover', (e) => {
+		const tile = e.target.closest && e.target.closest('.gallery-item');
+		if (tile && resolveGalleryDropTarget(tile, panelId, panelState)) return;
+		const targetDir = panelState[panelId]?.currentPath;
+		if (!targetDir) return;
+		e.preventDefault();
+		setDropEffect(e);
+	}, false);
+
+	galleryEl.addEventListener('dragenter', (e) => {
+		const tile = e.target.closest && e.target.closest('.gallery-item');
+		if (tile && resolveGalleryDropTarget(tile, panelId, panelState)) return;
+		const targetDir = panelState[panelId]?.currentPath;
+		if (!targetDir) return;
+		e.preventDefault();
+		if (_activeDragSourcePanelId === panelId) return; // same-panel: no bg highlight
+		bumpEnterCounter(galleryEl);
+		galleryEl.classList.add('drop-target-panel');
+	}, false);
+
+	galleryEl.addEventListener('dragleave', () => {
+		if (decrementEnterCounter(galleryEl) <= 0) {
+			galleryEl.classList.remove('drop-target-panel');
+		}
+	}, false);
+
+	galleryEl.addEventListener('drop', async (e) => {
+		const tile = e.target.closest && e.target.closest('.gallery-item');
+		if (tile && resolveGalleryDropTarget(tile, panelId, panelState)) return;
+		const targetDir = panelState[panelId]?.currentPath;
+		if (!targetDir) return;
+		e.preventDefault();
+		galleryEl.classList.remove('drop-target-panel');
+		enterCounters.delete(galleryEl);
+		await handleDrop(e, targetDir, panelId, {
+			panelState,
+			navigateToDirectory,
+			dropContext: { kind: 'panel-grid', panelId, element: galleryEl }
+		});
+	}, false);
+
+	// ---- Drop target: panel header / path bar (also flashes panel-grid bg) ----
+	if ($header.length && $header[0]) {
+		const headerEl = $header[0];
+		// Header listeners may already be installed by attachDragDropForPanel
+		// when the panel toggled out of grid mode -- our listeners are
+		// idempotent because we always preventDefault and add the same class.
+		headerEl.addEventListener('dragover', (e) => {
+			const targetDir = panelState[panelId]?.currentPath;
+			if (!targetDir) return;
+			e.preventDefault();
+			setDropEffect(e);
+		}, false);
+		headerEl.addEventListener('dragenter', (e) => {
+			const targetDir = panelState[panelId]?.currentPath;
+			if (!targetDir) return;
+			e.preventDefault();
+			if (_activeDragSourcePanelId === panelId) return; // same-panel: no bg highlight
 			bumpEnterCounter(headerEl);
 			headerEl.classList.add('drop-target-panel');
 		}, false);
@@ -495,6 +695,10 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 					const row = findRowByPath(dropContext.panelId, dropContext.targetPath);
 					if (row) { triggerDropFade(row, 'drop-target-folder'); return; }
 					if (attempt < 5) { requestAnimationFrame(() => fade(attempt + 1)); }
+				} else if (dropContext.kind === 'gallery-tile') {
+					const tile = findGalleryTileByPath(dropContext.panelId, dropContext.targetPath, panelState);
+					if (tile) { triggerDropFade(tile, 'drop-target-folder'); return; }
+					if (attempt < 5) { requestAnimationFrame(() => fade(attempt + 1)); }
 				} else if (dropContext.element && document.body.contains(dropContext.element)) {
 					triggerDropFade(dropContext.element, 'drop-target-panel');
 				}
@@ -526,6 +730,68 @@ function findRowByPath(panelId, fullPath) {
 	return document.getElementById(`grid_${gridName}_rec_${rec.recid}`)
 		|| document.querySelector(`#grid_${gridName}_frec_${rec.recid}`)
 		|| null;
+}
+
+/**
+ * Find the live `.gallery-item` tile in a panel whose record path matches the
+ * given absolute path. Used after a refresh to flash the destination tile.
+ */
+function findGalleryTileByPath(panelId, fullPath, panelState) {
+	const want = path.resolve(fullPath);
+	const records = panelState?.[panelId]?.galleryRecords || [];
+	if (records.length === 0) return null;
+	let rec = null;
+	for (const r of records) {
+		if (r && r.path && path.resolve(r.path) === want) { rec = r; break; }
+	}
+	if (!rec) return null;
+	return document.querySelector(`#panel-${panelId} .panel-gallery .gallery-item[data-recid="${rec.recid}"]`)
+		|| null;
+}
+
+function galleryRecordFromEl(el, panelId, panelState) {
+	if (!el) return null;
+	const recid = parseInt(el.getAttribute('data-recid'), 10);
+	if (!Number.isFinite(recid)) return null;
+	const records = panelState?.[panelId]?.galleryRecords || [];
+	return records.find(r => r.recid === recid) || null;
+}
+
+function buildGalleryPayloadItems(panelId, panelState) {
+	const state = panelState?.[panelId];
+	if (!state) return [];
+	const records = state.galleryRecords || [];
+	const sel = state.gallerySelectedRecids || new Set();
+	return records
+		.filter(r => sel.has(r.recid))
+		.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..')
+		.filter(r => r.path)
+		.map(r => ({
+			recid: r.recid,
+			path: r.path,
+			inode: r.inode,
+			dir_id: r.dir_id,
+			isFolder: !!r.isFolder,
+			filename: r.filenameRaw || r.filename
+		}));
+}
+
+/**
+ * Decide whether a gallery tile is a legitimate drop target. Returns the
+ * target directory path to drop into, or null if the tile is a file (invalid).
+ */
+function resolveGalleryDropTarget(tileEl, panelId, panelState) {
+	const record = galleryRecordFromEl(tileEl, panelId, panelState);
+	if (!record) return null;
+	if (record.filenameRaw === '..') {
+		const current = panelState[panelId]?.currentPath;
+		if (!current) return null;
+		const parent = parentPath(current);
+		return parent ? { path: parent, record } : null;
+	}
+	if (record.filenameRaw === '.' || !record.isFolder) return null;
+	if (!record.path) return null;
+	return { path: record.path, record };
 }
 
 // Lightweight `path.resolve` replacement for the renderer (Node's path isn't

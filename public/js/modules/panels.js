@@ -6,7 +6,7 @@
 import * as sidebar from './sidebar.js';
 import * as utils from './utils.js';
 import * as terminal from './terminal.js';
-import { attachDragDropForPanel } from './dragdrop.js';
+import { attachDragDropForPanel, attachDragDropForGallery } from './dragdrop.js';
 import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
@@ -3548,6 +3548,11 @@ async function populateGalleryView(entries, currentDirCategory, panelId = active
 	state.gallerySelectedRecids = new Set();
 
 	renderGallery(panelId, tagDefs);
+	try {
+		attachDragDropForGallery(panelId, { panelState, navigateToDirectory });
+	} catch (err) {
+		console.warn('attachDragDropForGallery failed for panel', panelId, err);
+	}
 }
 
 function renderGallery(panelId, tagDefs) {
@@ -3613,33 +3618,101 @@ function renderGallery(panelId, tagDefs) {
 	}
 
 	// Bind gallery events
-	$gallery.off('click.gallery dblclick.gallery contextmenu.gallery');
+	$gallery.off('click.gallery dblclick.gallery contextmenu.gallery keydown.gallery mousedown.gallery');
+
+	// Make the gallery container focusable so it can receive keyboard events
+	// (Shift+Arrow multi-select). tabindex=-1 keeps it out of tab order but
+	// allows programmatic focus.
+	if ($gallery.attr('tabindex') == null) $gallery.attr('tabindex', '-1');
+
+	$gallery.on('mousedown.gallery', '.gallery-item', function () {
+		// Focus the gallery so subsequent arrow keys are received here
+		// instead of bubbling to other handlers.
+		try { $gallery[0].focus({ preventScroll: true }); } catch (_) { $gallery[0].focus(); }
+	});
 
 	$gallery.on('click.gallery', '.gallery-item', function (e) {
 		setActivePanelId(panelId);
 		gridFocusedPanelId = panelId;
 		const recid = parseInt($(this).data('recid'), 10);
-		const record = (state.galleryRecords || []).find(r => r.recid === recid);
+		const records = state.galleryRecords || [];
+		const record = records.find(r => r.recid === recid);
 		if (!record) return;
+		state.gallerySelectedRecids = state.gallerySelectedRecids || new Set();
 
-		if (e.ctrlKey || e.metaKey) {
+		if (e.shiftKey && state.galleryAnchorRecid != null) {
+			state.gallerySelectedRecids = new Set(galleryRecidsBetween(records, state.galleryAnchorRecid, recid));
+			state.galleryFocusRecid = recid;
+		} else if (e.ctrlKey || e.metaKey) {
 			if (state.gallerySelectedRecids.has(recid)) {
 				state.gallerySelectedRecids.delete(recid);
 			} else {
 				state.gallerySelectedRecids.add(recid);
 			}
+			state.galleryAnchorRecid = recid;
+			state.galleryFocusRecid = recid;
 		} else {
 			state.gallerySelectedRecids = new Set([recid]);
+			state.galleryAnchorRecid = recid;
+			state.galleryFocusRecid = recid;
 		}
 
-		// Update selection visuals
-		$gallery.find('.gallery-item').removeClass('gallery-item-selected');
-		state.gallerySelectedRecids.forEach(id => {
-			$gallery.find(`.gallery-item[data-recid="${id}"]`).addClass('gallery-item-selected');
-		});
-
+		refreshGallerySelectionVisuals($gallery, state);
 		if (getPanelViewType(panelId) !== 'properties') {
 			updateSelectedItemFromRecord(record, panelId);
+		}
+	});
+
+	$gallery.on('keydown.gallery', function (e) {
+		if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+		const records = state.galleryRecords || [];
+		if (records.length === 0) return;
+		state.gallerySelectedRecids = state.gallerySelectedRecids || new Set();
+		// Pick a starting focus if none yet -- prefer the existing single
+		// selection, else the first selected item, else the first record.
+		if (state.galleryFocusRecid == null) {
+			state.galleryFocusRecid = state.gallerySelectedRecids.size > 0
+				? [...state.gallerySelectedRecids][0]
+				: records[0].recid;
+		}
+		if (state.galleryAnchorRecid == null) state.galleryAnchorRecid = state.galleryFocusRecid;
+
+		let nextRecid = state.galleryFocusRecid;
+		if (e.key === 'ArrowLeft') {
+			nextRecid = neighborRecidLinear(records, state.galleryFocusRecid, -1);
+		} else if (e.key === 'ArrowRight') {
+			nextRecid = neighborRecidLinear(records, state.galleryFocusRecid, +1);
+		} else if (e.key === 'ArrowUp') {
+			nextRecid = neighborRecidGeometric($gallery, state.galleryFocusRecid, 'up') || state.galleryFocusRecid;
+		} else if (e.key === 'ArrowDown') {
+			nextRecid = neighborRecidGeometric($gallery, state.galleryFocusRecid, 'down') || state.galleryFocusRecid;
+		} else if (e.key === 'Home') {
+			nextRecid = records[0].recid;
+		} else if (e.key === 'End') {
+			nextRecid = records[records.length - 1].recid;
+		}
+		if (nextRecid == null) return;
+		e.preventDefault();
+		e.stopPropagation();
+
+		if (e.shiftKey) {
+			state.gallerySelectedRecids = new Set(galleryRecidsBetween(records, state.galleryAnchorRecid, nextRecid));
+		} else {
+			state.gallerySelectedRecids = new Set([nextRecid]);
+			state.galleryAnchorRecid = nextRecid;
+		}
+		state.galleryFocusRecid = nextRecid;
+		refreshGallerySelectionVisuals($gallery, state);
+
+		// Keep the focused tile in view.
+		const focusedTile = $gallery.find(`.gallery-item[data-recid="${nextRecid}"]`)[0];
+		if (focusedTile && typeof focusedTile.scrollIntoView === 'function') {
+			focusedTile.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+		}
+
+		const focusedRecord = records.find(r => r.recid === nextRecid);
+		if (focusedRecord && getPanelViewType(panelId) !== 'properties') {
+			updateSelectedItemFromRecord(focusedRecord, panelId);
 		}
 	});
 
@@ -3669,6 +3742,66 @@ function renderGallery(panelId, tagDefs) {
 		const menuItems = await generateW2UIContextMenu(selectedRecords, visiblePanels);
 		showCustomContextMenu(menuItems, e.clientX, e.clientY, panelId);
 	});
+}
+
+// ---- Gallery selection helpers ----
+
+function refreshGallerySelectionVisuals($gallery, state) {
+	const sel = state.gallerySelectedRecids || new Set();
+	$gallery.find('.gallery-item').each(function () {
+		const rid = parseInt(this.getAttribute('data-recid'), 10);
+		this.classList.toggle('gallery-item-selected', sel.has(rid));
+	});
+}
+
+function galleryRecidsBetween(records, anchorRecid, focusRecid) {
+	const ia = records.findIndex(r => r.recid === anchorRecid);
+	const ib = records.findIndex(r => r.recid === focusRecid);
+	if (ia < 0 || ib < 0) return [focusRecid].filter(v => v != null);
+	const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
+	return records.slice(lo, hi + 1).map(r => r.recid);
+}
+
+function neighborRecidLinear(records, currentRecid, delta) {
+	const idx = records.findIndex(r => r.recid === currentRecid);
+	if (idx < 0) return records[0]?.recid ?? null;
+	const next = Math.max(0, Math.min(records.length - 1, idx + delta));
+	return records[next]?.recid ?? null;
+}
+
+/**
+ * Find the recid of the tile visually above/below the current one in a
+ * wrapped flex/grid layout. Picks the candidate in the next row whose
+ * horizontal center is closest to the current tile's center.
+ */
+function neighborRecidGeometric($gallery, currentRecid, direction) {
+	const tiles = $gallery.find('.gallery-item').toArray();
+	const cur = tiles.find(t => parseInt(t.getAttribute('data-recid'), 10) === currentRecid);
+	if (!cur) return null;
+	const curRect = cur.getBoundingClientRect();
+	const curMidX = curRect.left + curRect.width / 2;
+	const sameRowEpsilon = Math.max(2, curRect.height * 0.25);
+	let best = null;
+	let bestDx = Infinity;
+	let bestDy = Infinity;
+	for (const t of tiles) {
+		if (t === cur) continue;
+		const r = t.getBoundingClientRect();
+		const dy = (r.top + r.height / 2) - (curRect.top + curRect.height / 2);
+		if (direction === 'up' && dy >= -sameRowEpsilon) continue;
+		if (direction === 'down' && dy <= sameRowEpsilon) continue;
+		const absDy = Math.abs(dy);
+		const dx = Math.abs((r.left + r.width / 2) - curMidX);
+		// Prefer the nearest row first, then nearest column within that row.
+		if (absDy < bestDy - 1) {
+			best = t; bestDy = absDy; bestDx = dx;
+		} else if (Math.abs(absDy - bestDy) <= 1 && dx < bestDx) {
+			best = t; bestDy = absDy; bestDx = dx;
+		}
+	}
+	if (!best) return null;
+	const rid = parseInt(best.getAttribute('data-recid'), 10);
+	return Number.isFinite(rid) ? rid : null;
 }
 
 function getAttrEditableConfig(attrDefinition) {
