@@ -56,6 +56,8 @@ class DatabaseService {
         checksumValue TEXT,
         checksumStatus TEXT,
         tags TEXT,
+        original_path TEXT,
+        staged_at INTEGER,
         FOREIGN KEY (dir_id) REFERENCES dirs(id),
         UNIQUE(inode, dir_id)
       );
@@ -105,16 +107,6 @@ class DatabaseService {
         FOREIGN KEY (parent_dir_id) REFERENCES dirs(id),
         FOREIGN KEY (dir_id) REFERENCES dirs(id),
         FOREIGN KEY (new_dir_id) REFERENCES dirs(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS trash_staging (
-        file_id INTEGER PRIMARY KEY,
-        original_dir_id INTEGER NOT NULL,
-        original_filename TEXT NOT NULL,
-        original_path TEXT NOT NULL,
-        staged_at INTEGER NOT NULL,
-        FOREIGN KEY (file_id) REFERENCES files(id),
-        FOREIGN KEY (original_dir_id) REFERENCES dirs(id)
       );
 
       CREATE TABLE IF NOT EXISTS alerts (
@@ -297,6 +289,46 @@ class DatabaseService {
     }
     if (!dirColNames.has('display_name_force')) {
       this.db.exec('ALTER TABLE dirs ADD COLUMN display_name_force INTEGER NOT NULL DEFAULT 0');
+    }
+
+    // Tombstone migrations: dirs and files get a deleted_at timestamp instead
+    // of being physically deleted. This keeps history/alert FK references valid
+    // and enables the virtual ?trash view.
+    if (!dirColNames.has('deleted_at')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN deleted_at INTEGER');
+    }
+    const fileColNames = new Set(this.db.prepare('PRAGMA table_info(files)').all().map(c => c.name));
+    if (!fileColNames.has('deleted_at')) {
+      this.db.exec('ALTER TABLE files ADD COLUMN deleted_at INTEGER');
+    }
+
+    // Migration: replace trash_staging table with inline columns on files.
+    // original_path stores the absolute path at deletion time (needed for trash view display).
+    // staged_at is set during the deletion window so crash recovery can finalize or roll back.
+    if (!fileColNames.has('original_path')) {
+      this.db.exec('ALTER TABLE files ADD COLUMN original_path TEXT');
+    }
+    if (!fileColNames.has('staged_at')) {
+      this.db.exec('ALTER TABLE files ADD COLUMN staged_at INTEGER');
+    }
+    // If trash_staging still exists (pre-migration DB), copy its data into files and drop it.
+    const hasStagingTable = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='trash_staging'"
+    ).get();
+    if (hasStagingTable) {
+      this.db.exec(`
+        UPDATE files
+        SET original_path = (SELECT original_path FROM trash_staging WHERE file_id = files.id),
+            staged_at     = (SELECT staged_at     FROM trash_staging WHERE file_id = files.id)
+        WHERE id IN (SELECT file_id FROM trash_staging);
+      `);
+      // Restore dir_id from the sentinel back to the original directory
+      this.db.exec(`
+        UPDATE files
+        SET dir_id = (SELECT original_dir_id FROM trash_staging WHERE file_id = files.id)
+        WHERE id IN (SELECT file_id FROM trash_staging);
+      `);
+      this.db.exec('DROP TABLE trash_staging');
     }
   }
 
@@ -615,7 +647,7 @@ class DatabaseService {
    */
   getFilesByDirId(dir_id) {
     const stmt = this.db.prepare(`
-      SELECT * FROM files WHERE dir_id = ?
+      SELECT * FROM files WHERE dir_id = ? AND deleted_at IS NULL
     `);
     return stmt.all(dir_id);
   }
@@ -641,7 +673,7 @@ class DatabaseService {
   }
 
   getDirectoryChildren(parentDirId) {
-    return this.db.prepare('SELECT * FROM dirs WHERE parent_id = ? ORDER BY dirname ASC').all(parentDirId);
+    return this.db.prepare('SELECT * FROM dirs WHERE parent_id = ? AND deleted_at IS NULL ORDER BY dirname ASC').all(parentDirId);
   }
 
   /**
@@ -732,34 +764,53 @@ class DatabaseService {
 
   // ---------- Trash staging (user-initiated deletions) ----------
   //
-  // Files pending in-app deletion are re-parented to a sentinel "trash" dir so
-  // background scans never see them in their original dir (no orphan race) and
-  // crash recovery can finalize or roll back based on filesystem truth.
+  // Files pending in-app deletion are tombstoned in-place using the deleted_at
+  // column. The original path is stored on the files row itself (original_path)
+  // so the trash view can display it without a separate table. staged_at marks
+  // the window between "trashItem started" and "deletion finalised" so crash
+  // recovery can roll back or complete the operation on next startup.
 
-  static TRASH_DIRNAME = '__atlasexplorer_trash__';
-
-  getTrashDirId() {
-    if (this._trashDirIdCache) return this._trashDirIdCache;
-    const existing = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(DatabaseService.TRASH_DIRNAME);
-    if (existing) {
-      this._trashDirIdCache = existing.id;
-      return existing.id;
-    }
-    const result = this.db.prepare(`
-      INSERT INTO dirs (dirname, inode, parent_id, category, category_force)
-      VALUES (?, ?, NULL, 'Default', 0)
-    `).run(DatabaseService.TRASH_DIRNAME, '__trash__');
-    this._trashDirIdCache = result.lastInsertRowid;
-    return this._trashDirIdCache;
+  /**
+   * Tombstone a directory row: set deleted_at on the dirs row and all files
+   * within it, clean up derived orphan/dir-orphan records (whose FK targets
+   * are the dirs row). All history/alert rows that reference this dir_id are
+   * left intact — the dirs row itself is kept as a tombstone so those FK
+   * references remain valid forever.
+   *
+   * Does NOT recursively tombstone child dirs — the scanner will detect them
+   * as orphaned on the next pass (their parent's dirs row now has deleted_at
+   * set so getDirectoryChildren will exclude it; they remain undeleted and
+   * will be flagged as dir orphans if also missing from the filesystem).
+   */
+  tombstoneDirectoryRow(dirId, deletedAt = Date.now()) {
+    const tombstone = this.db.transaction((id, ts) => {
+      this.db.prepare('UPDATE dirs SET deleted_at = ? WHERE id = ?').run(ts, id);
+      this.db.prepare('UPDATE files SET deleted_at = ? WHERE dir_id = ? AND deleted_at IS NULL').run(ts, id);
+      // Remove derived orphan rows — these point at the deleted dir and would
+      // cause FK-constraint errors or stale orphan view entries.
+      this.db.prepare('DELETE FROM orphans WHERE dir_id = ?').run(id);
+      this.db.prepare('DELETE FROM dir_orphans WHERE parent_dir_id = ? OR dir_id = ?').run(id, id);
+      this.db.prepare('DELETE FROM todo_notes_files WHERE dir_id = ?').run(id);
+    });
+    tombstone(dirId, deletedAt);
   }
 
   /**
-   * Move a file row into the trash sentinel dir and record rollback info.
-   * Atomic (transaction). Returns the staging record so callers can log or
-   * trigger reconciliation later.
+   * @deprecated Use tombstoneDirectoryRow. Left as an alias so any stale
+   * callers outside this session don't crash. Will be removed in a future
+   * cleanup pass.
+   */
+  purgeDirectoryRow(dirId) {
+    this.tombstoneDirectoryRow(dirId);
+  }
+
+  /**
+   * Stage a file for deletion: record the original path on the files row and
+   * set staged_at to mark the in-progress window for crash recovery.
+   * dir_id is NOT moved — it stays at the original directory.
+   * Returns { file_id, filename } with the same shape as the old implementation.
    */
   stageFileForDeletion(inode, original_dir_id, original_path) {
-    const trashDirId = this.getTrashDirId();
     const stage = this.db.transaction((inodeIn, origDirId, origPath) => {
       const fileRow = this.db.prepare(
         'SELECT id, filename FROM files WHERE inode = ? AND dir_id = ?'
@@ -767,54 +818,54 @@ class DatabaseService {
       if (!fileRow) {
         throw new Error(`File row not found for inode=${inodeIn} dir_id=${origDirId}`);
       }
-      this.db.prepare(`
-        INSERT OR REPLACE INTO trash_staging (file_id, original_dir_id, original_filename, original_path, staged_at)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(fileRow.id, origDirId, fileRow.filename, origPath, Date.now());
-      this.db.prepare('UPDATE files SET dir_id = ? WHERE id = ?').run(trashDirId, fileRow.id);
+      this.db.prepare(
+        'UPDATE files SET original_path = ?, staged_at = ? WHERE id = ?'
+      ).run(origPath, Date.now(), fileRow.id);
       return { file_id: fileRow.id, filename: fileRow.filename };
     });
     return stage(inode, original_dir_id, original_path);
   }
 
   /**
-   * Revert a staged deletion: move the file row back to its original dir and
-   * remove the staging record. Used when shell.trashItem fails.
+   * Revert a staged deletion: clear staged_at and original_path.
+   * Used when shell.trashItem fails after staging.
+   * Returns { reverted: true } always (no sentinel dir to restore).
    */
   rollbackFileDeletion(file_id) {
-    const revert = this.db.transaction((fileIdIn) => {
-      const staging = this.db.prepare('SELECT original_dir_id FROM trash_staging WHERE file_id = ?').get(fileIdIn);
-      if (!staging) return { reverted: false };
-      this.db.prepare('UPDATE files SET dir_id = ? WHERE id = ?').run(staging.original_dir_id, fileIdIn);
-      this.db.prepare('DELETE FROM trash_staging WHERE file_id = ?').run(fileIdIn);
-      return { reverted: true, original_dir_id: staging.original_dir_id };
-    });
-    return revert(file_id);
+    this.db.prepare(
+      'UPDATE files SET staged_at = NULL, original_path = NULL WHERE id = ?'
+    ).run(file_id);
+    return { reverted: true };
   }
 
   /**
-   * Finalize a staged deletion: delete the files row and the staging record.
-   * The file_history audit entry is written by the caller so it can include
-   * caller-specific metadata (source, etc.).
+   * Finalize a staged deletion: set deleted_at and clear staged_at.
+   * original_path is kept permanently for trash view display.
+   * The file_history audit entry is written by the caller.
    */
-  finalizeFileDeletion(file_id) {
-    const finalize = this.db.transaction((fileIdIn) => {
-      this.db.prepare('DELETE FROM files WHERE id = ?').run(fileIdIn);
-      this.db.prepare('DELETE FROM trash_staging WHERE file_id = ?').run(fileIdIn);
-    });
-    finalize(file_id);
+  finalizeFileDeletion(file_id, deletedAt = Date.now()) {
+    this.db.prepare(
+      'UPDATE files SET deleted_at = ?, staged_at = NULL WHERE id = ?'
+    ).run(deletedAt, file_id);
   }
 
   /**
-   * List files staged for deletion, joined with filesystem path for startup
-   * reconciliation after a crash.
+   * List files currently staged for deletion (staged_at IS NOT NULL, not yet
+   * tombstoned). Used at startup to finalize or roll back any in-flight
+   * deletions from a previous crash.
+   * Returns the same property names as the old trash_staging-based query so
+   * the reconciliation code in main.js needs no changes.
    */
   getPendingDeletions() {
     return this.db.prepare(`
-      SELECT ts.file_id, ts.original_dir_id, ts.original_filename, ts.original_path, ts.staged_at,
-             f.inode
-      FROM trash_staging ts
-      JOIN files f ON f.id = ts.file_id
+      SELECT id          AS file_id,
+             inode,
+             dir_id      AS original_dir_id,
+             filename    AS original_filename,
+             original_path,
+             staged_at
+      FROM files
+      WHERE staged_at IS NOT NULL AND deleted_at IS NULL
     `).all();
   }
 
@@ -1305,14 +1356,13 @@ class DatabaseService {
    * @returns {object|null} File record if found, null otherwise
    */
   findInodeInOtherDirectories(inode, exclude_dir_id) {
-    const trashDirId = this.getTrashDirId();
     const stmt = this.db.prepare(`
       SELECT f.*, d.id as dir_id_match FROM files f
       JOIN dirs d ON f.dir_id = d.id
-      WHERE f.inode = ? AND f.dir_id != ? AND f.dir_id != ?
+      WHERE f.inode = ? AND f.dir_id != ? AND f.deleted_at IS NULL
       LIMIT 1
     `);
-    return stmt.get(inode, exclude_dir_id, trashDirId);
+    return stmt.get(inode, exclude_dir_id);
   }
 
   /**
@@ -1735,6 +1785,233 @@ class DatabaseService {
 
   deleteDirGridLayout(dirname) {
     this.db.prepare('DELETE FROM dir_grid_layouts WHERE dirname = ?').run(dirname);
+  }
+
+  // ---------- Virtual view helpers ----------
+  //
+  // These methods power the ?orphans and ?trash URI query-param views. They
+  // return entry arrays shaped like the scan result entries so the renderer
+  // grid can consume them without special-casing.
+
+  /**
+   * Return all file orphan rows within `dirId` (and, if depth > 1, all
+   * descendant dirs up to `depth` levels). Each entry has changeState:
+   * 'orphan' or 'moved'. Tombstoned files are excluded.
+   *
+   * @param {number} dirId
+   * @param {number} [depth=1]
+   * @returns {object[]}
+   */
+  getOrphanViewEntries(dirId, depth = 1) {
+    // Collect the set of dir IDs to include via a recursive walk limited by depth.
+    const dirIds = this._collectDescendantDirIds(dirId, depth);
+
+    const entries = [];
+
+    // File orphans (missing files within collected dirs)
+    const fileOrphans = this.db.prepare(`
+      SELECT o.id AS orphan_id, o.inode, o.name AS filename, o.new_dir_id,
+             f.size, f.dateModified, f.dateCreated, f.mode, f.id AS file_id,
+             f.dir_id, f.tags, f.attributes
+      FROM orphans o
+      JOIN files f ON f.inode = o.inode AND f.dir_id = o.dir_id
+      WHERE o.dir_id IN (${dirIds.map(() => '?').join(',')})
+        AND f.deleted_at IS NULL
+    `).all(...dirIds);
+
+    for (const r of fileOrphans) {
+      entries.push({
+        inode: r.inode,
+        filename: r.filename,
+        isDirectory: false,
+        size: r.size,
+        dateModified: r.dateModified,
+        dateCreated: r.dateCreated,
+        mode: r.mode ?? null,
+        path: this._buildFilePath(r.dir_id, r.filename),
+        changeState: r.new_dir_id ? 'moved' : 'orphan',
+        isStateTransition: false,
+        orphan_id: r.orphan_id,
+        new_dir_id: r.new_dir_id,
+        dir_id: r.dir_id,
+        tags: r.tags || null,
+        attributes: r.attributes || null,
+      });
+    }
+
+    // Dir orphans (missing sub-directories within collected dirs)
+    const dirOrphans = this.db.prepare(`
+      SELECT do.id AS orphan_id, do.name AS filename, do.new_dir_id,
+             d.id AS dir_id, d.inode, d.dirname, d.initials, d.display_name
+      FROM dir_orphans do
+      JOIN dirs d ON d.id = do.dir_id
+      WHERE do.parent_dir_id IN (${dirIds.map(() => '?').join(',')})
+        AND d.deleted_at IS NULL
+    `).all(...dirIds);
+
+    for (const r of dirOrphans) {
+      entries.push({
+        inode: r.inode,
+        filename: r.filename,
+        isDirectory: true,
+        size: 0,
+        dateModified: null,
+        dateCreated: null,
+        mode: null,
+        path: r.dirname,
+        changeState: r.new_dir_id ? 'moved' : 'orphan',
+        isStateTransition: false,
+        orphan_id: r.orphan_id,
+        new_dir_id: r.new_dir_id,
+        dir_id: r.dir_id,
+        initials: r.initials || null,
+        resolvedInitials: this.resolveDirectoryInitials(r.dirname).value,
+        displayName: r.display_name || null,
+        tags: this.getTagsForDirectoryId(r.dir_id),
+        attributes: this.getAttributesForDirectoryId(r.dir_id),
+      });
+    }
+
+    return entries;
+  }
+
+  /**
+   * Return scalar orphan count for badge display.
+   * @param {number} dirId
+   * @param {number} [depth=1]
+   * @returns {number}
+   */
+  getOrphanCount(dirId, depth = 1) {
+    const dirIds = this._collectDescendantDirIds(dirId, depth);
+    const fileCount = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM orphans WHERE dir_id IN (${dirIds.map(() => '?').join(',')})`
+    ).get(...dirIds).n;
+    const dirCount = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM dir_orphans WHERE parent_dir_id IN (${dirIds.map(() => '?').join(',')})`
+    ).get(...dirIds).n;
+    return fileCount + dirCount;
+  }
+
+  /**
+   * Return all tombstoned files and dirs that were originally children of
+   * `dirId`. Each entry has changeState: 'deleted'.
+   *
+   * @param {number} dirId
+   * @returns {object[]}
+   */
+  getTrashViewEntries(dirId) {
+    const entries = [];
+
+    // Tombstoned files in the original directory. original_path is stored
+    // directly on the files row (set during stageFileForDeletion).
+    const deletedFiles = this.db.prepare(`
+      SELECT f.id AS file_id, f.inode, f.filename, f.size, f.dateModified,
+             f.dateCreated, f.mode, f.tags, f.attributes, f.deleted_at,
+             f.dir_id, f.original_path, f.staged_at
+      FROM files f
+      WHERE f.dir_id = ? AND f.deleted_at IS NOT NULL
+    `).all(dirId);
+
+    for (const r of deletedFiles) {
+      entries.push({
+        inode: r.inode,
+        filename: r.filename,
+        isDirectory: false,
+        size: r.size,
+        dateModified: r.dateModified,
+        dateCreated: r.dateCreated,
+        mode: r.mode ?? null,
+        path: r.original_path || this._buildFilePath(r.dir_id, r.filename),
+        changeState: 'deleted',
+        isStateTransition: false,
+        orphan_id: null,
+        new_dir_id: null,
+        dir_id: r.dir_id,
+        deleted_at: r.deleted_at,
+        staged_at: r.staged_at || null,
+        tags: r.tags || null,
+        attributes: r.attributes || null,
+      });
+    }
+
+    // Tombstoned direct child dirs
+    const deletedDirs = this.db.prepare(`
+      SELECT d.id AS dir_id, d.inode, d.dirname, d.initials, d.display_name, d.deleted_at
+      FROM dirs d
+      WHERE d.parent_id = ? AND d.deleted_at IS NOT NULL
+    `).all(dirId);
+
+    for (const r of deletedDirs) {
+      entries.push({
+        inode: r.inode,
+        filename: path.basename(r.dirname),
+        isDirectory: true,
+        size: 0,
+        dateModified: null,
+        dateCreated: null,
+        mode: null,
+        path: r.dirname,
+        changeState: 'deleted',
+        isStateTransition: false,
+        orphan_id: null,
+        new_dir_id: null,
+        dir_id: r.dir_id,
+        deleted_at: r.deleted_at,
+        initials: r.initials || null,
+        resolvedInitials: this.resolveDirectoryInitials(r.dirname).value,
+        displayName: r.display_name || null,
+        tags: this.getTagsForDirectoryId(r.dir_id),
+        attributes: this.getAttributesForDirectoryId(r.dir_id),
+      });
+    }
+
+    return entries;
+  }
+
+  /**
+   * Return scalar trash count for badge display.
+   * @param {number} dirId
+   * @returns {number}
+   */
+  getTrashCount(dirId) {
+    const fileCount = this.db.prepare(
+      'SELECT COUNT(*) AS n FROM files WHERE dir_id = ? AND deleted_at IS NOT NULL'
+    ).get(dirId).n;
+    const dirCount = this.db.prepare(
+      'SELECT COUNT(*) AS n FROM dirs WHERE parent_id = ? AND deleted_at IS NOT NULL'
+    ).get(dirId).n;
+    return fileCount + dirCount;
+  }
+
+  /**
+   * Collect the dirId itself plus all descendant dir IDs up to `maxDepth`
+   * levels deep (skipping tombstoned rows). Used internally for orphan
+   * view scoping.
+   * @private
+   */
+  _collectDescendantDirIds(rootDirId, maxDepth = 1) {
+    const ids = [rootDirId];
+    if (maxDepth <= 1) return ids;
+    let frontier = [rootDirId];
+    for (let d = 1; d < maxDepth; d++) {
+      if (frontier.length === 0) break;
+      const next = this.db.prepare(
+        `SELECT id FROM dirs WHERE parent_id IN (${frontier.map(() => '?').join(',')}) AND deleted_at IS NULL`
+      ).all(...frontier).map(r => r.id);
+      ids.push(...next);
+      frontier = next;
+    }
+    return ids;
+  }
+
+  /**
+   * Build an absolute file path from a dir_id and filename. Used as a
+   * fallback when no original_path is recorded on the files row.
+   * @private
+   */
+  _buildFilePath(dirId, filename) {
+    const dir = this.getDirById(dirId);
+    return dir ? path.join(dir.dirname, filename) : filename;
   }
 
   close() {

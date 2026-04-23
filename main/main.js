@@ -1926,8 +1926,7 @@ ipcMain.handle('create-folder', async (event, { parentPath, folderName } = {}) =
  * (delete the row + staging record + any stale orphan row) and insert the
  * audit entry. On failure we roll back the row to its original dir.
  *
- * Accepts { path, inode, dir_id, isFolder } descriptors. Folders go to trash
- * but their DB rows are not yet staged/finalized (future work).
+ * Accepts { path, inode, dir_id, isFolder } descriptors.
  */
 ipcMain.handle('delete-items', async (event, items) => {
   if (!Array.isArray(items) || items.length === 0) {
@@ -1955,6 +1954,18 @@ ipcMain.handle('delete-items', async (event, items) => {
         failed.push({ path: item.path, error: `Staging failed: ${err.message}` });
         continue;
       }
+    } else if (item.isFolder && item.dir_id) {
+      // Tombstone the dirs row BEFORE trashing so there is no window in which a
+      // concurrent scanner pass can see the row as still-present but the folder
+      // already gone from the filesystem and flag it as an orphan.
+      // If shell.trashItem subsequently fails, the row stays tombstoned — the
+      // scanner will handle reconciliation on the next pass.
+      try { db.tombstoneDirectoryRow(item.dir_id); }
+      catch (tombErr) {
+        logger.error(`Error tombstoning dir row for ${item.path}:`, tombErr.message);
+        // Non-fatal: continue with the filesystem deletion even if the DB
+        // tombstone fails — the scanner will reconcile the state on the next pass.
+      }
     }
 
     try {
@@ -1969,6 +1980,7 @@ ipcMain.handle('delete-items', async (event, items) => {
     }
 
     if (stagedFileId !== null) {
+      // File: finalize the staged deletion
       try {
         db.insertFileHistory(item.inode, item.dir_id, stagedFileId, 'fileRemoved', {
           filename: originalFilename,
@@ -3137,6 +3149,12 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
 
     for (const childDir of childDirMap.values()) {
       try {
+        // If the dirs row no longer exists, or has been tombstoned (deleted_at
+        // set by a concurrent delete-items call), treat it as intentionally
+        // deleted and skip orphan creation entirely.
+        const _cdRow = db.getDirById(childDir.id);
+        if (!_cdRow || _cdRow.deleted_at) continue;
+
         const movedDirRecord = db.findDirectoryInOtherParents(childDir.inode, dirId);
         if (movedDirRecord) {
           const orphanResult = db.createDirOrphan(dirId, childDir.id, path.basename(childDir.dirname));
@@ -3680,6 +3698,12 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       logger.info(`Scanning directory: ${normalizedPath} - ${changedEntries.length} changes detected`);
     }
 
+    // Badge counts for toolbar display. Orphan count uses depth=1 (immediate
+    // dir only) — the renderer updates this when it navigates with a depth
+    // parameter via the virtual view path.
+    const orphanCount = db.getOrphanCount(dirId, 1);
+    const trashCount  = db.getTrashCount(dirId);
+
     return {
       success: true,
       count: entriesWithChanges.filter(e => !e.isDirectory).length,
@@ -3688,6 +3712,8 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       categoryData: category,
       hasChanges: hasChanges,
       alertsCreated,
+      orphanCount,
+      trashCount,
     };
   } catch (err) {
     logger.error('Error scanning directory with comparison:', err.message);
@@ -3703,8 +3729,73 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
 });
 
 /**
- * File Change Detection: Calculate checksum for a file
+ * Virtual view: return orphan/trash entries for a given base directory path.
+ * `params` is an array of strings: ['orphans'], ['trash'], or ['orphans','trash'].
+ * `depth` controls how many levels deep orphan detection scans (default: 1).
  */
+ipcMain.handle('get-virtual-view', (event, basePath, params, depth = 1) => {
+  try {
+    const normalizedPath = path.normalize(basePath);
+    const dirRecord = db.getDirectory(normalizedPath);
+    if (!dirRecord) {
+      return { success: false, error: `Directory not found in database: ${normalizedPath}` };
+    }
+    const dirId = dirRecord.id;
+    const paramSet = new Set(Array.isArray(params) ? params : []);
+
+    const category = categories.getCategoryForDirectory(normalizedPath);
+    const categoryName = category ? category.name : 'Default';
+
+    let entries = [];
+
+    if (paramSet.has('orphans')) {
+      entries.push(...db.getOrphanViewEntries(dirId, depth));
+    }
+    if (paramSet.has('trash')) {
+      entries.push(...db.getTrashViewEntries(dirId));
+    }
+
+    const orphanCount = db.getOrphanCount(dirId, depth);
+    const trashCount  = db.getTrashCount(dirId);
+
+    return {
+      success: true,
+      count: entries.filter(e => !e.isDirectory).length,
+      entries,
+      category: categoryName,
+      categoryData: category,
+      hasChanges: false,
+      alertsCreated: 0,
+      orphanCount,
+      trashCount,
+      isVirtualView: true,
+      virtualParams: [...paramSet],
+    };
+  } catch (err) {
+    logger.error('Error building virtual view:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Lightweight badge count query — returns orphan and trash counts for a dir
+ * without building the full entry list. Used to refresh toolbar badges after
+ * in-place operations (deletion, etc.) without a full directory re-scan.
+ */
+ipcMain.handle('get-badge-counts', (event, dirPath, depth = 1) => {
+  try {
+    const normalizedPath = path.normalize(dirPath);
+    const dirRecord = db.getDirectory(normalizedPath);
+    if (!dirRecord) return { success: false, error: 'Directory not in database' };
+    const orphanCount = db.getOrphanCount(dirRecord.id, depth);
+    const trashCount  = db.getTrashCount(dirRecord.id);
+    return { success: true, orphanCount, trashCount };
+  } catch (err) {
+    logger.error('Error getting badge counts:', err.message);
+    return { success: false, orphanCount: 0, trashCount: 0 };
+  }
+});
+
 ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId, isManual = false }) => {
   const releaseChecksumSlot = await acquireChecksumSlot();
   try {

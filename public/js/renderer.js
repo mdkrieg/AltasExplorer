@@ -48,11 +48,11 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Panel state - tracks each panel's directory, grid, and navigation
 export let panelState = {
-  0: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] },
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [] }
+  0: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 },
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 }
 };
 
 export let selectedItemState = {
@@ -549,11 +549,49 @@ function attachEventListeners() {
   document.addEventListener('keydown', function (event) {
     // While a w2ui in-grid confirm message (e.g. delete confirmation) is open,
     // swallow navigation/shortcut keys so the grid underneath does not move selection.
-    // Allow Enter (to confirm) and Escape (to cancel) to reach the dialog's button handlers.
+    // Enter confirms the dialog; Escape and Tab are passed through natively.
     if (document.querySelector('.w2ui-message')) {
-      if (event.key !== 'Enter' && event.key !== 'Escape' && event.key !== 'Tab') {
+      if (event.key === 'Enter') {
+        // Click the primary action button (yes/delete — rendered with name="yes")
+        const yesBtn = document.querySelector('.w2ui-message button[name="yes"]')
+                    || document.querySelector('.w2ui-message .w2ui-btn-red');
+        if (yesBtn) {
+          event.preventDefault();
+          event.stopPropagation();
+          yesBtn.click();
+        }
+        return;
+      }
+      if (event.key !== 'Escape' && event.key !== 'Tab') {
         event.preventDefault();
         event.stopPropagation();
+      }
+      return;
+    }
+
+    // Delete key: trigger grid deletion on the focused grid panel.
+    // We handle this ourselves because w2ui's keyboard-textarea loses reliable
+    // focus whenever our custom arrow-key navigation (gridNavigate) is used.
+    if (event.key === 'Delete' && !event.ctrlKey && !event.altKey && !event.metaKey && !sidebarHasFocus) {
+      const tgt = event.target;
+      const inRealInput = tgt && (
+        tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+        tgt.contentEditable === 'true' ||
+        (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0)
+      );
+      if (!inRealInput) {
+        const viewType = panels.getPanelViewType(activePanelId);
+        if (viewType === 'grid' || viewType === 'gallery') {
+          const gridPanelId = (panels.gridFocusedPanelId !== null && panels.gridFocusedPanelId !== undefined)
+            ? panels.gridFocusedPanelId
+            : activePanelId;
+          const grid = panelState[gridPanelId]?.w2uiGrid;
+          if (grid && grid.getSelection().length > 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            grid['delete']();
+          }
+        }
       }
       return;
     }

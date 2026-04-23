@@ -230,6 +230,16 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		contextMenu.push({ id: 'calculate-checksum', text: label, icon: 'fa fa-hashtag' });
 	}
 
+	// Delete
+	{
+		const deletableRecords = selectedRecords.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..');
+		if (deletableRecords.length > 0) {
+			addSeparator(contextMenu);
+			const deleteLabel = deletableRecords.length > 1 ? `Delete (${deletableRecords.length} items)` : 'Delete';
+			contextMenu.push({ id: 'delete-items', text: deleteLabel, icon: 'fa fa-trash' });
+		}
+	}
+
 	// Custom Actions
 	try {
 		const allActions = await window.electronAPI.getCustomActions();
@@ -511,6 +521,18 @@ async function handleContextMenuClick(event, panelId) {
 			}
 		} catch (err) {
 			alert('Error removing tag: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'delete-items') {
+		const grid = panelState[panelId]?.w2uiGrid;
+		if (grid) {
+			// Ensure the selection reflects only the items from the context-click
+			// (user may have right-clicked a record that wasn't previously selected)
+			const deletableRecords = selectedRecords.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..');
+			grid.selectNone();
+			grid.select(...deletableRecords.map(r => r.recid));
+			grid['delete'](); // triggers onDelete with force=false → shows confirm dialog
 		}
 	}
 

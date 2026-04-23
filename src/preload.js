@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Database operations
   // scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
   scanDirectoryWithComparison: (dirPath, isManualNavigation = true) => ipcRenderer.invoke('scan-directory-with-comparison', dirPath, isManualNavigation),
+  getVirtualView: (basePath, params, depth = 1) => ipcRenderer.invoke('get-virtual-view', basePath, params, depth),
+  getBadgeCounts: (dirPath, depth = 1) => ipcRenderer.invoke('get-badge-counts', dirPath, depth),
   getFilesInDirectory: (dirPath) => ipcRenderer.invoke('get-files-in-directory', dirPath),
 
   // File change detection

@@ -974,6 +974,56 @@ function attachPanelHeaderEventListeners(panelId) {
 	}
 }
 
+// ---------- Virtual view URI helpers ----------
+//
+// On Windows, `?` is not a legal character in filesystem paths, so we use it
+// as a separator between the real basePath and virtual query params.
+//
+// Format:  C:\Some\Path?orphans&trash
+// Parsing: split on the FIRST `?` only.
+
+/**
+ * Parse a nav URI into `{ basePath, params }`.
+ * `params` is a Set<string> (e.g. Set(['orphans', 'trash'])).
+ * @param {string} input
+ * @returns {{ basePath: string, params: Set<string> }}
+ */
+function parseNavUri(input) {
+	const idx = input.indexOf('?');
+	if (idx === -1) return { basePath: input, params: new Set() };
+	const basePath = input.slice(0, idx);
+	const params = new Set(
+		input.slice(idx + 1).split('&').map(p => p.trim().toLowerCase()).filter(Boolean)
+	);
+	return { basePath, params };
+}
+
+/**
+ * Build a nav URI from a basePath and a Set or array of param strings.
+ * Returns plain basePath when params is empty.
+ * @param {string} basePath
+ * @param {Set<string>|string[]} params
+ * @returns {string}
+ */
+function buildNavUri(basePath, params) {
+	const arr = params instanceof Set ? [...params] : (params || []);
+	if (arr.length === 0) return basePath;
+	return basePath + '?' + arr.join('&');
+}
+
+/**
+ * Toggle a single param on/off in a Set, returning the new Set.
+ * @param {Set<string>} current
+ * @param {string} param
+ * @returns {Set<string>}
+ */
+function toggleNavParam(current, param) {
+	const next = new Set(current);
+	if (next.has(param)) next.delete(param);
+	else next.add(param);
+	return next;
+}
+
 function getPanelToolbarElement(panelId) {
 	return document.querySelector(`#panel-${panelId} .panel-toolbar`);
 }
@@ -984,6 +1034,12 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 	const showDepth = mode !== 'gallery';
 	const depth = panelState[panelId]?.depth || 0;
 	const searchValue = panelState[panelId]?.toolbarSearch || '';
+	const state = panelState[panelId] || {};
+	const orphanCount = state.orphanCount || 0;
+	const trashCount  = state.trashCount  || 0;
+	const navParams   = state.currentNavParams || new Set();
+	const orphanActive = navParams.has('orphans');
+	const trashActive  = navParams.has('trash');
 
 	container.innerHTML = `
 		<button class="panel-tb-btn" data-action="back" title="Back">
@@ -1004,6 +1060,13 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 				<input id="depth-input-${panelId}" type="number" min="0" max="99" value="${depth}">
 			</div>
 		` : ''}
+		<span class="panel-tb-break"></span>
+		<button class="panel-tb-btn panel-tb-virtual-btn${orphanActive ? ' is-active' : ''}" data-action="toggle-orphans" title="Orphaned files/dirs${orphanCount ? ` (${orphanCount})` : ''}">
+			Orphans${orphanCount ? `<span class="panel-tb-badge">${orphanCount}</span>` : ''}
+		</button>
+		<button class="panel-tb-btn panel-tb-virtual-btn${trashActive ? ' is-active' : ''}" data-action="toggle-trash" title="Deleted files/dirs${trashCount ? ` (${trashCount})` : ''}">
+			Trash${trashCount ? `<span class="panel-tb-badge">${trashCount}</span>` : ''}
+		</button>
 		<span class="panel-tb-break"></span>
 		<button id="btn-toolbar-terminal-${panelId}" class="panel-tb-btn" title="Terminal">
 			<img src="assets/icons/terminal.svg" style="width: 16px; height: 16px; pointer-events: none;">
@@ -1044,6 +1107,22 @@ function attachPanelToolbarEventListeners(panelId) {
 		if (panelState[panelId]?.currentPath) {
 			navigateToDirectory(panelState[panelId].currentPath, panelId);
 		}
+	});
+
+	$tb.find('[data-action="toggle-orphans"]').off('click').on('click', function () {
+		setActivePanelId(panelId);
+		const state = panelState[panelId];
+		if (!state?.currentBasePath) return;
+		const newParams = toggleNavParam(state.currentNavParams || new Set(), 'orphans');
+		navigateToDirectory(buildNavUri(state.currentBasePath, newParams), panelId);
+	});
+
+	$tb.find('[data-action="toggle-trash"]').off('click').on('click', function () {
+		setActivePanelId(panelId);
+		const state = panelState[panelId];
+		if (!state?.currentBasePath) return;
+		const newParams = toggleNavParam(state.currentNavParams || new Set(), 'trash');
+		navigateToDirectory(buildNavUri(state.currentBasePath, newParams), panelId);
 	});
 
 	$tb.find('.panel-tb-search').off('keydown blur').on('keydown', function (e) {
@@ -2396,7 +2475,7 @@ async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, t
 
 		const rawEntries = scanResult.entries || [];
 		let entries = rawEntries
-			.filter(e => e.filename !== '.')
+			.filter(e => e.filename !== '.' && e.changeState !== 'orphan' && e.changeState !== 'moved')
 			.map(e => ({ ...e, displayFilename: getRelativePathFromRoot(rootPath, e.path) }));
 
 		if (!hideDotDotDirectory && state.scanToken === token) {
@@ -2421,7 +2500,7 @@ async function processPendingDirs(panelId, rootPath, iconCache, categoryCache, t
 		addRecordsToGrid(records, panelId);
 
 		if (currentDepth < maxDepth) {
-			const subdirs = rawEntries.filter(e => e.isDirectory && e.filename !== '.');
+			const subdirs = rawEntries.filter(e => e.isDirectory && e.filename !== '.' && e.changeState !== 'orphan' && e.changeState !== 'moved');
 			for (const subdir of subdirs) {
 				state.pendingDirs.push({ path: subdir.path, maxDepth, currentDepth: currentDepth + 1 });
 			}
@@ -2493,6 +2572,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
 	const rootRaw = rootScan.entries || [];
 	const currentFolderName = rootPath.split(/[\\\/]/).filter(p => p).pop() || rootPath;
 	let rootEntries = rootRaw
+		.filter(e => e.changeState !== 'orphan' && e.changeState !== 'moved')
 		.filter(e => !hideDotDirectory || e.filename !== '.')
 		.map(e => {
 			let displayFilename = getRelativePathFromRoot(rootPath, e.path);
@@ -2523,7 +2603,7 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
 	if (state.scanToken === token) addRecordsToGrid(rootRecords, panelId);
 
 	if (maxDepth > 0 && state.scanToken === token) {
-		const subdirs = rootRaw.filter(e => e.isDirectory && e.filename !== '.');
+		const subdirs = rootRaw.filter(e => e.isDirectory && e.filename !== '.' && e.changeState !== 'orphan' && e.changeState !== 'moved');
 		for (const subdir of subdirs) {
 			state.pendingDirs.push({ path: subdir.path, maxDepth, currentDepth: 1 });
 		}
@@ -2536,15 +2616,43 @@ async function scanDirectoryTreeStreaming(rootPath, maxDepth, panelId) {
 	}
 }
 
+/**
+ * Refresh the toolbar badge counts (Orphans / Trash) for a panel without
+ * triggering a full directory re-scan.  Called after in-place operations
+ * like deletion so the counts stay accurate on the current view.
+ */
+async function refreshBadgeCounts(panelId) {
+	const state = panelState[panelId];
+	const basePath = state?.currentBasePath || state?.currentPath;
+	if (!basePath) return;
+	try {
+		const depth = state.depth || 1;
+		const result = await window.electronAPI.getBadgeCounts(basePath, depth);
+		if (!result?.success) return;
+		state.orphanCount = result.orphanCount ?? 0;
+		state.trashCount  = result.trashCount  ?? 0;
+		const mode = state.currentCategory?.displayMode === 'gallery' ? 'gallery' : 'detail';
+		renderPanelToolbar(panelId, mode);
+	} catch (err) {
+		console.warn('[refreshBadgeCounts] failed:', err);
+	}
+}
+
 export async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
 	try {
 		if (!dirPath || typeof dirPath !== 'string') {
 			throw new Error('Path must be a non-empty string');
 		}
-		let normalizedPath = dirPath.trim();
-		if (!normalizedPath) {
+		const rawInput = dirPath.trim();
+		if (!rawInput) {
 			throw new Error('Path cannot be empty');
 		}
+
+		// Parse virtual-view URI params (e.g. "C:\Foo?orphans&trash")
+		const { basePath: parsedBase, params: navParams } = parseNavUri(rawInput);
+		const isVirtualView = navParams.size > 0;
+
+		let normalizedPath = parsedBase;
 		if (normalizedPath.length === 2 && normalizedPath[1] === ':') {
 			normalizedPath += '\\';
 		}
@@ -2556,8 +2664,13 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			state.pendingDirs = [];
 		}
 
+		// Store URI metadata — basePath + params. currentPath always reflects
+		// the filesystem basePath so that Up/Back still work correctly.
 		const previousPath = state.currentPath;
 		state.currentPath = normalizedPath;
+		state.currentBasePath = normalizedPath;
+		state.currentNavParams = navParams;
+
 		if (normalizedPath !== previousPath) {
 			resetFilterState(panelId);
 		}
@@ -2568,10 +2681,58 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		}
 		if (addToHistory) {
 			state.navigationHistory = state.navigationHistory.slice(0, state.navigationIndex + 1);
-			state.navigationHistory.push(dirPath);
+			// Store the full URI (including params) in history so Back restores virtual view
+			state.navigationHistory.push(rawInput);
 			state.navigationIndex = state.navigationHistory.length - 1;
 		}
 		if (panelId === 1) sidebar.updateSidebarSelection(normalizedPath);
+
+		if (isVirtualView) {
+			// ---- Virtual view branch ----
+			// We don't need isDirectory check — the dir must be in the DB
+			// already (it's a known base path). If it isn't, getVirtualView
+			// will return success:false and we'll show the error below.
+			setPanelPathValidity(panelId, true);
+			const depth = state.depth || 0;
+			const viewResult = await window.electronAPI.getVirtualView(normalizedPath, [...navParams], depth || 1);
+			if (!viewResult.success) {
+				throw new Error(viewResult.error || 'Failed to load virtual view');
+			}
+
+			// Update badge counts
+			state.orphanCount = viewResult.orphanCount ?? 0;
+			state.trashCount  = viewResult.trashCount  ?? 0;
+
+			const category = await window.electronAPI.getCategoryForDirectory(normalizedPath);
+			const prevCategory = state.currentCategory;
+			state.currentCategory = category;
+			const prevAttrs = JSON.stringify((prevCategory && prevCategory.attributes) || []);
+			const newAttrs = JSON.stringify((category && category.attributes) || []);
+			if (prevAttrs !== newAttrs) {
+				await initializeGridForPanel(panelId);
+			}
+
+			const entries = viewResult.entries || [];
+
+			const $panel = $(`#panel-${panelId}`);
+			$panel.find('.panel-landing-page').hide();
+			$panel.find('.panel-gallery').removeClass('active');
+			$panel.find('.panel-grid').show();
+			renderPanelToolbar(panelId, 'detail');
+
+			await populateFileGrid(entries, category, panelId);
+			updatePanelHeader(panelId, normalizedPath);
+
+			const gridToResize = panelState[panelId].w2uiGrid;
+			if (gridToResize) {
+				requestAnimationFrame(() => { gridToResize.resize(); });
+			}
+
+			panelState[panelId].hasBeenViewed = true;
+			return;
+		}
+
+		// ---- Normal (filesystem) navigation branch ----
 
 		const directoryExists = await window.electronAPI.isDirectory(normalizedPath);
 		if (!directoryExists) {
@@ -2598,6 +2759,10 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			updateAlertBadge();
 		}
 
+		// Update badge counts from scan result
+		state.orphanCount = scanResult.orphanCount ?? 0;
+		state.trashCount  = scanResult.trashCount  ?? 0;
+
 		const category = await window.electronAPI.getCategoryForDirectory(normalizedPath);
 		const prevCategory = state.currentCategory;
 		state.currentCategory = category;
@@ -2618,7 +2783,10 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			await window.electronAPI.setWindowTitle(windowTitle);
 		}
 
-		const entries = scanResult.success ? scanResult.entries : [];
+		// Orphan and moved entries are surfaced in the ?orphans virtual view.
+		// The normal grid only shows real (unchanged / changed / new) filesystem entries.
+		const entries = (scanResult.success ? scanResult.entries : [])
+			.filter(e => e.changeState !== 'orphan' && e.changeState !== 'moved');
 		const depth = panelState[panelId].depth || 0;
 		const isGallery = category && category.displayMode === 'gallery';
 
@@ -2930,7 +3098,17 @@ async function initializeGridForPanel(panelId) {
 		onDblClick: function (event) {
 			const record = this.records.find(r => r.recid === event.detail.recid);
 			if (record && record.isFolder) {
-				navigateToDirectory(record.path, panelId);
+				// When double-clicking an orphaned folder from within a virtual
+				// view, carry the orphan param into the child navigation so the
+				// user can browse the subtree while staying in orphan-view mode.
+				const state = panelState[panelId];
+				const isOrphan = record.changeState === 'orphan' || record.changeState === 'moved';
+				if (isOrphan && state?.currentNavParams?.size > 0) {
+					const inheritedParams = new Set([...state.currentNavParams].filter(p => p === 'orphans'));
+					navigateToDirectory(buildNavUri(record.path, inheritedParams), panelId);
+				} else {
+					navigateToDirectory(record.path, panelId);
+				}
 				return;
 			}
 
@@ -3093,6 +3271,8 @@ async function initializeGridForPanel(panelId) {
 				const succeededSet = new Set(succeeded);
 				const recidsToRemove = records.filter(r => succeededSet.has(r.path)).map(r => r.recid);
 				if (recidsToRemove.length > 0) grid.remove(...recidsToRemove);
+				// Refresh toolbar badge counts so Orphans/Trash reflect the deletion immediately
+				if (recidsToRemove.length > 0) refreshBadgeCounts(panelId).catch(() => {});
 				if (failed.length > 0) {
 					w2alert('Failed to delete:\n' + failed.map(f => `${f.path}: ${f.error}`).join('\n'));
 				}
@@ -3921,6 +4101,8 @@ function getRowClassName(changeState) {
 			return 'file-moved';
 		case 'permError':
 			return 'file-perm-error';
+		case 'deleted':
+			return 'file-deleted';
 		default:
 			return '';
 	}

@@ -184,6 +184,38 @@ button:active {
   background: #e0e0e0;
   border-color: #ccc;
 }
+
+/* Virtual-view toggle buttons (Orphans / Trash) */
+.panel-tb-virtual-btn {
+  position: relative;
+  font-size: 12px;
+  gap: 4px;
+}
+.panel-tb-virtual-btn.is-active {
+  background: #1e6db5;
+  border-color: #1555a0;
+  color: #fff;
+}
+.panel-tb-virtual-btn.is-active:hover {
+  background: #155da0;
+}
+
+/* Badge count on toolbar buttons */
+.panel-tb-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 3px 2px 1px 2px;
+  border: 1px solid #777;
+  border-radius: 8px;
+  background: #DDD;
+  color: #555;
+  font-size: 10px;
+  line-height: 1;
+  margin: -1px -2px -1px 0px;
+}
 .panel-tb-btn .w2ui-icon {
   width: 16px;
   height: 16px;
@@ -2003,6 +2035,12 @@ hr {
 
 .file-perm-error {
   color: #666666;
+}
+
+.file-deleted {
+  opacity: 0.55;
+  text-decoration: line-through;
+  color: #888888;
 }
 
 /* Tag badges in the file grid */
