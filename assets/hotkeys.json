@@ -71,6 +71,11 @@
       "label": "Save File",
       "key": "Ctrl+s",
       "default": "Ctrl+s"
+    },
+    "new_folder": {
+      "label": "New Folder",
+      "key": "Ctrl+Shift+n",
+      "default": "Ctrl+Shift+n"
     }
   },
   "Layouts": {

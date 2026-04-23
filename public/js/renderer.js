@@ -461,6 +461,86 @@ async function showLoadLayoutModal() {
 }
 
 /**
+ * Find the next available "New folder" name in parentPath.
+ * Mirrors Windows behaviour: "New folder", "New folder (2)", "New folder (3)", …
+ */
+async function getAvailableNewFolderName(parentPath) {
+  let existingNames;
+  try {
+    const entries = await window.electronAPI.readDirectory(parentPath);
+    existingNames = new Set(entries.map(e => e.filename.toLowerCase()));
+  } catch (_) {
+    return 'New folder';
+  }
+  const base = 'New folder';
+  if (!existingNames.has(base.toLowerCase())) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base} (${n})`;
+    if (!existingNames.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
+/**
+ * Show the New Folder modal for the given panel context.
+ */
+async function showNewFolderModal(parentPath, panelId) {
+  const input = document.getElementById('new-folder-name-input');
+  const errorEl = document.getElementById('new-folder-error');
+  input.value = await getAvailableNewFolderName(parentPath);
+  errorEl.textContent = '';
+  $('#new-folder-modal').show();
+  input.select();
+  input.focus();
+
+  async function doCreate() {
+    const name = input.value.trim();
+    errorEl.textContent = '';
+    if (!name) {
+      errorEl.textContent = 'Folder name cannot be empty.';
+      return;
+    }
+    const result = await window.electronAPI.createFolder(parentPath, name);
+    if (result.success) {
+      closeNewFolderModal();
+      await panels.navigateToDirectory(parentPath, panelId);
+      // Select and scroll to the new folder
+      const state = panelState[panelId];
+      const grid = state && state.w2uiGrid;
+      if (grid) {
+        const record = grid.records.find(r => r.path === result.path);
+        if (record) {
+          grid.selectNone();
+          grid.select(record.recid);
+          if (typeof grid.scrollIntoView === 'function') grid.scrollIntoView(record.recid);
+        }
+      }
+    } else {
+      errorEl.textContent = result.error || 'Could not create folder.';
+      input.focus();
+    }
+  }
+
+  // Store handlers so they can be removed on close
+  input._newFolderKeydown = async function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); await doCreate(); }
+    if (e.key === 'Escape') { e.preventDefault(); closeNewFolderModal(); }
+  };
+  document.getElementById('btn-new-folder-confirm')._newFolderClick = doCreate;
+
+  input.addEventListener('keydown', input._newFolderKeydown);
+  document.getElementById('btn-new-folder-confirm').addEventListener('click', doCreate);
+}
+
+function closeNewFolderModal() {
+  $('#new-folder-modal').hide();
+  const input = document.getElementById('new-folder-name-input');
+  if (input && input._newFolderKeydown) {
+    input.removeEventListener('keydown', input._newFolderKeydown);
+    delete input._newFolderKeydown;
+  }
+}
+
+/**
  * Attach event listeners to buttons and grid
  */
 function attachEventListeners() {
@@ -644,6 +724,12 @@ function attachEventListeners() {
       return;
     }
 
+    // Escape key: close new folder modal if open
+    if (event.key === 'Escape' && $('#new-folder-modal').is(':visible')) {
+      closeNewFolderModal();
+      return;
+    }
+
     const hotkeyCombo = getHotKeyCombo(event);
     const actionId = getActionForHotkey(hotkeyCombo);
 
@@ -815,6 +901,13 @@ function attachEventListeners() {
         await showLoadLayoutModal();
         break;
       }
+      case 'new_folder': {
+        event.preventDefault();
+        const state = panelState[activePanelId];
+        if (!state || !state.currentPath) break;
+        await showNewFolderModal(state.currentPath, activePanelId);
+        break;
+      }
     }
   });
 
@@ -885,6 +978,14 @@ function attachEventListeners() {
   });
   $('#load-layout-modal').click(function (e) {
     if (e.target === this) $(this).hide();
+  });
+
+  // New Folder modal
+  $('#btn-new-folder-close, #btn-new-folder-cancel').click(function () {
+    closeNewFolderModal();
+  });
+  $('#new-folder-modal').click(function (e) {
+    if (e.target === this) closeNewFolderModal();
   });
 
   // Save Layout Global modal

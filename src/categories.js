@@ -356,12 +356,15 @@ class CategoryService {
   }
 
   /**
-   * Get hotkeys object (load from hotkeys.json)
+   * Get hotkeys object (load from hotkeys.json).
+   * Any actions present in the source defaults but missing from the user file
+   * are merged in automatically, so new hotkeys are picked up after updates.
    */
   getHotkeys() {
+    let userHotkeys;
     try {
       const content = fs.readFileSync(HOTKEYS_PATH, 'utf8');
-      return JSON.parse(content);
+      userHotkeys = JSON.parse(content);
     } catch (err) {
       logger.error('Error loading hotkeys:', err.message);
       // Return defaults if file cannot be read
@@ -380,6 +383,33 @@ class CategoryService {
         }
       };
     }
+
+    // Merge any new actions from the source defaults that aren't in the user file
+    try {
+      if (fs.existsSync(SOURCE_HOTKEYS_PATH)) {
+        const sourceContent = fs.readFileSync(SOURCE_HOTKEYS_PATH, 'utf8');
+        const sourceHotkeys = JSON.parse(sourceContent);
+        let changed = false;
+        for (const [context, actions] of Object.entries(sourceHotkeys)) {
+          if (!userHotkeys[context]) {
+            userHotkeys[context] = {};
+          }
+          for (const [actionId, actionData] of Object.entries(actions)) {
+            if (!userHotkeys[context][actionId]) {
+              userHotkeys[context][actionId] = actionData;
+              changed = true;
+            }
+          }
+        }
+        if (changed) {
+          fs.writeFileSync(HOTKEYS_PATH, JSON.stringify(userHotkeys, null, 2));
+        }
+      }
+    } catch (mergeErr) {
+      logger.warn('Could not merge hotkey defaults:', mergeErr.message);
+    }
+
+    return userHotkeys;
   }
 
   /**

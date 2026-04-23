@@ -1892,6 +1892,33 @@ ipcMain.handle('save-custom-action', (event, entry) => {
 });
 
 /**
+ * Create a new folder inside the given parent directory.
+ * Returns { success: true, path: string } or { success: false, error: string }
+ */
+ipcMain.handle('create-folder', async (event, { parentPath, folderName } = {}) => {
+  if (!parentPath || typeof parentPath !== 'string' || !folderName || typeof folderName !== 'string') {
+    return { success: false, error: 'Invalid arguments' };
+  }
+  const sanitizedName = folderName.trim();
+  if (!sanitizedName) {
+    return { success: false, error: 'Folder name cannot be empty' };
+  }
+  if (/[/\\:*?"<>|]/.test(sanitizedName)) {
+    return { success: false, error: 'Folder name contains invalid characters (/ \\ : * ? " < > |)' };
+  }
+  const newPath = path.join(parentPath, sanitizedName);
+  try {
+    fsSync.mkdirSync(newPath, { recursive: false });
+    return { success: true, path: newPath };
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      return { success: false, error: 'A folder with that name already exists' };
+    }
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * Filesystem: Move items to trash using the DB trash-staging pattern.
  * For each file we first re-parent the files row into the trash sentinel dir
  * (so any concurrent scan of the original dir no longer sees the inode as a

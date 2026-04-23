@@ -34,6 +34,7 @@ Philosophy:
 [ ] Still getting erroneous title bar when opening a new panel with Ctrl+T
 [ ] selectable list attrs need a clear option
 [ ] drag-out of app not working (need to hold Alt but still does nothing)
+[ ] regression, delete key no longer deletes files or folders
 
 ### ROADMAP:
 [x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
@@ -145,8 +146,8 @@ Other crazy stuff:
 
 Manipulation phase:
 * NOTE: Important here that changes made in the app don't trigger alerts (perhaps option to include?)
-[ ] Dragon Dropping
-[ ] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline
+[x] Dragon Dropping
+[x] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline
 * How deep to go on file editing and viewing stuff? A lot can be done with monaco for plaintext files. But do we want to read spreadsheets as well? Perhaps View only for those?
 
 ### Off-the-wall stuff for the future:
