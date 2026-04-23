@@ -1963,6 +1963,248 @@ ipcMain.handle('delete-items', async (event, items) => {
 });
 
 /**
+ * Drag & drop helpers: resolve the destination path for a single item given the
+ * target directory and a collision directive. Returns { targetPath, skip } or
+ * throws on unresolvable collisions. Directive may be:
+ *   'fail'       - abort with error on collision (default)
+ *   'skip'       - signal the caller to skip this item
+ *   'overwrite'  - allow the caller to replace the existing entry
+ *   'rename'     - pick a non-colliding name ("foo (2).txt")
+ */
+async function _resolveDropTarget(sourcePath, targetDir, onCollision) {
+  const baseName = path.basename(sourcePath);
+  const directTarget = path.join(targetDir, baseName);
+  const exists = await fs.pathExists(directTarget);
+  if (!exists) return { targetPath: directTarget, skip: false, overwrite: false };
+  const directive = onCollision || 'fail';
+  if (directive === 'skip') return { targetPath: null, skip: true, overwrite: false };
+  if (directive === 'overwrite') return { targetPath: directTarget, skip: false, overwrite: true };
+  if (directive === 'rename') {
+    const renamed = await fs.pickNonCollidingPath(targetDir, baseName);
+    return { targetPath: renamed, skip: false, overwrite: false };
+  }
+  const err = new Error(`Destination already exists: ${directTarget}`);
+  err.code = 'ECOLLISION';
+  throw err;
+}
+
+/**
+ * Drag & drop: pre-flight check for same-name collisions in the destination.
+ * Renderer uses this to decide whether to show a conflict dialog before
+ * dispatching the actual move/copy.
+ */
+ipcMain.handle('check-collisions', async (event, { items, targetDirPath } = {}) => {
+  if (!Array.isArray(items) || !targetDirPath) return { collisions: [] };
+  const collisions = [];
+  for (const item of items) {
+    if (!item || !item.path) continue;
+    const baseName = path.basename(item.path);
+    const candidate = path.join(targetDirPath, baseName);
+    try {
+      const exists = await fs.pathExists(candidate);
+      if (exists && path.resolve(item.path) !== path.resolve(candidate)) {
+        collisions.push({ sourcePath: item.path, targetPath: candidate, filename: baseName });
+      }
+    } catch (_) { /* ignore */ }
+  }
+  return { collisions };
+});
+
+/**
+ * Drag & drop: move a batch of files/folders into a target directory.
+ * Mirrors the delete-items pipeline: per-item try/catch, detailed
+ * succeeded/failed/skipped arrays, and user-initiated audit entries.
+ */
+ipcMain.handle('move-items', async (event, { items, targetDirPath, onCollision } = {}) => {
+  const succeeded = [];
+  const failed = [];
+  const skipped = [];
+  if (!Array.isArray(items) || items.length === 0 || !targetDirPath) {
+    return { succeeded, failed, skipped };
+  }
+  if (!(await fs.pathExists(targetDirPath))) {
+    return { succeeded, failed: items.map(i => ({ path: i?.path, error: 'Target directory does not exist' })), skipped };
+  }
+
+  for (const item of items) {
+    if (!item || !item.path) {
+      failed.push({ path: String(item?.path || ''), error: 'Missing path' });
+      continue;
+    }
+    const baseName = path.basename(item.path);
+    if (baseName === '.' || baseName === '..') {
+      failed.push({ path: item.path, error: 'Refusing to move meta entry' });
+      continue;
+    }
+    const sourceDir = path.dirname(item.path);
+    if (path.resolve(sourceDir) === path.resolve(targetDirPath)) {
+      // No-op: same directory.
+      skipped.push({ path: item.path, reason: 'same-directory' });
+      continue;
+    }
+    if (item.isFolder && fs.isAncestorOrSelf(item.path, targetDirPath)) {
+      failed.push({ path: item.path, error: 'Cannot move folder into itself or a descendant' });
+      continue;
+    }
+
+    let resolved;
+    try {
+      resolved = await _resolveDropTarget(item.path, targetDirPath, onCollision);
+    } catch (err) {
+      failed.push({ path: item.path, error: err.message });
+      continue;
+    }
+    if (resolved.skip) { skipped.push({ path: item.path, reason: 'collision' }); continue; }
+    const targetPath = resolved.targetPath;
+
+    // Perform filesystem move. On overwrite, remove the existing entry first so
+    // fs.rename / fs.cp don't fail with EEXIST.
+    try {
+      if (resolved.overwrite) {
+        await fs._removeRecursive(targetPath);
+      }
+      await fs.moveItem(item.path, targetPath);
+    } catch (err) {
+      logger.error(`move-items: filesystem error for ${item.path} -> ${targetPath}:`, err.message);
+      failed.push({ path: item.path, error: err.message });
+      continue;
+    }
+
+    // Update DB rows + emit audit entry. Best-effort: filesystem move has
+    // already succeeded, so we don't roll it back on DB errors.
+    try {
+      if (item.isFolder) {
+        const newParentDir = db.getDirectory(targetDirPath);
+        const newParentId = newParentDir ? newParentDir.id : null;
+        db.moveDirectoryTree({ old_dirname: item.path, new_dirname: targetPath, new_parent_id: newParentId });
+      } else if (item.inode && item.dir_id) {
+        // Resolve (or create) destination dir row so files.dir_id is valid.
+        let newDirId;
+        const existingDir = db.getDirectory(targetDirPath);
+        if (existingDir) {
+          newDirId = existingDir.id;
+        } else {
+          try {
+            const st = fsSync.statSync(targetDirPath);
+            newDirId = db.getOrCreateDirectory(targetDirPath, st.ino.toString());
+          } catch (e) {
+            newDirId = null;
+          }
+        }
+        if (newDirId) {
+          let newInode = item.inode;
+          try {
+            const st = fsSync.statSync(targetPath);
+            newInode = st.ino.toString();
+          } catch (_) { /* keep original inode */ }
+          db.moveFileRow({
+            inode: item.inode,
+            old_dir_id: item.dir_id,
+            new_dir_id: newDirId,
+            new_filename: path.basename(targetPath),
+            source_path: item.path,
+            target_path: targetPath,
+            new_inode: newInode
+          });
+        }
+      }
+    } catch (dbErr) {
+      logger.error(`move-items: db update failed for ${item.path} -> ${targetPath}:`, dbErr.message);
+    }
+
+    succeeded.push({ sourcePath: item.path, targetPath });
+  }
+  return { succeeded, failed, skipped };
+});
+
+/**
+ * Drag & drop: copy a batch of files/folders into a target directory.
+ * Emits `fileCopied` audit entries for files. Folders are copied on disk but
+ * their new `dirs` rows are deferred to the next background scan (same policy
+ * as delete-items for folder trashing).
+ */
+ipcMain.handle('copy-items', async (event, { items, targetDirPath, onCollision } = {}) => {
+  const succeeded = [];
+  const failed = [];
+  const skipped = [];
+  if (!Array.isArray(items) || items.length === 0 || !targetDirPath) {
+    return { succeeded, failed, skipped };
+  }
+  if (!(await fs.pathExists(targetDirPath))) {
+    return { succeeded, failed: items.map(i => ({ path: i?.path, error: 'Target directory does not exist' })), skipped };
+  }
+
+  for (const item of items) {
+    if (!item || !item.path) {
+      failed.push({ path: String(item?.path || ''), error: 'Missing path' });
+      continue;
+    }
+    const baseName = path.basename(item.path);
+    if (baseName === '.' || baseName === '..') {
+      failed.push({ path: item.path, error: 'Refusing to copy meta entry' });
+      continue;
+    }
+    if (item.isFolder && fs.isAncestorOrSelf(item.path, targetDirPath)) {
+      failed.push({ path: item.path, error: 'Cannot copy folder into itself or a descendant' });
+      continue;
+    }
+
+    let resolved;
+    try {
+      resolved = await _resolveDropTarget(item.path, targetDirPath, onCollision);
+    } catch (err) {
+      failed.push({ path: item.path, error: err.message });
+      continue;
+    }
+    if (resolved.skip) { skipped.push({ path: item.path, reason: 'collision' }); continue; }
+    const targetPath = resolved.targetPath;
+
+    try {
+      if (resolved.overwrite) {
+        await fs._removeRecursive(targetPath);
+      }
+      await fs.copyItem(item.path, targetPath);
+    } catch (err) {
+      logger.error(`copy-items: filesystem error for ${item.path} -> ${targetPath}:`, err.message);
+      failed.push({ path: item.path, error: err.message });
+      continue;
+    }
+
+    try {
+      if (!item.isFolder) {
+        const existingDir = db.getDirectory(targetDirPath);
+        let newDirId = existingDir ? existingDir.id : null;
+        if (!newDirId) {
+          try {
+            const st = fsSync.statSync(targetDirPath);
+            newDirId = db.getOrCreateDirectory(targetDirPath, st.ino.toString());
+          } catch (_) { newDirId = null; }
+        }
+        if (newDirId) {
+          const st = fsSync.statSync(targetPath);
+          db.insertCopiedFileRow({
+            new_inode: st.ino.toString(),
+            new_dir_id: newDirId,
+            new_filename: path.basename(targetPath),
+            source_path: item.path,
+            target_path: targetPath,
+            size: st.size,
+            mode: st.mode,
+            dateModified: st.mtime.getTime(),
+            dateCreated: st.birthtime.getTime()
+          });
+        }
+      }
+    } catch (dbErr) {
+      logger.error(`copy-items: db update failed for ${item.path} -> ${targetPath}:`, dbErr.message);
+    }
+
+    succeeded.push({ sourcePath: item.path, targetPath });
+  }
+  return { succeeded, failed, skipped };
+});
+
+/**
  * Custom Actions: Delete an action by id
  */
 ipcMain.handle('delete-custom-action', (event, id) => {

@@ -6,6 +6,7 @@
 import * as sidebar from './sidebar.js';
 import * as utils from './utils.js';
 import * as terminal from './terminal.js';
+import { attachDragDropForPanel } from './dragdrop.js';
 import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
@@ -3104,6 +3105,13 @@ async function initializeGridForPanel(panelId) {
 
 	const $gridContainer = $(`#panel-${panelId} .panel-grid`);
 	w2ui[gridName].render($gridContainer[0]);
+
+	// Wire drag-and-drop (move default, Ctrl = copy) for this panel.
+	try {
+		attachDragDropForPanel(panelId, { panelState, navigateToDirectory });
+	} catch (err) {
+		console.warn('attachDragDropForPanel failed for panel', panelId, err);
+	}
 
 	$(document).off(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`)
 		.on(`click.stop-scan-${panelId}`, `#btn-stop-scan-${panelId}`, function () {

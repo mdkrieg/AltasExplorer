@@ -421,6 +421,66 @@ button:active {
   color: white;
 }
 
+/* ---- Drag & drop feedback ---- */
+/* Highlight applied directly to the <tr> (main + frozen tables) while a drag
+   is hovering a valid folder drop target. Orange with a brief fade-out after
+   the drop completes (see .drop-target-folder-fade). */
+.drop-target-folder,
+.drop-target-folder > td {
+  background-color: #ffd59a !important;
+  transition: background-color 120ms ease-out, outline-color 120ms ease-out;
+}
+.drop-target-folder {
+  outline: 2px solid #ff8c00;
+  outline-offset: -2px;
+}
+
+/* Post-drop fade: JS swaps .drop-target-folder for this class on drop. The
+   orange border drops immediately (no outline on this class); the fill holds
+   at solid orange briefly, then fades to transparent.
+   NOTE: the animation is applied to the <td> cells (not the <tr>) because
+   w2ui paints row striping on the cells. We must NOT set background-color
+   with !important here -- animations cannot override !important declarations
+   so the fade would silently never play. */
+.drop-target-folder-fade > td {
+  animation: aedd-drop-fade 2500ms ease-out forwards;
+}
+@keyframes aedd-drop-fade {
+  0%   { background-color: #ffffff; }
+  40%  { background-color: #ffd59a; }
+  100% { background-color: transparent; }
+}
+
+.panel-grid.drop-target-panel,
+.panel-header.drop-target-panel {
+  box-shadow: inset 0 0 0 2px #ff8c00;
+  background-color: rgba(255, 213, 154, 0.55);
+}
+/* Panel/header fade: drop the inset orange border immediately, hold the
+   translucent orange fill for a moment, then fade it out. */
+.panel-grid.drop-target-panel-fade,
+.panel-header.drop-target-panel-fade {
+  animation: aedd-drop-fade-panel 5000ms ease-out forwards;
+}
+@keyframes aedd-drop-fade-panel {
+  0%   { background-color: rgba(255, 213, 154, 0.55); }
+  40%  { background-color: rgba(255, 213, 154, 0.55); }
+  100% { background-color: transparent; }
+}
+
+.dragging-source,
+.dragging-source > td {
+  opacity: 0.45;
+}
+
+.w2ui-grid-records tr[draggable="true"],
+.w2ui-grid-frecords tr[draggable="true"] {
+  cursor: grab;
+}
+tr.dragging-source {
+  cursor: grabbing;
+}
+
 .panel-item {
   display: flex;
   flex-direction: column;

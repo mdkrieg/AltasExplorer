@@ -1,4 +1,5 @@
 const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path');
 const logger = require('./logger');
 
@@ -271,6 +272,91 @@ class FilesystemService {
     logger.info('Drive cache invalid or expired, refreshing...');
     await this.refreshDrivesCache();
     return this.driveCache;
+  }
+
+  // ---------- Move / Copy helpers (drag-and-drop) ----------
+
+  /**
+   * Async existence check. Returns true iff the path is reachable via stat.
+   */
+  async pathExists(p) {
+    if (!p || typeof p !== 'string') return false;
+    try {
+      await fsp.stat(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Case-insensitive "is `candidate` the same path as `ancestor` or a descendant?"
+   * Works with forward or backward slashes; used to block dropping a folder into
+   * itself or its own descendants. Both inputs should be absolute.
+   */
+  isAncestorOrSelf(ancestor, candidate) {
+    if (!ancestor || !candidate) return false;
+    const norm = (s) => path.resolve(s).replace(/[\\/]+$/, '').toLowerCase();
+    const a = norm(ancestor);
+    const c = norm(candidate);
+    if (a === c) return true;
+    const sep = path.sep.toLowerCase();
+    return c.startsWith(a + sep) || c.startsWith(a + '/') || c.startsWith(a + '\\');
+  }
+
+  /**
+   * Produce a non-colliding destination path by appending " (2)", " (3)", ...
+   * before the extension (files) or at the end of the name (folders).
+   */
+  async pickNonCollidingPath(targetDir, baseName) {
+    const ext = path.extname(baseName);
+    const stem = ext ? baseName.slice(0, -ext.length) : baseName;
+    let n = 2;
+    while (n < 10000) {
+      const candidate = path.join(targetDir, `${stem} (${n})${ext}`);
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await this.pathExists(candidate))) return candidate;
+      n += 1;
+    }
+    throw new Error('Too many name collisions while resolving rename');
+  }
+
+  /**
+   * Recursively remove a directory or file. Used after a cross-device copy
+   * fallback when rename(2) returns EXDEV.
+   */
+  async _removeRecursive(p) {
+    await fsp.rm(p, { recursive: true, force: true });
+  }
+
+  /**
+   * Move a file or folder. Uses fs.rename when possible; on EXDEV (cross-drive)
+   * falls back to recursive copy + delete so folder moves across drives work.
+   * Caller is responsible for collision handling (pass a target that does not
+   * yet exist).
+   */
+  async moveItem(sourcePath, targetPath) {
+    if (!sourcePath || !targetPath) throw new Error('moveItem: source and target are required');
+    try {
+      await fsp.rename(sourcePath, targetPath);
+      return;
+    } catch (err) {
+      if (err && err.code === 'EXDEV') {
+        await fsp.cp(sourcePath, targetPath, { recursive: true, errorOnExist: true, force: false });
+        await this._removeRecursive(sourcePath);
+        return;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Recursively copy a file or folder. Caller is responsible for collision
+   * handling (pass a target that does not yet exist).
+   */
+  async copyItem(sourcePath, targetPath) {
+    if (!sourcePath || !targetPath) throw new Error('copyItem: source and target are required');
+    await fsp.cp(sourcePath, targetPath, { recursive: true, errorOnExist: true, force: false });
   }
 }
 

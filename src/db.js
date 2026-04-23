@@ -818,6 +818,142 @@ class DatabaseService {
     `).all();
   }
 
+  // ---------- Drag & drop: move / copy ----------
+  //
+  // These transactions mirror the trash-staging pattern: callers perform the
+  // filesystem operation first (or after staging) and invoke these helpers to
+  // keep files/dirs rows consistent and to emit audit history entries tagged
+  // with source: 'user-app'.
+
+  /**
+   * Reparent a files row to a new directory, optionally renaming it, and emit a
+   * `fileMoved` file_history entry. The caller must ensure the destination
+   * `dirs` row exists (use getOrCreateDirectory). Also clears any matching
+   * orphan rows that may have been created by a background scan that already
+   * observed the move.
+   *
+   * @param {object} params
+   * @param {string} params.inode            File inode (unchanged by a same-drive rename).
+   * @param {number} params.old_dir_id       Source dir id.
+   * @param {number} params.new_dir_id       Destination dir id.
+   * @param {string} params.new_filename     Destination filename (may equal the original).
+   * @param {string} params.source_path      Absolute source path (for audit).
+   * @param {string} params.target_path      Absolute destination path (for audit).
+   * @param {string} [params.new_inode]      Destination inode when a cross-drive copy changed it.
+   * @returns {{ file_id: number|null, filename: string|null, moved: boolean }}
+   */
+  moveFileRow({ inode, old_dir_id, new_dir_id, new_filename, source_path, target_path, new_inode }) {
+    const run = this.db.transaction(() => {
+      const row = this.db.prepare(
+        'SELECT id, filename FROM files WHERE inode = ? AND dir_id = ?'
+      ).get(inode, old_dir_id);
+      if (!row) {
+        // No row to move (e.g. folder, or the scan hadn't recorded it yet). Still
+        // record an orphan cleanup so the UI stays consistent.
+        this.db.prepare('DELETE FROM orphans WHERE inode = ? AND dir_id = ?').run(inode, old_dir_id);
+        return { file_id: null, filename: null, moved: false };
+      }
+      const effectiveInode = new_inode || inode;
+      this.db.prepare(
+        'UPDATE files SET dir_id = ?, filename = ?, inode = ? WHERE id = ?'
+      ).run(new_dir_id, new_filename, effectiveInode, row.id);
+      this.db.prepare('DELETE FROM orphans WHERE inode = ? AND dir_id = ?').run(inode, old_dir_id);
+      this.insertFileHistory(effectiveInode, new_dir_id, row.id, 'fileMoved', {
+        filename: new_filename,
+        previousFilename: row.filename,
+        oldPath: source_path,
+        newPath: target_path,
+        source: 'user-app'
+      });
+      return { file_id: row.id, filename: row.filename, moved: true };
+    });
+    return run();
+  }
+
+  /**
+   * Rewrite a dirs row (and every descendant dirs row) after a folder move on
+   * disk. Updates `dirname` by prefix-replacement and re-parents the top-level
+   * row. Emits a `folderMoved` dir_history entry. Safe to call even when the
+   * descendant rows are many — all changes are inside a single transaction.
+   *
+   * @param {object} params
+   * @param {string} params.old_dirname     Source absolute path (matches dirs.dirname).
+   * @param {string} params.new_dirname     Destination absolute path.
+   * @param {number|null} params.new_parent_id Parent dir id of the destination.
+   */
+  moveDirectoryTree({ old_dirname, new_dirname, new_parent_id }) {
+    if (!old_dirname || !new_dirname) {
+      throw new Error('moveDirectoryTree: old_dirname and new_dirname are required');
+    }
+    const run = this.db.transaction(() => {
+      const topRow = this.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(old_dirname);
+      // Descendant rewrite: match both '/' and '\' separators defensively.
+      const oldPrefixFwd = old_dirname.replace(/[\\/]+$/, '') + '/';
+      const oldPrefixBwd = old_dirname.replace(/[\\/]+$/, '') + '\\';
+      const newPrefixFwd = new_dirname.replace(/[\\/]+$/, '') + '/';
+      const newPrefixBwd = new_dirname.replace(/[\\/]+$/, '') + '\\';
+      // Two passes so we can update each prefix independently without double-replacement.
+      this.db.prepare(`
+        UPDATE dirs
+        SET dirname = ? || substr(dirname, length(?) + 1)
+        WHERE dirname LIKE ? ESCAPE '\\'
+      `).run(newPrefixFwd, oldPrefixFwd, oldPrefixFwd.replace(/[%_\\]/g, '\\$&') + '%');
+      this.db.prepare(`
+        UPDATE dirs
+        SET dirname = ? || substr(dirname, length(?) + 1)
+        WHERE dirname LIKE ? ESCAPE '\\'
+      `).run(newPrefixBwd, oldPrefixBwd, oldPrefixBwd.replace(/[%_\\]/g, '\\$&') + '%');
+      if (topRow) {
+        this.db.prepare('UPDATE dirs SET dirname = ?, parent_id = ? WHERE id = ?')
+          .run(new_dirname, new_parent_id, topRow.id);
+        try {
+          this.insertDirHistory(topRow.id, 'folderMoved', {
+            dirname: new_dirname,
+            oldPath: old_dirname,
+            newPath: new_dirname,
+            source: 'user-app'
+          });
+        } catch (_) { /* history is best-effort */ }
+      }
+      return { top_dir_id: topRow ? topRow.id : null };
+    });
+    return run();
+  }
+
+  /**
+   * Insert a files row for a freshly-copied file and emit a `fileCopied`
+   * file_history entry. The caller provides the new inode reported by the
+   * filesystem after the copy.
+   */
+  insertCopiedFileRow({ new_inode, new_dir_id, new_filename, source_path, target_path, size = 0, mode = null, dateModified = null, dateCreated = null }) {
+    const run = this.db.transaction(() => {
+      const info = this.db.prepare(`
+        INSERT INTO files (inode, dir_id, filename, dateModified, dateCreated, size, mode, tags)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(inode, dir_id) DO UPDATE SET
+          filename = excluded.filename,
+          dateModified = excluded.dateModified,
+          dateCreated = excluded.dateCreated,
+          size = excluded.size,
+          mode = excluded.mode
+      `).run(new_inode, new_dir_id, new_filename, dateModified, dateCreated, size, mode);
+      const fileRow = this.db.prepare(
+        'SELECT id FROM files WHERE inode = ? AND dir_id = ?'
+      ).get(new_inode, new_dir_id);
+      const fileId = fileRow ? fileRow.id : (info && info.lastInsertRowid) || null;
+      if (fileId) {
+        this.insertFileHistory(new_inode, new_dir_id, fileId, 'fileCopied', {
+          filename: new_filename,
+          oldPath: source_path,
+          newPath: target_path,
+          source: 'user-app'
+        });
+      }
+      return { file_id: fileId };
+    });
+    return run();
+  }
+
   /**
    * Get a single file by inode and dirname
    */
