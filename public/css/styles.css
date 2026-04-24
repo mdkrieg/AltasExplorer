@@ -2401,7 +2401,9 @@ hr {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  flex: 1;
+  min-width: 22px;
+  max-width: 36px;
   height: 28px;
   padding: 0;
   font-size: 15px;
@@ -2410,7 +2412,6 @@ hr {
   border-radius: 4px;
   cursor: pointer;
   color: #444;
-  flex-shrink: 0;
 }
 
 #btn-sidebar-add-panel {

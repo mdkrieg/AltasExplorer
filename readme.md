@@ -66,8 +66,8 @@ Philosophy:
 * Would it be possible to have a global hotkey (fires even without focus) that opens an always-on-top popup which offers a list of every path of all currently open directories and all favorites?
 [ ] LOCAL FAVORITES - instead of links, the user can populate local favorites. I'm thinking this should be in notes.txt - possibly without any special directive but anything that is a valid path gets shown in the sidebar when the user is browsing that dir.
 [x] TODOs in notes get aggregated
-[ ] Copy as Path in context menu
-[ ] Autotagging rules - need some kind of confirmation pattern for this
+[x] Copy as Path in context menu
+[x] Autotagging rules - need some kind of confirmation pattern for this
 [ ] Make some kind of connection where a tag that came from notes will point the user to the notes mentioning it
 [ ] One-click Backups
 [ ] Diffing between files
@@ -102,39 +102,6 @@ Label Manager
 [x] Attribute type options show invalid character in dropdown menu
 [x] Attribute applies-to field make Directory the default, move Both to bottom of list
 
-```
-I'd like to add an "Auto Labelling" feature which is a tab in the Label Manager. At a high level, this just executes a list of rules against files that are browsed or monitored and *suggests* a single label (tag or category). It will never apply a tag or category on its own unlike how the inherit category works. The autolabel rules live as JSON in the user's home folder next to the other label definitions.
-
-Rule Definition:
-* An ID which is unique and unchangeable to the user
-* A name which does not need to be unique
-* A description
-* A set of patterns which need to be satisfied. There must be at least one rule and there is no limit to the number of rules. A rule has the following shape:
-  * Apply Category/Tag of {x} if:
-    * Self/Parent - determines what the rule is evaluated against, then the possible evaluations are (user selects only one of the following):
-      * Has Category {x} - only single category possible so only can set one category via dropdown
-      * Has Tags {xyz} - any number of tags can be set here
-      * Has Attribute {x} value {abc} - x can be any attribute at all (selected by dropdown) as we don't necessarily know the category. Then {abc} is any value (including blank/empty), the type of input is determined by the attribute type
-      * Name matches regex {abc} - where the name of the item (basename) matches a regular expression input by the user.
-      * Path matches regex {abc} - where the FULL PATH matches a regular expression input by the user. This one also has an option to "normalize" to Unix-style (/) path separators to aid in writing the regex
-    * "Required" checkbox - specifies a requied rule: The Rule returns positive if ANY of the rules are met and ALL the required rules are met
-
-Suggestion Pattern:
-* Add a label icon (tag.svg) in the grid toolbar which has a badge showing the number of rules matching the currently displayed items (applies to orphans and trash as well but only if they are in view)
-* Clicking on the label icon (tooltip: Suggested Labels) opens a modal with a grid that lists the positive rules
-* Above the grid are buttons:
-  * Apply
-  * Select All
-  * Select None
-* The grid contains:
-  * A checkbox (to determine what applies)
-  * ID (the auto-assigned rule ID)
-  * Name
-  * icon:comment-info.svg -> offers a tooltip which shows a summary of the rules and whether they returned positive or negative (use a green check or red X - emoji are fine for now).
-  * Description
-* Grid supports multiselect and pressing Space toggles the checkboxes on a group basis (if first one is off -> all on | if first one is on -> all off)
-```
-
 Gallery View:
 [ ] Support coordinate organizing, like the old windows desktops
 [ ] Make the thumbnail size changeable and retentive per directory
@@ -166,7 +133,7 @@ Saved Layouts:
 [x] Double clicking ALY file opens layout
 
 General:
-[ ] All dropdowns for selecting category must have the customized folder icon next to them
+[x] All dropdowns for selecting category must have the customized folder icon next to them
   [ ] Show sample icon when creating a category
   [ ] Show in dropdown for category "Inherits" field
 [ ] When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
