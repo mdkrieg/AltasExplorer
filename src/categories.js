@@ -323,6 +323,12 @@ class CategoryService {
       if (typeof settings.monitoring_observation_dead_time_unit === 'undefined') {
         settings.monitoring_observation_dead_time_unit = 'hours';
       }
+      if (typeof settings.auto_update_check_enabled === 'undefined') {
+        settings.auto_update_check_enabled = true;
+      }
+      if (typeof settings.auto_update_check_interval_hours === 'undefined') {
+        settings.auto_update_check_interval_hours = 24;
+      }
       return settings;
     } catch {
       return { 
@@ -343,7 +349,9 @@ class CategoryService {
         monitoring_max_dirs_per_pass: 10,
         monitoring_inter_scan_delay_ms: 50,
         monitoring_observation_dead_time_value: 1,
-        monitoring_observation_dead_time_unit: 'hours'
+        monitoring_observation_dead_time_unit: 'hours',
+        auto_update_check_enabled: true,
+        auto_update_check_interval_hours: 24
       };
     }
   }

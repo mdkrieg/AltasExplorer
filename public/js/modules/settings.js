@@ -176,6 +176,12 @@ export function switchSettingsTab(tabName) {
 			initializedSettingsTabs.add('customactions');
 			initializeCustomActionsGrid().then(() => initializeCustomActionsForm()).then(() => setupCustomActionsDivider());
 		}
+	} else if (tabName === 'updates') {
+		$tab.css('display', 'flex');
+		if (!initializedSettingsTabs.has('updates')) {
+			initializedSettingsTabs.add('updates');
+			initializeUpdatesTab();
+		}
 	} else {
 		$tab.show();
 	}
@@ -2662,3 +2668,123 @@ $(document).on('click.alIconSelClose', function (e) {
 		$('.al-icon-sel .cat-icon-select-options').hide();
 	}
 });
+// ── Updates Tab ─────────────────────────────────────────────────────────────
+
+export async function initializeUpdatesTab() {
+	// Show current app version
+	try {
+		const version = await window.electronAPI.getAppVersion();
+		$('#updates-current-version').text(version);
+	} catch (_) {}
+
+	// Load update settings
+	try {
+		const s = await window.electronAPI.getSettings();
+		$('#updates-auto-check-enabled').prop('checked', s.auto_update_check_enabled !== false);
+		$('#updates-auto-check-interval').val(s.auto_update_check_interval_hours || 24);
+	} catch (_) {}
+
+	$('#btn-check-updates').off('click.updatesCheck').on('click.updatesCheck', async function () {
+		$('#updates-check-status').css('color', '#555').text('Checking for updates...');
+		$(this).prop('disabled', true);
+		try {
+			const result = await window.electronAPI.checkForUpdates();
+			if (result && result.success === false) {
+				$('#updates-check-status').css('color', '#d32f2f').text('Error: ' + (result.error || 'Unknown error'));
+			}
+			// Status will be updated via onUpdateAvailable / onUpdateNotAvailable events
+		} catch (err) {
+			$('#updates-check-status').css('color', '#d32f2f').text('Error: ' + err.message);
+		} finally {
+			$(this).prop('disabled', false);
+		}
+	});
+
+	$('#btn-save-update-settings').off('click.updatesSave').on('click.updatesSave', async function () {
+		try {
+			const enabled = $('#updates-auto-check-enabled').is(':checked');
+			let interval = parseInt($('#updates-auto-check-interval').val() || '24');
+			if (isNaN(interval) || interval < 1) interval = 1;
+			if (interval > 168) interval = 168;
+			$('#updates-auto-check-interval').val(interval);
+
+			const settings = await window.electronAPI.getSettings();
+			settings.auto_update_check_enabled = enabled;
+			settings.auto_update_check_interval_hours = interval;
+			const result = await window.electronAPI.saveSettings(settings);
+			if (result && result.success === false) throw new Error(result.error || 'Save failed');
+			showFormSuccess('updates-settings-status', 'Settings saved.');
+		} catch (err) {
+			showFormError('updates-settings-status', 'Error: ' + err.message);
+		}
+	});
+
+	$('#btn-restart-to-update').off('click.updatesRestart').on('click.updatesRestart', () => {
+		window.electronAPI.quitAndInstall();
+	});
+}
+
+// ── Update Notification Banner ──────────────────────────────────────────────
+
+export function initializeUpdateBanner() {
+	if (!window.electronAPI) return;
+
+	function showBanner() { $('#update-banner').css('display', 'flex'); }
+	function hideBanner() { $('#update-banner').hide(); }
+
+	window.electronAPI.onUpdateAvailable((data) => {
+		$('#update-banner-msg').text(`Update ${data.version} is available.`);
+		$('#update-banner-progress').hide();
+		$('#btn-update-banner-action').text('Download').show();
+		$('#btn-update-banner-dismiss').show();
+		$('#updates-check-status').css('color', '#1565C0').text(`Update ${data.version} available – click Download in the banner.`);
+		showBanner();
+	});
+
+	window.electronAPI.onUpdateNotAvailable(() => {
+		$('#updates-check-status').css('color', '#388e3c').text('You are running the latest version.');
+	});
+
+	window.electronAPI.onUpdateDownloadProgress((progress) => {
+		const pct = Math.round(progress.percent || 0);
+		$('#update-banner-msg').text(`Downloading update…`);
+		$('#update-banner-progress').css('display', 'flex');
+		$('#update-banner-bar').css('width', pct + '%');
+		$('#update-banner-pct').text(pct + '%');
+		$('#btn-update-banner-action').hide();
+		$('#updates-progress-bar').css('width', pct + '%');
+		$('#updates-download-section').css('display', 'flex');
+		const mbTransferred = ((progress.transferred || 0) / 1048576).toFixed(1);
+		const mbTotal = ((progress.total || 0) / 1048576).toFixed(1);
+		$('#updates-progress-text').text(`${mbTransferred} / ${mbTotal} MB`);
+		showBanner();
+	});
+
+	window.electronAPI.onUpdateDownloaded((data) => {
+		$('#update-banner-msg').text(`Update ${data.version} ready to install.`);
+		$('#update-banner-progress').hide();
+		$('#btn-update-banner-action').text('Restart Now').show();
+		$('#btn-update-banner-dismiss').show();
+		$('#btn-restart-to-update').show();
+		showBanner();
+	});
+
+	window.electronAPI.onUpdateError((msg) => {
+		$('#updates-check-status').css('color', '#d32f2f').text('Update error: ' + msg);
+		hideBanner();
+	});
+
+	$(document).off('click.bannerAction').on('click.bannerAction', '#btn-update-banner-action', function () {
+		const label = $(this).text();
+		if (label === 'Download') {
+			$(this).prop('disabled', true).text('Downloading…');
+			window.electronAPI.downloadUpdate();
+		} else if (label === 'Restart Now') {
+			window.electronAPI.quitAndInstall();
+		}
+	});
+
+	$(document).off('click.bannerDismiss').on('click.bannerDismiss', '#btn-update-banner-dismiss', function () {
+		hideBanner();
+	});
+}

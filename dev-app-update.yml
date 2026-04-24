@@ -1,0 +1,10 @@
+# Used by electron-updater when running in dev mode (npm start / electron .)
+# In production, electron-builder generates app-update.yml automatically from
+# the "publish" config in package.json.
+#
+# To test update flows locally set autoUpdater.forceDevUpdateConfig = true
+# in main.js (temporarily) and bump the version in package.json below the
+# latest published GitHub Release version.
+provider: github
+owner: mdkrieg
+repo: AltasExplorer

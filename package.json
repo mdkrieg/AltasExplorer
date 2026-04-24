@@ -42,7 +42,13 @@
         "name": "Atlas Layout",
         "role": "Editor"
       }
-    ]
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "mdkrieg",
+      "repo": "AltasExplorer",
+      "releaseType": "draft"
+    }
   },
   "keywords": [
     "file",

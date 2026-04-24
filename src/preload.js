@@ -290,6 +290,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTerminalOutput: (callback) => ipcRenderer.on('terminal-output', (event, args) => callback(args)),
   onTerminalExit: (callback) => ipcRenderer.on('terminal-exit', (event, args) => callback(args)),
 
+  // Auto-update
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  quitAndInstall: () => ipcRenderer.invoke('quit-and-install'),
+  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (_, data) => callback(data)),
+  onUpdateNotAvailable: (callback) => ipcRenderer.on('update-not-available', (_, data) => callback(data)),
+  onUpdateDownloadProgress: (callback) => ipcRenderer.on('update-download-progress', (_, data) => callback(data)),
+  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_, data) => callback(data)),
+  onUpdateError: (callback) => ipcRenderer.on('update-error', (_, msg) => callback(msg)),
+
   // Video thumbnail extraction
   getVideoThumbnail: (filePath) => ipcRenderer.invoke('get-video-thumbnail', filePath)
 });

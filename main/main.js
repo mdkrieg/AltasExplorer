@@ -22,6 +22,7 @@ const autoLabels = require('../src/autoLabels');
 const { execFile } = require('child_process');
 const ffmpegBin = require('ffmpeg-static');
 const { dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
 let pendingLayoutFile = null; // File to load on startup (from command line or file association)
@@ -1661,6 +1662,46 @@ ipcMain.handle('save-settings', (event, settings) => {
     logger.error('Error saving settings:', err.message);
     return { success: false, error: err.message };
   }
+});
+
+/**
+ * Auto-Update: Get current app version
+ */
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
+
+/**
+ * Auto-Update: Trigger a manual update check
+ */
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { success: true, version: result?.updateInfo?.version || null };
+  } catch (err) {
+    logger.error('[Updater] Manual check error:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Auto-Update: Start downloading the available update
+ */
+ipcMain.handle('download-update', async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (err) {
+    logger.error('[Updater] Download error:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Auto-Update: Quit and install the downloaded update
+ */
+ipcMain.handle('quit-and-install', () => {
+  autoUpdater.quitAndInstall(false, true);
 });
 
 /**
@@ -4641,6 +4682,94 @@ function parseCommandLineArgs() {
   }
 }
 
+/**
+ * Auto-Updater: wire up electron-updater events, IPC forwarding, and scheduled checks.
+ * Must be called after createWindow() so mainWindow is available.
+ */
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+
+  autoUpdater.on('checking-for-update', () => {
+    logger.info('[Updater] Checking for update...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    logger.info('[Updater] Update available:', info.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-available', {
+        version: info.version,
+        releaseName: info.releaseName || null,
+        releaseNotes: info.releaseNotes || null,
+        releaseDate: info.releaseDate || null
+      });
+    }
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    logger.info('[Updater] App is up to date:', info.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-not-available', { version: info.version });
+    }
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-download-progress', {
+        percent: progress.percent,
+        transferred: progress.transferred,
+        total: progress.total,
+        bytesPerSecond: progress.bytesPerSecond
+      });
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    logger.info('[Updater] Update downloaded:', info.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-downloaded', { version: info.version });
+    }
+  });
+
+  autoUpdater.on('error', (err) => {
+    logger.error('[Updater] Error:', err.message);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-error', err.message);
+    }
+  });
+
+  // Initial check after a short startup delay
+  setTimeout(() => {
+    try {
+      const settings = categories.getSettings();
+      if (settings.auto_update_check_enabled !== false) {
+        autoUpdater.checkForUpdates().catch(err => {
+          logger.warn('[Updater] Startup check failed:', err.message);
+        });
+      }
+    } catch (err) {
+      logger.warn('[Updater] Could not start update check:', err.message);
+    }
+  }, 10000);
+
+  // Recurring scheduled check based on configured interval
+  const settings = categories.getSettings();
+  const intervalHours = Math.max(1, Number(settings.auto_update_check_interval_hours) || 24);
+  setInterval(() => {
+    try {
+      const currentSettings = categories.getSettings();
+      if (currentSettings.auto_update_check_enabled !== false) {
+        autoUpdater.checkForUpdates().catch(err => {
+          logger.warn('[Updater] Scheduled check failed:', err.message);
+        });
+      }
+    } catch (err) {
+      logger.warn('[Updater] Scheduled check error:', err.message);
+    }
+  }, intervalHours * 60 * 60 * 1000);
+}
+
 // Call this immediately to parse command-line args
 parseCommandLineArgs();
 
@@ -4649,6 +4778,7 @@ app.on('ready', () => {
   Menu.setApplicationMenu(null);
   initialize();
   createWindow();
+  setupAutoUpdater();
 
   // ── Session-level network firewall ──────────────────────────────────────────
   // Block ALL outbound HTTP/HTTPS/WebSocket requests at the Chromium network

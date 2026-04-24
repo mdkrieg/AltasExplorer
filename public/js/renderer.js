@@ -228,6 +228,8 @@ async function initialize() {
 
     attachEventListeners();
 
+    settings.initializeUpdateBanner();
+
     window.electronAPI.onCloseRequest(() => {
       panels.handleCloseRequest();
     });
