@@ -37,6 +37,7 @@ Philosophy:
 [x] regression, delete key no longer deletes files or folders
 [ ] Category changes on directories not working correctly in history events (category in below form doesn't update and the comment should be what says it was an auto-label event)
 [ ] Orange badge highlighting for indicating where a favorite will target should revert after navigation is successful
+[ ] Panel title path input should not wordwrap but instead overflow hidden
 
 ### ROADMAP:
 [x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
@@ -66,7 +67,7 @@ Philosophy:
 * I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
 * Forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)
 * Would it be possible to have a global hotkey (fires even without focus) that opens an always-on-top popup which offers a list of every path of all currently open directories and all favorites?
-[ ] LOCAL FAVORITES - instead of links, the user can populate local favorites. I'm thinking this should be in notes.txt - possibly without any special directive but anything that is a valid path gets shown in the sidebar when the user is browsing that dir.
+[x] LOCAL FAVORITES - instead of links, the user can populate local favorites. I'm thinking this should be in notes.txt - possibly without any special directive but anything that is a valid path gets shown in the sidebar when the user is browsing that dir.
 [x] TODOs in notes get aggregated
 [x] Copy as Path in context menu
 [x] Autotagging rules - need some kind of confirmation pattern for this

@@ -1025,6 +1025,45 @@ textarea {
   height: 14px;
 }
 
+.rating-display-stars,
+.rating-picker {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+
+.rating-display-stars .star,
+.rating-picker .star {
+  font-size: 18px;
+  line-height: 1;
+  color: #ccc;
+  cursor: default;
+}
+
+.rating-picker .star {
+  cursor: pointer;
+  transition: color 0.1s;
+}
+
+.rating-display-stars .star.filled,
+.rating-picker .star.filled {
+  color: #f5a623;
+}
+
+.rating-picker .star.hover {
+  color: #f5a623;
+}
+
+.grid-attr-copy-cell .rating-display-stars {
+  display: inline-flex;
+  flex: unset;
+}
+
+.grid-attr-copy-cell .rating-display-stars .star {
+  font-size: 14px;
+}
+
 .attr-value-with-copy {
   display: flex;
   align-items: center;
@@ -3304,10 +3343,13 @@ hr {
 /* ── LOCAL FAVORITES group styling ────────────────────────────────────────── */
 /* Tan background for the group header row */
 #w2ui-favorites [data-id="local-favorites"].w2ui-node-group {
-  background-color: #f2e0c8;
+  background: none;
+}
+#w2ui-favorites [data-id="local-favorites"].w2ui-node-group .w2ui-group-text{
+  text-shadow: 1px 1px 2px #ffe76e, 0 0 6px #ffd69e;
 }
 #w2ui-favorites [data-id="local-favorites"].w2ui-node-group:hover {
-  background-color: #e8d4b8;
+  background-color: #f2e0c8;
 }
 
 /* Superscript panel number badge on LOCAL FAVORITES items */

@@ -1034,7 +1034,8 @@ function populateAttributeForm(record) {
 	const options = record.options ? record.options.split(',').map(item => item.trim()).filter(Boolean) : [];
 	options.forEach(option => addAttrOption(option));
 	toggleAttrOptionsSection();
-	if ((record.type || '').toLowerCase() === 'selectable') {
+	const typeLower = (record.type || '').toLowerCase();
+	if (typeLower === 'selectable' || typeLower === 'yes-no' || typeLower === 'rating') {
 		$('#form-attr-default-select').val(record.default || '');
 	} else {
 		$('#form-attr-default').val(record.default || '');
@@ -1071,9 +1072,24 @@ export function toggleAttrOptionsSection() {
 		$('#form-attr-default').hide();
 		$('#form-attr-default-select').show();
 		updateAttrDefaultDropdown();
+	} else if (type === 'Yes-No') {
+		$('#form-attr-options-section').hide();
+		$('#form-attr-default').hide();
+		$('#form-attr-default-select')
+			.empty()
+			.append('<option value="">(none)</option>')
+			.append('<option value="Yes">Yes</option>')
+			.append('<option value="No">No</option>')
+			.show();
+	} else if (type === 'Rating') {
+		$('#form-attr-options-section').hide();
+		$('#form-attr-default').hide();
+		const $sel = $('#form-attr-default-select').empty().append('<option value="">(none)</option>');
+		['1', '2', '3', '4', '5'].forEach(n => $sel.append(`<option value="${n}">${'★'.repeat(Number(n))}</option>`));
+		$sel.show();
 	} else {
 		$('#form-attr-options-section').hide();
-		$('#form-attr-default').show();
+		$('#form-attr-default').attr('type', type === 'Numeric' ? 'number' : 'text').show();
 		$('#form-attr-default-select').hide();
 	}
 }
@@ -1129,7 +1145,7 @@ export async function saveAttributeFromForm() {
 	let defaultVal;
 	const options = type === 'Selectable' ? getAttrOptionValues() : [];
 
-	if (type === 'Selectable') {
+	if (type === 'Selectable' || type === 'Yes-No' || type === 'Rating') {
 		defaultVal = $('#form-attr-default-select').val() || '';
 	} else {
 		defaultVal = $('#form-attr-default').val().trim();

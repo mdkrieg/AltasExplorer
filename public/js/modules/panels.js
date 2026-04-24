@@ -4048,10 +4048,13 @@ function neighborRecidGeometric($gallery, currentRecid, direction) {
 function getAttrEditableConfig(attrDefinition) {
 	const type = (attrDefinition?.type || 'string').toLowerCase();
 	if (type === 'yes-no') {
-		return { type: 'list', items: [{ id: 'Yes', text: 'Yes' }, { id: 'No', text: 'No' }], showAll: true, openOnFocus: true };
+		return { type: 'list', items: [{ id: '', text: '(none)' }, { id: 'Yes', text: 'Yes' }, { id: 'No', text: 'No' }], showAll: true, openOnFocus: true };
 	}
 	if (type === 'selectable' && attrDefinition?.options?.length > 0) {
-		return { type: 'list', items: attrDefinition.options.map(o => ({ id: o, text: o })), showAll: true, openOnFocus: true };
+		return { type: 'list', items: [{ id: '', text: '(none)' }, ...attrDefinition.options.map(o => ({ id: o, text: o }))], showAll: true, openOnFocus: true };
+	}
+	if (type === 'rating') {
+		return { type: 'list', items: [{ id: '', text: '(none)' }, { id: '1', text: '★' }, { id: '2', text: '★★' }, { id: '3', text: '★★★' }, { id: '4', text: '★★★★' }, { id: '5', text: '★★★★★' }], showAll: true, openOnFocus: true };
 	}
 	if (type === 'numeric') {
 		return { type: 'float' };
@@ -4244,11 +4247,28 @@ async function copyValueToClipboard(value, anchor) {
 	}
 }
 
+function renderStarsHtml(value, interactive) {
+	const rating = Math.max(0, Math.min(5, parseInt(value, 10) || 0));
+	let stars = '';
+	for (let i = 1; i <= 5; i++) {
+		const filled = i <= rating ? ' filled' : '';
+		stars += `<span class="star${filled}" data-value="${i}">${i <= rating ? '★' : '☆'}</span>`;
+	}
+	if (interactive) {
+		return `<div class="rating-picker"><input type="hidden" class="rating-value" value="${rating}">${stars}</div>`;
+	}
+	return `<div class="rating-display-stars">${stars}</div>`;
+}
+
 function formatCustomAttributeValue(value, type) {
 	if (value === null || value === undefined || value === '') return '';
 	if ((type || '').toLowerCase() === 'yes-no') {
 		if (value === true || value === 'true' || value === 'Yes') return 'Yes';
 		if (value === false || value === 'false' || value === 'No') return 'No';
+	}
+	if ((type || '').toLowerCase() === 'rating') {
+		const n = parseInt(value, 10);
+		return n >= 1 && n <= 5 ? `${n}/5` : '';
 	}
 	return String(value);
 }
@@ -4263,9 +4283,15 @@ function renderGridAttributeCell(record, attrName, attrDefinition) {
 		return '<div class="grid-attr-copy-cell grid-attr-na"><span class="grid-attr-copy-text grid-attr-na-text">---</span></div>';
 	}
 	const rawValue = record[`attr_${attrName}`];
-	const displayValue = formatCustomAttributeValue(rawValue, attrDefinition?.type);
 	const safeAttrName = utils.escapeHtml(attrName);
 	const editBtn = `<button class="btn-attr-edit" data-attr-edit-trigger="true" data-attr-name="${safeAttrName}" title="Edit"><img src="assets/icons/edit.svg" width="16" height="16"></button>`;
+
+	if ((attrDefinition?.type || '').toLowerCase() === 'rating') {
+		const starsHtml = renderStarsHtml(rawValue, false);
+		return `<div class="grid-attr-copy-cell">${starsHtml}${editBtn}</div>`;
+	}
+
+	const displayValue = formatCustomAttributeValue(rawValue, attrDefinition?.type);
 	if (!displayValue) {
 		return `<div class="grid-attr-copy-cell"><span class="grid-attr-copy-text"></span>${editBtn}</div>`;
 	}
@@ -5415,10 +5441,12 @@ export function attachPanelEventListeners(panelId) {
 			const attrs = {};
 			$panel.find('.item-props-attributes .attr-row').each(function () {
 				const name = $(this).data('attr-name');
-				const type = $(this).data('attr-type');
+				const type = ($(this).data('attr-type') || '').toLowerCase();
 				if (!name) return;
-				if ((type || '').toLowerCase() === 'yes-no') {
-					attrs[name] = $(this).find('input[type="checkbox"]').prop('checked');
+				if (type === 'yes-no') {
+					attrs[name] = $(this).find('select').val();
+				} else if (type === 'rating') {
+					attrs[name] = $(this).find('.rating-value').val();
 				} else {
 					attrs[name] = $(this).find('input, select').val();
 				}
@@ -5736,24 +5764,60 @@ export async function updateItemPropertiesPage(panelId) {
 				let controlHtml;
 				if (editMode) {
 					if (type === 'yes-no') {
-						controlHtml = `<input type="checkbox" ${val ? 'checked' : ''}>`;
+						const yesSelected = (val === true || val === 'true' || val === 'Yes') ? 'selected' : '';
+						const noSelected = (val === false || val === 'false' || val === 'No') ? 'selected' : '';
+						controlHtml = `<select><option value="">--</option><option value="Yes" ${yesSelected}>Yes</option><option value="No" ${noSelected}>No</option></select>`;
 					} else if (type === 'selectable' && attr.options && attr.options.length > 0) {
 						const opts = attr.options.map(option => `<option value="${option}" ${String(val) === String(option) ? 'selected' : ''}>${option}</option>`).join('');
-						controlHtml = `<select>${opts}</select>`;
+						controlHtml = `<select><option value="">--</option>${opts}</select>`;
+					} else if (type === 'rating') {
+						controlHtml = renderStarsHtml(val, true);
 					} else if (type === 'numeric') {
 						controlHtml = `<input type="number" value="${val}">`;
 					} else {
 						controlHtml = `<input type="text" value="${String(val)}">`;
 					}
 				} else {
-					const displayValue = formatCustomAttributeValue(val, attr.type);
-					const safeDisplayValue = utils.escapeHtml(displayValue);
-					const copyHtml = attr.copyable ? renderCopyValueButton(displayValue, ' item-props-copy-btn') : '';
-					controlHtml = `<div class="attr-value-with-copy"><span>${safeDisplayValue}</span>${copyHtml}</div>`;
+					if (type === 'rating') {
+						const copyHtml = attr.copyable ? renderCopyValueButton(formatCustomAttributeValue(val, attr.type), ' item-props-copy-btn') : '';
+						controlHtml = `<div class="attr-value-with-copy">${renderStarsHtml(val, false)}${copyHtml}</div>`;
+					} else {
+						const displayValue = formatCustomAttributeValue(val, attr.type);
+						const safeDisplayValue = utils.escapeHtml(displayValue);
+						const copyHtml = attr.copyable ? renderCopyValueButton(displayValue, ' item-props-copy-btn') : '';
+						controlHtml = `<div class="attr-value-with-copy"><span>${safeDisplayValue}</span>${copyHtml}</div>`;
+					}
 				}
 				const $row = $(`<div class="attr-row" data-attr-name="${attr.name}" data-attr-type="${attr.type}"><label>${attr.name}</label>${controlHtml}</div>`);
 				$attrContainer.append($row);
 			});
+
+			// Star rating interaction for edit mode
+			if (editMode) {
+				$attrContainer.off('click.rating mouseenter.rating mouseleave.rating');
+				$attrContainer.on('click.rating', '.rating-picker .star', function () {
+					const $picker = $(this).closest('.rating-picker');
+					const $hidden = $picker.find('.rating-value');
+					const clicked = parseInt($(this).data('value'), 10);
+					const current = parseInt($hidden.val(), 10) || 0;
+					const newVal = clicked === current ? 0 : clicked;
+					$hidden.val(newVal);
+					$picker.find('.star').each(function (i) {
+						const filled = i < newVal;
+						$(this).toggleClass('filled', filled).text(filled ? '★' : '☆');
+					});
+				});
+				$attrContainer.on('mouseenter.rating', '.rating-picker .star', function () {
+					const $picker = $(this).closest('.rating-picker');
+					const hoverVal = parseInt($(this).data('value'), 10);
+					$picker.find('.star').each(function (i) {
+						$(this).toggleClass('hover', i < hoverVal);
+					});
+				});
+				$attrContainer.on('mouseleave.rating', '.rating-picker', function () {
+					$(this).find('.star').removeClass('hover');
+				});
+			}
 		} else {
 			$attrSection.hide();
 		}
