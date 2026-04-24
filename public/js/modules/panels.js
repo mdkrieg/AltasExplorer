@@ -2740,6 +2740,8 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 			panelState[panelId].hasBeenViewed = true;
 			autoLabels.refreshAutoLabelCountAndSuggestions(panelId).then(() => renderPanelToolbar(panelId, 'detail')).catch(() => {});
+			// Update LOCAL FAVORITES with any shortcuts in this directory
+			sidebar.updateLocalFavoritesForPanel(panelId, normalizedPath);
 			return;
 		}
 
@@ -2850,6 +2852,8 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			const mode = panelState[panelId]?.currentCategory?.displayMode === 'gallery' ? 'gallery' : 'detail';
 			renderPanelToolbar(panelId, mode);
 		}).catch(() => {});
+		// Update LOCAL FAVORITES with any shortcuts in this directory
+		sidebar.updateLocalFavoritesForPanel(panelId, normalizedPath);
 
 		if (category && category.enableChecksum) {
 			const grid = panelState[panelId].w2uiGrid;
@@ -4347,7 +4351,7 @@ export async function loadFileTypes() {
 	}
 }
 
-function matchFileType(filename) {
+export function matchFileType(filename) {
 	const lower = filename.toLowerCase();
 	for (const ft of allFileTypes) {
 		const pat = ft.pattern.toLowerCase();
@@ -4856,6 +4860,13 @@ export function removePanel(panelId) {
 	visiblePanels--;
 	setActivePanelId(1);
 	updatePanelLayout();
+
+	// Rebuild LOCAL FAVORITES now that panel layout has changed
+	const panelPaths = {};
+	for (let i = 1; i <= visiblePanels; i++) {
+		if (panelState[i]?.currentPath) panelPaths[i] = panelState[i].currentPath;
+	}
+	sidebar.rebuildLocalFavorites(panelPaths);
 }
 
 function shiftPanelDown(panelId) {

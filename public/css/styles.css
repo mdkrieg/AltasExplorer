@@ -2261,9 +2261,9 @@ hr {
   display: none;
   font-weight: bold;
   font-size: 12px;
-  padding: 2px;
+  padding: 2px 2px 2px 5px;
   border: 1px solid #2196F3 !important;
-  border-radius: 2px !important;
+  border-radius: 15px 0 0 15px !important;
   font-family: inherit;
   flex: 1;
   width: 100%;
@@ -3294,6 +3294,58 @@ hr {
   width: 16px;
   height: 16px;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23f0a500' d='M1 3a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293L8.707 3.7A1 1 0 0 0 9.414 4H14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3z'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+/* ── LOCAL FAVORITES group styling ────────────────────────────────────────── */
+/* Tan background for the group header row */
+#w2ui-favorites [data-id="local-favorites"].w2ui-node-group {
+  background-color: #f2e0c8;
+}
+#w2ui-favorites [data-id="local-favorites"].w2ui-node-group:hover {
+  background-color: #e8d4b8;
+}
+
+/* Superscript panel number badge on LOCAL FAVORITES items */
+.fav-panel-badge {
+  font-size: 0.62em;
+  vertical-align: super;
+  line-height: 1;
+  opacity: 0.55;
+  margin-right: 3px;
+  color: inherit;
+  pointer-events: none;
+  font-weight: normal;
+}
+
+/* Filename span inside LOCAL FAVORITES item text */
+.lf-filename {
+  vertical-align: middle;
+}
+
+/* Icon wrapper for LOCAL FAVORITES items — hosts the external-link badge */
+.lf-icon-wrap {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.lf-icon-wrap > img {
+  margin-right: 0;
+  display: block;
+}
+/* Bottom-left badge showing external-link.svg */
+.lf-ext-link-badge {
+  position: absolute;
+  bottom: -2px;
+  left: -2px;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
 /* Drag handle — visible on hover */

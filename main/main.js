@@ -498,6 +498,77 @@ ipcMain.handle('read-directory', (event, dirPath) => {
 });
 
 /**
+ * Get shortcuts (symlinks and .lnk files on Windows) in a directory.
+ * Returns each shortcut with its filename, resolved absolute targetPath, and isDirectory flag.
+ */
+ipcMain.handle('get-shortcuts-in-directory', (event, dirPath) => {
+  try {
+    const nativePath = require('path');
+    const nativeFs = require('fs');
+    const entries = nativeFs.readdirSync(dirPath);
+    const shortcuts = [];
+
+    for (const entry of entries) {
+      const fullPath = nativePath.join(dirPath, entry);
+      let targetPath = null;
+      let isDirectory = false;
+
+      try {
+        const lstat = nativeFs.lstatSync(fullPath);
+
+        if (lstat.isSymbolicLink()) {
+          // NOTE: resolving symlink to absolute path for in-app use.
+          // Future work: when writing shortcuts back, guard against overwriting
+          // relative symlinks with absolute paths.
+          targetPath = nativeFs.realpathSync(fullPath);
+          try {
+            isDirectory = nativeFs.statSync(targetPath).isDirectory();
+          } catch (_) {
+            // Broken symlink — target doesn't exist; treat as file
+            isDirectory = false;
+          }
+          shortcuts.push({ filename: entry, targetPath, isDirectory });
+          continue;
+        }
+
+        // On Windows, also detect .lnk shortcut files
+        if (process.platform === 'win32' && entry.toLowerCase().endsWith('.lnk')) {
+          try {
+            const linkInfo = shell.readShortcutLink(fullPath);
+            const rawTarget = linkInfo.target || '';
+            if (!rawTarget) continue;
+
+            // NOTE: resolving .lnk target to absolute path for in-app use.
+            // Future work: when writing shortcuts back, guard against overwriting
+            // relative .lnk targets with absolute paths.
+            targetPath = nativePath.isAbsolute(rawTarget)
+              ? rawTarget
+              : nativePath.resolve(dirPath, rawTarget);
+
+            try {
+              isDirectory = nativeFs.statSync(targetPath).isDirectory();
+            } catch (_) {
+              // Broken link — target doesn't exist; treat as file
+              isDirectory = false;
+            }
+            shortcuts.push({ filename: entry, targetPath, isDirectory });
+          } catch (_) {
+            // shell.readShortcutLink can throw for invalid/corrupt .lnk files
+          }
+        }
+      } catch (_) {
+        // lstatSync failure — skip entry
+      }
+    }
+
+    return { success: true, shortcuts };
+  } catch (err) {
+    logger.error('Error getting shortcuts in directory:', err.message);
+    return { success: false, error: err.message, shortcuts: [] };
+  }
+});
+
+/**
  * Get parent directory metadata (filesystem + database info)
  */
 ipcMain.handle('get-parent-directory-metadata', (event, dirPath) => {
@@ -1588,6 +1659,46 @@ ipcMain.handle('save-settings', (event, settings) => {
     return { success: true };
   } catch (err) {
     logger.error('Error saving settings:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Favorites: Get favorites from favorites.json.
+ * Migrates from settings.json on first use if needed.
+ */
+ipcMain.handle('get-favorites', () => {
+  const favPath = path.join(os.homedir(), '.atlasexplorer', 'favorites.json');
+  try {
+    if (fsSync.existsSync(favPath)) {
+      const content = fsSync.readFileSync(favPath, 'utf8');
+      return JSON.parse(content);
+    }
+    // Migration: pull favorites out of settings.json into favorites.json
+    const settings = categories.getSettings();
+    const favorites = Array.isArray(settings.favorites) ? settings.favorites : [];
+    fsSync.writeFileSync(favPath, JSON.stringify(favorites, null, 2), 'utf8');
+    if (Array.isArray(settings.favorites)) {
+      delete settings.favorites;
+      categories.saveSettings(settings);
+    }
+    return favorites;
+  } catch (err) {
+    logger.error('Error getting favorites:', err.message);
+    return [];
+  }
+});
+
+/**
+ * Favorites: Save favorites to favorites.json.
+ */
+ipcMain.handle('save-favorites', (event, favorites) => {
+  const favPath = path.join(os.homedir(), '.atlasexplorer', 'favorites.json');
+  try {
+    fsSync.writeFileSync(favPath, JSON.stringify(favorites, null, 2), 'utf8');
+    return { success: true };
+  } catch (err) {
+    logger.error('Error saving favorites:', err.message);
     return { success: false, error: err.message };
   }
 });

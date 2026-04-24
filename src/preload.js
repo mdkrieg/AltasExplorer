@@ -41,6 +41,7 @@ console.error = (...args) => {
 contextBridge.exposeInMainWorld('electronAPI', {
   // File system operations
   readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
+  getShortcutsInDirectory: (dirPath) => ipcRenderer.invoke('get-shortcuts-in-directory', dirPath),
   getRootDrives: () => ipcRenderer.invoke('get-root-drives'),
   getParentDirectoryMetadata: (dirPath) => ipcRenderer.invoke('get-parent-directory-metadata', dirPath),
   
@@ -157,6 +158,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
   isDirectory: (dirPath) => ipcRenderer.invoke('is-directory', dirPath),
+
+  // Favorites (separate file)
+  getFavorites: () => ipcRenderer.invoke('get-favorites'),
+  saveFavorites: (favorites) => ipcRenderer.invoke('save-favorites', favorites),
   
   // Hotkeys
   getHotkeys: () => ipcRenderer.invoke('get-hotkeys'),

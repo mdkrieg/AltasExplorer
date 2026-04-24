@@ -36,6 +36,7 @@ Philosophy:
 [ ] drag-out of app not working (need to hold Alt but still does nothing)
 [x] regression, delete key no longer deletes files or folders
 [ ] Category changes on directories not working correctly in history events (category in below form doesn't update and the comment should be what says it was an auto-label event)
+[ ] Orange badge highlighting for indicating where a favorite will target should revert after navigation is successful
 
 ### ROADMAP:
 [x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.

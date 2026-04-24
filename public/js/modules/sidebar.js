@@ -10,7 +10,7 @@
  */
 
 import { w2sidebar } from './vendor/w2ui.es6.min.js';
-import { navigateToDirectory, visiblePanels, addPanel, setActivePanelId, setGridFocusedPanelId } from './panels.js';
+import { navigateToDirectory, visiblePanels, addPanel, setActivePanelId, setGridFocusedPanelId, matchFileType } from './panels.js';
 import { hideCustomContextMenu } from './contexts.js';
 import {
   panelState,
@@ -33,6 +33,10 @@ let w2uiFavoritesSidebar = null;
 let favIconMap = {};
 let favEditMode = false;
 let favoritesEditSnapshot = null;
+
+// ── LOCAL FAVORITES state ─────────────────────────────────────────────────
+// Maps panelId (1-4) → Array<{ filename, targetPath, isDirectory, iconHtml }>
+const localFavoritesItems = new Map();
 let favRefreshDecorateTimer = null;
 let sidebarCollapsed = false;
 const SIDEBAR_COLLAPSED_WIDTH = 50;
@@ -230,6 +234,8 @@ function decorateFavoritesEditMode() {
   container.querySelectorAll('.w2ui-node-group').forEach(groupEl => {
     const nodeId = groupEl.dataset.id;
     if (!nodeId) return;
+    // LOCAL FAVORITES is a system group — no edit controls
+    if (nodeId === 'local-favorites') return;
 
     const node = w2uiFavoritesSidebar.get(nodeId);
     if (!node || !node.group || isPlaceholderFavoriteNode(node)) return;
@@ -334,7 +340,7 @@ function decorateFavoritesEditMode() {
 
   container.querySelectorAll('.w2ui-node:not(.w2ui-node-group)').forEach(itemEl => {
     const nodeId = itemEl.dataset.id;
-    if (!nodeId || nodeId.startsWith('empty-') || nodeId.startsWith('edit-')) return;
+    if (!nodeId || nodeId.startsWith('empty-') || nodeId.startsWith('edit-') || nodeId.startsWith('lf-')) return;
 
     const node = w2uiFavoritesSidebar.get(nodeId);
     if (!node || node.group) return;
@@ -842,6 +848,31 @@ async function initializeFavoritesSidebar() {
           await addFavoritesFromSelection();
           return;
         }
+
+        // LOCAL FAVORITES item single-click — highlight destination panel (same as regular fav), don't navigate yet
+        if (typeof event.target === 'string' && event.target.startsWith('lf-')) {
+          event.preventDefault();
+          const node = w2uiFavoritesSidebar.get(event.target);
+          if (!node || node.disabled) return;
+
+          if (!sidebarHasFocus) {
+            previouslyFocusedPanelId = activePanelId || 1;
+            activateSidebarContext(previouslyFocusedPanelId);
+          }
+
+          const items = getVisibleSectionItems();
+          const idx = items.findIndex(item => item.type === 'fav-item' && item.el.dataset?.id === String(node.id));
+          if (idx !== -1) {
+            sidebarFocusZone = 'sections';
+            sidebarFocusIndex = idx;
+            applySidebarArrowFocus();
+          }
+
+          document.getElementById('sidebar-content')?.focus({ preventScroll: true });
+          setTimeout(() => { if (w2uiFavoritesSidebar) w2uiFavoritesSidebar.unselect(event.target); }, 0);
+          return;
+        }
+
         // Single click: select only (no navigation), unify with keyboard focus style
         if (favEditMode) return;
         const node = w2uiFavoritesSidebar.get(event.target);
@@ -891,7 +922,7 @@ async function initializeFavoritesSidebar() {
         };
       },
       onDragStart(event) {
-        if (!favEditMode || event.detail.node.id.startsWith("empty-")) {
+        if (!favEditMode || event.detail.node.id.startsWith("empty-") || event.detail.node.id.startsWith("lf-") || event.detail.node.id === 'local-favorites') {
           event.preventDefault()
         }
       },
@@ -933,7 +964,15 @@ async function initializeFavoritesSidebar() {
       const nodeId = this.dataset?.id;
       if (!nodeId) return;
       const node = w2uiFavoritesSidebar?.get(nodeId);
-      if (node && node.path && !node.disabled) {
+      if (!node || node.disabled) return;
+      // LOCAL FAVORITES nodes use targetPath; regular favorites use path
+      if (nodeId.startsWith('lf-') && node.targetPath) {
+        navigateToDirectory(node.targetPath, previouslyFocusedPanelId);
+        setActivePanelId(previouslyFocusedPanelId);
+        setGridFocusedPanelId(previouslyFocusedPanelId);
+        return;
+      }
+      if (node.path) {
         navigateToDirectory(node.path, previouslyFocusedPanelId);
         setActivePanelId(previouslyFocusedPanelId);
         setGridFocusedPanelId(previouslyFocusedPanelId);
@@ -970,11 +1009,158 @@ async function initializeFavoritesSidebar() {
   }
 }
 
+// ── LOCAL FAVORITES helpers ───────────────────────────────────────────────
+
+/**
+ * Resolve the icon HTML for a shortcut entry.
+ * - Directories: uses category color + initials (same as the main grid).
+ * - Files: uses the configured file-type icon, falling back to user-file.png.
+ */
+async function resolveShortcutIconHtml(shortcut) {
+  const style = 'width:16px;height:16px;object-fit:contain;vertical-align:middle;margin-right:4px;';
+  const fallbackHtml = `<img src="assets/icons/user-file.png" style="${style}">`;
+
+  if (shortcut.isDirectory) {
+    try {
+      const [category, initials] = await Promise.all([
+        window.electronAPI.getCategoryForDirectory(shortcut.targetPath),
+        window.electronAPI.getDirectoryInitials(shortcut.targetPath)
+      ]);
+      const iconUrl = await window.electronAPI.generateFolderIcon(
+        category.bgColor, category.textColor, initials || null
+      );
+      if (iconUrl) {
+        return `<img src="${iconUrl}" style="${style}">`;
+      }
+    } catch (_) { /* fall through */ }
+    return fallbackHtml;
+  }
+
+  // File shortcut — use file-type icon from allFileTypes list
+  const matchedFt = matchFileType(shortcut.filename);
+  const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
+  return `<img src="assets/icons/${ftIconFile}" style="${style}">`;
+}
+
+/**
+ * Build the W2UI child nodes for the LOCAL FAVORITES group.
+ */
+function buildLocalFavoritesNodes() {
+  const nodes = [];
+  for (const [panelId, entries] of localFavoritesItems) {
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const displayName = entry.filename.replace(/\.lnk$/i, '');
+      const iconWithBadge = entry.iconHtml
+        ? `<span class="lf-icon-wrap">${entry.iconHtml}<span class="lf-ext-link-badge"><img src="assets/icons/external-link.svg" width="9" height="9"></span></span>`
+        : '';
+      nodes.push({
+        id: `lf-${panelId}-${i}`,
+        text: `${iconWithBadge}<span class="fav-panel-badge">${panelId}</span><span class="lf-filename">${displayName}</span>`,
+        targetPath: entry.targetPath,
+        isLocalFavorite: true,
+        group: false
+      });
+    }
+  }
+  if (nodes.length === 0) {
+    return [{ id: 'lf-empty', text: '(empty)', isLocalFavorite: true, disabled: true }];
+  }
+  return nodes;
+}
+
+/**
+ * Build the W2UI group node for LOCAL FAVORITES.
+ */
+function buildLocalFavoritesGroupNode() {
+  return {
+    id: 'local-favorites',
+    text: 'LOCAL FAVORITES',
+    group: true,
+    expanded: true,
+    class: 'local-favorites-group-node',
+    isLocalFavorites: true,
+    nodes: buildLocalFavoritesNodes()
+  };
+}
+
+/**
+ * Lightweight refresh: update only the LOCAL FAVORITES group in the sidebar
+ * without rebuilding the full node tree.
+ */
+function refreshLocalFavoritesGroup() {
+  if (!w2uiFavoritesSidebar) return;
+  // Use w2ui's set() API so children are properly processed by insert()
+  // (direct node.nodes mutation + refresh() breaks because the plain JS objects
+  //  lack the 'nodes:[]' property that w2ui expects on every sidebar node,
+  //  causing a TypeError that aborts the full-sidebar render loop and hides
+  //  all user favorites that come after the LOCAL FAVORITES group.)
+  w2uiFavoritesSidebar.set('local-favorites', { nodes: buildLocalFavoritesNodes() });
+}
+
+/**
+ * Fetch shortcuts for a panel's current directory and update LOCAL FAVORITES.
+ * Fire-and-forget safe — does not need to be awaited by callers.
+ */
+export async function updateLocalFavoritesForPanel(panelId, dirPath) {
+  if (!dirPath) {
+    localFavoritesItems.delete(panelId);
+    refreshLocalFavoritesGroup();
+    return;
+  }
+  try {
+    const result = await window.electronAPI.getShortcutsInDirectory(dirPath);
+    const shortcuts = (result && result.success && Array.isArray(result.shortcuts))
+      ? result.shortcuts
+      : [];
+
+    // Resolve icons in parallel for all shortcuts
+    const enriched = await Promise.all(
+      shortcuts.map(async (sc) => {
+        const iconHtml = await resolveShortcutIconHtml(sc).catch(() =>
+          `<img src="assets/icons/user-file.png" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;margin-right:4px;">`
+        );
+        return { ...sc, iconHtml };
+      })
+    );
+
+    localFavoritesItems.set(panelId, enriched);
+  } catch (err) {
+    // On error, show empty list for this panel rather than stale data
+    localFavoritesItems.set(panelId, []);
+  }
+  refreshLocalFavoritesGroup();
+}
+
+/**
+ * Remove a panel's entries from LOCAL FAVORITES (called when a panel is closed).
+ */
+export function clearLocalFavoritesForPanel(panelId) {
+  localFavoritesItems.delete(panelId);
+  refreshLocalFavoritesGroup();
+}
+
+/**
+ * Rebuild LOCAL FAVORITES from a provided map of panelId → dirPath.
+ * Used after panel layout changes (e.g. removePanel) to resync the whole map.
+ */
+export async function rebuildLocalFavorites(panelPaths) {
+  localFavoritesItems.clear();
+  await Promise.all(
+    Object.entries(panelPaths).map(([panelId, dirPath]) =>
+      updateLocalFavoritesForPanel(Number(panelId), dirPath)
+    )
+  );
+}
+
 /**
  * Convert favorites array to w2ui node format
  */
 async function convertFavoritesToW2UINodes(favorites, groupPath = []) {
   if (!Array.isArray(favorites)) return [];
+
+  // Always prepend the LOCAL FAVORITES group at the top level
+  const localGroup = groupPath.length === 0 ? [buildLocalFavoritesGroupNode()] : [];
 
   // Reset icon map at top level only
   if (groupPath.length === 0) favIconMap = {};
@@ -1027,7 +1213,7 @@ async function convertFavoritesToW2UINodes(favorites, groupPath = []) {
     updateFavoriteIconStyles();
   }
 
-  return nodes;
+  return [...localGroup, ...nodes];
 }
 
 /**
@@ -1082,6 +1268,16 @@ function convertW2UINodesToFavorites(nodes, groupPath = []) {
       continue;
     }
 
+    // Skip the LOCAL FAVORITES system group — it is never persisted to settings
+    if (node.isLocalFavorites || node.id === 'local-favorites') {
+      continue;
+    }
+
+    // Skip LOCAL FAVORITES item nodes
+    if (node.isLocalFavorite || (node.id && node.id.startsWith('lf-'))) {
+      continue;
+    }
+
     if (node.group) {
       // Convert to group
       favorites.push({
@@ -1108,16 +1304,16 @@ function convertW2UINodesToFavorites(nodes, groupPath = []) {
  */
 async function loadFavoritesFromSettings() {
   try {
-    const settings = await window.electronAPI.getSettings();
-    let favorites = Array.isArray(settings.favorites) ? settings.favorites : [];
+    // Favorites are stored in their own favorites.json file (migrated from settings.json on first load).
+    let favorites = await window.electronAPI.getFavorites();
+    if (!Array.isArray(favorites)) favorites = [];
 
-    // Apply migration if needed
+    // Apply migration from old flat format if needed
     favorites = migrateFavoritesToGroupFormat(favorites);
 
-    // If this was an old format, save the migrated version
-    if (favorites.length > 0 && !settings.favorites[0]?.type) {
-      settings.favorites = favorites;
-      await window.electronAPI.saveSettings(settings);
+    // If this was an old format, persist the migrated version
+    if (favorites.length > 0 && !favorites[0]?.type) {
+      await window.electronAPI.saveFavorites(favorites);
     }
 
     return favorites;
@@ -1128,13 +1324,11 @@ async function loadFavoritesFromSettings() {
 }
 
 /**
- * Save favorites array to settings
+ * Save favorites array to favorites.json
  */
 async function saveFavoritesToSettings(favorites) {
   try {
-    const settings = await window.electronAPI.getSettings();
-    settings.favorites = favorites;
-    await window.electronAPI.saveSettings(settings);
+    await window.electronAPI.saveFavorites(favorites);
   } catch (err) {
     console.error('Error saving favorites:', err);
   }
