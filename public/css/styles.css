@@ -759,6 +759,95 @@ tr.dragging-source {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
+/* Category form: icon-aware dropdown (Auto-Assign Subdirs) */
+.cat-icon-select {
+  position: relative;
+  font-size: 11px;
+}
+
+.cat-icon-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: white;
+  cursor: pointer;
+  min-height: 28px;
+  user-select: none;
+}
+
+.cat-icon-select-trigger:hover {
+  border-color: #999;
+}
+
+.cat-icon-select-disabled .cat-icon-select-trigger {
+  background: #f5f5f5;
+  color: #aaa;
+  cursor: not-allowed;
+}
+
+.cat-icon-select-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.cat-icon-select-text {
+  flex: 1;
+}
+
+.cat-icon-select-chevron {
+  color: #888;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.cat-icon-select-options {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  z-index: 500;
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+
+.cat-icon-select-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.cat-icon-select-option:hover {
+  background: #e8f0fe;
+}
+
+.cat-icon-select-option-selected {
+  background: #e3eef9;
+  font-weight: 500;
+}
+
+.cat-icon-select-opt-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 /* Input fields */
 input[type="text"],
 input[type="password"],

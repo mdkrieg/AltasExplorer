@@ -102,6 +102,23 @@ Label Manager
 [x] Attribute type options show invalid character in dropdown menu
 [x] Attribute applies-to field make Directory the default, move Both to bottom of list
 
+```
+I'd like to add an "Auto Labelling" feature which is a tab in the Label Manager. At a high level, this just executes a list of rules against files that are browsed or monitored and *suggests* a single label (tag or category). It will never apply a tag or category on its own unlike how the inherit category works. The autolabel rules live as JSON in the user's home folder next to the other label definitions.
+
+Rule Definition:
+* An ID which is unique and unchangeable to the user
+* A name which does not need to be unique
+* A description
+* A set of patterns which need to be satisfied. There must be at least one rule and there is no limit to the number of rules. A rule has the following shape:
+  * Apply Category/Tag of {x} if:
+    * Self/Parent - determines what the rule is evaluated against, then the possible evaluations are (user selects only one):
+      * Has Category {x} - only single category possible so only can set one category via dropdown
+      * Has Tags {xyz} - any number of tags can be set here
+      * Has Attribute {x} value {abc} - x can be any attribute at all (selected by dropdown) as we don't necessarily know the category. Then {abc} is any value (including blank/empty), the type of input is determined by the attribute type
+      * Name matches regex {abc} - where the name of the item (basename) matches a regular expression input by the user.
+      * Path matches regex {abc} - where the FULL PATH matches a regular expression input by the user. This one also has an option to "normalize" to Unix-style (/) path separators to aid in writing the regex
+```
+
 Gallery View:
 [ ] Support coordinate organizing, like the old windows desktops
 [ ] Make the thumbnail size changeable and retentive per directory
@@ -137,6 +154,7 @@ General:
   [ ] Show sample icon when creating a category
   [ ] Show in dropdown for category "Inherits" field
 [ ] When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
+[ ] Make Notes and TODOs support screenshots, uploading automatically to notes_files when pasted in (like github) - then if they are in a TODO, to save space just have a link that opens the photo, and a tooltip like this one (https://w2ui.com/web/demos/#/tooltip/8)
 
 Sidebar:
 [ ] make the icons "squish" when the sidebard is made small

@@ -814,9 +814,15 @@
                 </div>
                 <div style="display: flex; flex-direction: column;">
                   <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Auto-Assign Subdirs</label>
-                  <select id="form-cat-autoAssignCategory" style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                    <option value="">None</option>
-                  </select>
+                  <input type="hidden" id="form-cat-autoAssignCategory" value="">
+                  <div id="form-cat-autoAssignCategory-wrap" class="cat-icon-select">
+                    <div id="form-cat-autoAssignCategory-trigger" class="cat-icon-select-trigger">
+                      <span id="form-cat-autoAssignCategory-icon" class="cat-icon-select-icon"></span>
+                      <span id="form-cat-autoAssignCategory-text" class="cat-icon-select-text">None</span>
+                      <span class="cat-icon-select-chevron">&#x25BE;</span>
+                    </div>
+                    <div id="form-cat-autoAssignCategory-options" class="cat-icon-select-options" style="display:none;"></div>
+                  </div>
                   <span id="form-cat-autoAssignHelp" style="font-size: 10px; color: #888; margin-top: 2px;">Apply one category automatically to immediate subdirectories of folders in this category.</span>
                 </div>
                 <div style="display: flex; flex-direction: column;">

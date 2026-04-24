@@ -130,7 +130,22 @@ async function loadRuleDependencies() {
     allAttributes = await window.electronAPI.getAttributesList() || [];
   } catch {}
 
-  return { allCategories, allTags, allAttributes };
+  const categoryIconMap = {};
+  const tagIconMap = {};
+  try {
+    const [categoryIconUrls, tagIconUrls] = await Promise.all([
+      Promise.all(Object.entries(allCategories).map(([, cat]) =>
+        cat && cat.bgColor ? window.electronAPI.generateFolderIcon(cat.bgColor, cat.textColor).catch(() => null) : Promise.resolve(null)
+      )),
+      Promise.all(allTags.map(tag =>
+        tag && tag.bgColor ? window.electronAPI.generateTagIcon(tag.bgColor, tag.textColor).catch(() => null) : Promise.resolve(null)
+      ))
+    ]);
+    Object.keys(allCategories).forEach((name, i) => { categoryIconMap[name] = categoryIconUrls[i]; });
+    allTags.forEach((tag, i) => { tagIconMap[tag.name] = tagIconUrls[i]; });
+  } catch {}
+
+  return { allCategories, allTags, allAttributes, categoryIconMap, tagIconMap };
 }
 
 function getAvailableAttributes(selectedCatNames, allCategories, allAttributes) {
@@ -202,7 +217,7 @@ function refreshAttributeSection($body, allCategories, allAttributes) {
   $body.find('#rule-attr-list').html(renderAttributeRows(availableAttrs, allAttributes, currentAttrVals));
 }
 
-function buildCommonRuleHtml(rule, allCategories, allTags, allAttributes) {
+function buildCommonRuleHtml(rule, allCategories, allTags, allAttributes, categoryIconMap = {}, tagIconMap = {}) {
   const ruleCategories = parseListOrAny(rule ? rule.categories : null);
   const ruleTags = parseListOrAny(rule ? rule.tags : null);
   const ruleAttributes = parseAttrsOrAny(rule ? rule.attributes : null);
@@ -219,11 +234,14 @@ function buildCommonRuleHtml(rule, allCategories, allTags, allAttributes) {
         <input type="checkbox" id="rule-cat-any" ${ruleCategories === 'ANY' ? 'checked' : ''}> <span>ANY</span>
       </label>
       <div id="rule-cat-list" class="alerts-rule-options-list" style="${ruleCategories === 'ANY' ? 'display:none;' : ''}">
-        ${categoryNames.map(categoryName => `
-          <label>
+        ${categoryNames.map(categoryName => {
+          const iconUrl = categoryIconMap[categoryName];
+          const iconHtml = iconUrl ? `<img src="${iconUrl}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;flex-shrink:0;">` : '';
+          return `<label>
             <input type="checkbox" name="rule-cat" value="${escapeHtml(categoryName)}" ${ruleCategories !== 'ANY' && ruleCategories.includes(categoryName) ? 'checked' : ''}>
-            ${escapeHtml(categoryName)}
-          </label>`).join('')}
+            ${iconHtml}${escapeHtml(categoryName)}
+          </label>`;
+        }).join('')}
       </div>
     </div>
 
@@ -235,11 +253,14 @@ function buildCommonRuleHtml(rule, allCategories, allTags, allAttributes) {
       <div id="rule-tag-list" class="alerts-rule-options-list" style="${ruleTags === 'ANY' ? 'display:none;' : ''}">
         ${tagNames.length === 0
           ? '<em style="font-size:11px;color:#999;">No tags defined</em>'
-          : tagNames.map(tagName => `
-            <label>
+          : tagNames.map(tagName => {
+              const tagIconUrl = tagIconMap[tagName];
+              const tagIconHtml = tagIconUrl ? `<img src="${tagIconUrl}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;flex-shrink:0;">` : '';
+              return `<label>
               <input type="checkbox" name="rule-tag" value="${escapeHtml(tagName)}" ${ruleTags !== 'ANY' && ruleTags.includes(tagName) ? 'checked' : ''}>
-              ${escapeHtml(tagName)}
-            </label>`).join('')}
+              ${tagIconHtml}${escapeHtml(tagName)}
+            </label>`;
+            }).join('')}
       </div>
     </div>
 
@@ -593,7 +614,7 @@ export function closeRuleEditor() {
 }
 
 async function renderAlertRuleEditorForm(rule) {
-  const { allCategories, allTags, allAttributes } = await loadRuleDependencies();
+  const { allCategories, allTags, allAttributes, categoryIconMap, tagIconMap } = await loadRuleDependencies();
   const rulesResult = await window.electronAPI.getAlertRules();
   const defaultRuleName = getNextAlertRuleName(rulesResult.success ? rulesResult.data : []);
   const ruleEvents = parseEventList(rule ? rule.events : null);
@@ -604,7 +625,7 @@ async function renderAlertRuleEditorForm(rule) {
     <input type="text" id="alert-rule-name" maxlength="120" required value="${escapeHtml(ruleName)}" placeholder="Alert name">
   </div>`;
 
-  html += buildCommonRuleHtml(rule, allCategories, allTags, allAttributes);
+  html += buildCommonRuleHtml(rule, allCategories, allTags, allAttributes, categoryIconMap, tagIconMap);
 
   html += `<div class="alerts-rule-section">
     <div class="alerts-rule-section-label">Events <em style="font-weight:normal;color:#888;font-size:10px;">(at least one required)</em></div>
@@ -789,13 +810,13 @@ export function closeMonitoringRuleEditor() {
 }
 
 async function renderMonitoringRuleEditorForm(rule) {
-  const { allCategories, allTags, allAttributes } = await loadRuleDependencies();
+  const { allCategories, allTags, allAttributes, categoryIconMap, tagIconMap } = await loadRuleDependencies();
   const intervalValue = Number(rule ? rule.interval_value : 1) || 1;
   const intervalUnit = rule ? (rule.interval_unit || 'days') : 'days';
   const maxDepth = Number(rule ? rule.max_depth : 0) || 0;
   const ruleEnabled = rule ? !!rule.enabled : true;
 
-  let html = buildCommonRuleHtml(rule, allCategories, allTags, allAttributes);
+  let html = buildCommonRuleHtml(rule, allCategories, allTags, allAttributes, categoryIconMap, tagIconMap);
   html += `<div class="alerts-rule-section">
     <div class="alerts-rule-section-label">Scan Interval</div>
     <div style="display:flex;gap:8px;align-items:center;">

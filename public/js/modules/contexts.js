@@ -98,6 +98,14 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 	const tagIconMap = {};
 	allTags.forEach((tag, i) => { tagIconMap[tag.name] = tagIconUrls[i]; });
 
+	const buildCategorySubmenuItems = () => Object.keys(allCategories).map(categoryName => ({
+		id: `set-category-${categoryName}`,
+		text: categoryName,
+		iconHtml: categoryIconMap[categoryName]
+			? `<img src="${categoryIconMap[categoryName]}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;">`
+			: ''
+	}));
+
 	if (!isMultiSelect && directoryCount > 0) {
 		contextMenu.push({
 			id: 'open-in',
@@ -109,14 +117,8 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		});
 		contextMenu.push({
 			id: 'set-category-label',
-			text: isMultiSelect ? 'Set Category (all)' : 'Set Category',
-			items: Object.keys(allCategories).map(categoryName => ({
-				id: `set-category-${categoryName}`,
-				text: categoryName,
-				iconHtml: categoryIconMap[categoryName]
-					? `<img src="${categoryIconMap[categoryName]}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;">`
-					: ''
-			}))
+			text: 'Set Category',
+			items: buildCategorySubmenuItems()
 		});
 
 		// Open in Terminal submenu
@@ -139,6 +141,14 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 				items: terminalItems
 			});
 		}
+	}
+
+	if (isMultiSelect && directoryCount > 0) {
+		contextMenu.push({
+			id: 'set-category-label',
+			text: 'Set Category (all)',
+			items: buildCategorySubmenuItems()
+		});
 	}
 
 	if (!isMultiSelect && fileCount > 0) {

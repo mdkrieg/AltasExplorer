@@ -45,28 +45,59 @@ function getCategoryFormCategoryNames() {
 }
 
 function syncCategoryAutoAssignField(selectedValue = '') {
-	const $select = $('#form-cat-autoAssignCategory');
+	const $hidden = $('#form-cat-autoAssignCategory');
+	const $wrap = $('#form-cat-autoAssignCategory-wrap');
+	const $optionsEl = $('#form-cat-autoAssignCategory-options');
+	const $iconEl = $('#form-cat-autoAssignCategory-icon');
+	const $textEl = $('#form-cat-autoAssignCategory-text');
 	const $help = $('#form-cat-autoAssignHelp');
 	const currentName = ($('#form-cat-name').val() || '').trim();
 	const normalizedSelectedValue = selectedValue || '';
 	const categoryNames = getCategoryFormCategoryNames();
 
-	$select.empty();
-	$select.append($('<option></option>').val('').text('None'));
-	categoryNames.forEach(categoryName => {
-		$select.append($('<option></option>').val(categoryName).text(categoryName));
-	});
+	// Build icon map from grid records (icons already generated at grid init time)
+	const grid = w2ui['categories-grid'];
+	const gridRecords = grid ? grid.records.filter(r => !r._isNewRow) : [];
+	const iconMap = {};
+	gridRecords.forEach(r => { iconMap[r.categoryName || r.name] = r.iconUrl || null; });
 
-	if (currentName === 'Default') {
-		$select.val('');
-		$select.prop('disabled', true);
-		$help.text('Default category cannot auto-assign subdirectories.');
-		return;
+	const isDisabled = currentName === 'Default';
+	$wrap.toggleClass('cat-icon-select-disabled', isDisabled);
+
+	const effectiveValue = isDisabled ? '' : (categoryNames.includes(normalizedSelectedValue) ? normalizedSelectedValue : '');
+	$hidden.val(effectiveValue);
+
+	// Rebuild options list
+	$optionsEl.empty().hide();
+
+	const makeOption = (value, iconUrl, label) => {
+		const $opt = $('<div class="cat-icon-select-option"></div>').attr('data-value', value);
+		const $iconSpan = $('<span class="cat-icon-select-opt-icon"></span>');
+		if (iconUrl) {
+			$('<img>').attr({ src: iconUrl, style: 'width:16px;height:16px;object-fit:contain;vertical-align:middle;' }).appendTo($iconSpan);
+		}
+		$opt.append($iconSpan);
+		$opt.append($('<span class="cat-icon-select-opt-text"></span>').text(label));
+		if (effectiveValue === value) $opt.addClass('cat-icon-select-option-selected');
+		return $opt;
+	};
+
+	$optionsEl.append(makeOption('', null, 'None'));
+	categoryNames.forEach(name => $optionsEl.append(makeOption(name, iconMap[name] || null, name)));
+
+	// Update trigger display
+	const selectedIconUrl = effectiveValue ? (iconMap[effectiveValue] || null) : null;
+	$iconEl.empty();
+	if (selectedIconUrl) {
+		$('<img>').attr({ src: selectedIconUrl, style: 'width:16px;height:16px;object-fit:contain;vertical-align:middle;' }).appendTo($iconEl);
 	}
+	$textEl.text(effectiveValue || 'None');
 
-	$select.prop('disabled', false);
-	$select.val(categoryNames.includes(normalizedSelectedValue) ? normalizedSelectedValue : '');
-	$help.text('Apply one category automatically to immediate subdirectories of folders in this category.');
+	if (isDisabled) {
+		$help.text('Default category cannot auto-assign subdirectories.');
+	} else {
+		$help.text('Apply one category automatically to immediate subdirectories of folders in this category.');
+	}
 }
 
 let tagFormState = {
@@ -655,6 +686,33 @@ async function initializeCategoriesForm() {
 
 	$('#form-cat-name').off('input.categoryAutoAssign').on('input.categoryAutoAssign', function () {
 		syncCategoryAutoAssignField($('#form-cat-autoAssignCategory').val() || '');
+	});
+
+	// Custom dropdown interaction (re-bound each time the modal opens)
+	$('#form-cat-autoAssignCategory-wrap')
+		.off('click.catSelect')
+		.on('click.catSelect', '#form-cat-autoAssignCategory-trigger', function () {
+			const $wrap = $(this).closest('.cat-icon-select');
+			if ($wrap.hasClass('cat-icon-select-disabled')) return;
+			$('#form-cat-autoAssignCategory-options').toggle();
+		})
+		.on('click.catSelect', '.cat-icon-select-option', function () {
+			const val = $(this).data('value');
+			$('#form-cat-autoAssignCategory').val(val);
+			const $opts = $('#form-cat-autoAssignCategory-options');
+			$opts.find('.cat-icon-select-option').removeClass('cat-icon-select-option-selected');
+			$(this).addClass('cat-icon-select-option-selected');
+			const $img = $(this).find('img');
+			$('#form-cat-autoAssignCategory-icon').empty();
+			if ($img.length) $img.clone().appendTo('#form-cat-autoAssignCategory-icon');
+			$('#form-cat-autoAssignCategory-text').text(val || 'None');
+			$opts.hide();
+		});
+
+	$(document).off('click.catSelectClose').on('click.catSelectClose', function (e) {
+		if (!$(e.target).closest('#form-cat-autoAssignCategory-wrap').length) {
+			$('#form-cat-autoAssignCategory-options').hide();
+		}
 	});
 
 	initializeColorPickers();
