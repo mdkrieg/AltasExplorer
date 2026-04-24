@@ -111,12 +111,28 @@ Rule Definition:
 * A description
 * A set of patterns which need to be satisfied. There must be at least one rule and there is no limit to the number of rules. A rule has the following shape:
   * Apply Category/Tag of {x} if:
-    * Self/Parent - determines what the rule is evaluated against, then the possible evaluations are (user selects only one):
+    * Self/Parent - determines what the rule is evaluated against, then the possible evaluations are (user selects only one of the following):
       * Has Category {x} - only single category possible so only can set one category via dropdown
       * Has Tags {xyz} - any number of tags can be set here
       * Has Attribute {x} value {abc} - x can be any attribute at all (selected by dropdown) as we don't necessarily know the category. Then {abc} is any value (including blank/empty), the type of input is determined by the attribute type
       * Name matches regex {abc} - where the name of the item (basename) matches a regular expression input by the user.
       * Path matches regex {abc} - where the FULL PATH matches a regular expression input by the user. This one also has an option to "normalize" to Unix-style (/) path separators to aid in writing the regex
+    * "Required" checkbox - specifies a requied rule: The Rule returns positive if ANY of the rules are met and ALL the required rules are met
+
+Suggestion Pattern:
+* Add a label icon (tag.svg) in the grid toolbar which has a badge showing the number of rules matching the currently displayed items (applies to orphans and trash as well but only if they are in view)
+* Clicking on the label icon (tooltip: Suggested Labels) opens a modal with a grid that lists the positive rules
+* Above the grid are buttons:
+  * Apply
+  * Select All
+  * Select None
+* The grid contains:
+  * A checkbox (to determine what applies)
+  * ID (the auto-assigned rule ID)
+  * Name
+  * icon:comment-info.svg -> offers a tooltip which shows a summary of the rules and whether they returned positive or negative (use a green check or red X - emoji are fine for now).
+  * Description
+* Grid supports multiselect and pressing Space toggles the checkboxes on a group basis (if first one is off -> all on | if first one is on -> all off)
 ```
 
 Gallery View:
