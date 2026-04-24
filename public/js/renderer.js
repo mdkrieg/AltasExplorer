@@ -246,6 +246,28 @@ async function initialize() {
       alerts.updateAlertBadge();
     });
 
+    window.electronAPI.onLoadLayoutFromFile((filePath) => {
+      console.log('Loading layout from file:', filePath);
+      window.electronAPI.loadLayoutFile(filePath)
+        .then(result => {
+          if (result.success && result.data) {
+            console.log('Layout loaded successfully:', result.data);
+            // Apply the layout to the app
+            if (result.data.layoutData) {
+              // Restore the layout structure and panels
+              const layoutData = result.data.layoutData;
+              // This will reload the panels with the saved layout
+              panels.applyLayoutState(layoutData);
+            }
+          } else {
+            console.error('Failed to load layout:', result.error || 'Unknown error');
+          }
+        })
+        .catch(err => {
+          console.error('Error loading layout from file:', err);
+        });
+    });
+
     await notes.initializeMonacoLoader();
     todos.initTodoModal();
 

@@ -243,6 +243,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listLayouts: () => ipcRenderer.invoke('list-layouts'),
   loadLayoutFile: (filePath) => ipcRenderer.invoke('load-layout-file', filePath),
   deleteLayout: (filePath) => ipcRenderer.invoke('delete-layout', filePath),
+  onLoadLayoutFromFile: (callback) => ipcRenderer.on('load-layout-from-file', (event, filePath) => callback(filePath)),
 
   // Dir grid layout (per-directory column/sort state)
   saveDirGridLayout: (dirname, columns, sortData) => ipcRenderer.invoke('save-dir-grid-layout', { dirname, columns, sortData }),

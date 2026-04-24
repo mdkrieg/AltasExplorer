@@ -23,6 +23,7 @@ const ffmpegBin = require('ffmpeg-static');
 const { dialog } = require('electron');
 
 let mainWindow;
+let pendingLayoutFile = null; // File to load on startup (from command line or file association)
 
 let checksumInFlight = 0;
 const checksumWaiters = [];
@@ -317,6 +318,14 @@ function createWindow() {
         event.preventDefault();
         // Ask the renderer if we should close
         mainWindow.webContents.send('request-close-app');
+      }
+    });
+
+    // Send pending layout file to renderer after window loads
+    mainWindow.webContents.on('did-finish-load', () => {
+      if (pendingLayoutFile) {
+        mainWindow.webContents.send('load-layout-from-file', pendingLayoutFile);
+        pendingLayoutFile = null; // Clear after sending
       }
     });
   } catch (err) {
@@ -4264,6 +4273,28 @@ ipcMain.handle('get-video-thumbnail', (event, filePath) => {
 // App lifecycle
 // ============================================
 
+// Parse command-line arguments to check for layout file
+function parseCommandLineArgs() {
+  // Check if a .aly file was passed as an argument
+  // process.argv typically looks like: ['electron', 'app.asar', ...args]
+  // When launched with a file association, the file path is the last argument
+  const lastArg = process.argv[process.argv.length - 1];
+  if (lastArg && lastArg.endsWith('.aly')) {
+    // Verify file exists and is readable
+    try {
+      if (fsSync.existsSync(lastArg)) {
+        pendingLayoutFile = lastArg;
+        logger.info(`Detected layout file from command line: ${pendingLayoutFile}`);
+      }
+    } catch (e) {
+      logger.warn(`Failed to validate layout file argument: ${e.message}`);
+    }
+  }
+}
+
+// Call this immediately to parse command-line args
+parseCommandLineArgs();
+
 app.on('ready', () => {
   // Disable the default menu to prevent Alt key from showing it
   Menu.setApplicationMenu(null);
@@ -4333,6 +4364,18 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (mainWindow === null) {
     createWindow();
+  }
+});
+
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  if (filePath.endsWith('.aly')) {
+    pendingLayoutFile = filePath;
+    logger.info(`File association triggered: ${filePath}`);
+    // If window already exists, send IPC immediately
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('load-layout-from-file', filePath);
+    }
   }
 });
 

@@ -6,6 +6,7 @@
 import * as panels from './panels.js';
 import * as sidebar from './sidebar.js';
 import * as terminal from './terminal.js';
+import { w2utils } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
 	selectedItemState,
@@ -228,6 +229,13 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		addSeparator(contextMenu);
 		const label = fileCount > 1 ? `Calculate Checksum (${fileCount} files)` : 'Calculate Checksum';
 		contextMenu.push({ id: 'calculate-checksum', text: label, icon: 'fa fa-hashtag' });
+	}
+
+	// Copy as Path
+	{
+		addSeparator(contextMenu);
+		const copyPathLabel = isMultiSelect ? `Copy ${selectedRecords.length} Paths` : 'Copy as Path';
+		contextMenu.push({ id: 'copy-as-path', text: copyPathLabel, icon: 'fa fa-copy' });
 	}
 
 	// Delete
@@ -521,6 +529,18 @@ async function handleContextMenuClick(event, panelId) {
 			}
 		} catch (err) {
 			alert('Error removing tag: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'copy-as-path') {
+		const paths = panelContextMenuState.selectedPaths;
+		try {
+			await navigator.clipboard.writeText(paths.join('\n'));
+			const msg = paths.length > 1 ? `${paths.length} paths copied to clipboard` : 'Path copied to clipboard';
+			w2utils.notify(msg, { success: true, timeout: 2500 });
+		} catch (err) {
+			console.error('Failed to copy path to clipboard:', err);
+			w2utils.notify('Failed to copy path to clipboard', { error: true, timeout: 2500 });
 		}
 	}
 

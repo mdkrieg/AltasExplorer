@@ -34,7 +34,7 @@ Philosophy:
 [ ] Still getting erroneous title bar when opening a new panel with Ctrl+T
 [ ] selectable list attrs need a clear option
 [ ] drag-out of app not working (need to hold Alt but still does nothing)
-[ ] regression, delete key no longer deletes files or folders
+[x] regression, delete key no longer deletes files or folders
 
 ### ROADMAP:
 [x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.

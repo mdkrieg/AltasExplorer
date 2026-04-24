@@ -34,7 +34,14 @@
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico",
       "installerHeaderIcon": "assets/icon.ico"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": "aly",
+        "name": "Atlas Layout",
+        "role": "Editor"
+      }
+    ]
   },
   "keywords": [
     "file",
