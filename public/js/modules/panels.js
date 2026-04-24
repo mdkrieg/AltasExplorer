@@ -2648,6 +2648,38 @@ async function refreshBadgeCounts(panelId) {
 	}
 }
 
+/**
+ * Switch a panel to item-properties view for a specific file path.
+ * Assumes navigateToDirectory has already updated state.currentPath and history.
+ */
+async function showItemPropertiesForPath(filePath, panelId, fileStats) {
+	const filename = filePath.includes('\\') ? filePath.substring(filePath.lastIndexOf('\\') + 1) : filePath;
+	const parentDir = filePath.includes('\\') ? filePath.substring(0, filePath.lastIndexOf('\\')) : filePath;
+
+	const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
+	panelState[panelId].currentCategory = parentCategory;
+
+	// Update selected item state so updateItemPropertiesPage knows what to show
+	Object.assign(selectedItemState, {
+		path: filePath,
+		filename,
+		isDirectory: false,
+		panelId,
+		inode: fileStats.inode || null,
+		dir_id: fileStats.dir_id || null,
+		record: null
+	});
+
+	const $panel = $(`#panel-${panelId}`);
+	$panel.find('.panel-grid').hide();
+	$panel.find('.panel-gallery').removeClass('active');
+	$panel.find('.panel-file-view').hide();
+	$panel.find('.panel-landing-page').show();
+
+	hidePanelToolbar(panelId);
+	await updateItemPropertiesPage(panelId);
+}
+
 export async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
 	try {
 		if (!dirPath || typeof dirPath !== 'string') {
@@ -2749,6 +2781,16 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		const directoryExists = await window.electronAPI.isDirectory(normalizedPath);
 		if (!directoryExists) {
+			// Check if the path is a file — if so, show item properties (panels 2-4 only)
+			const hasItemPropsView = $(`#panel-${panelId} .panel-landing-page`).length > 0;
+			if (hasItemPropsView) {
+				const fileStats = await window.electronAPI.getItemStats(normalizedPath);
+				if (fileStats && fileStats.success && !fileStats.isDirectory) {
+					await showItemPropertiesForPath(normalizedPath, panelId, fileStats);
+					return;
+				}
+			}
+
 			state.currentCategory = null;
 			setPanelPathValidity(panelId, false);
 			// Show grid (not gallery) for missing directory placeholder
@@ -5508,16 +5550,28 @@ export async function updateItemPropertiesPage(panelId) {
 		panelState[panelId].currentItemStats = null;
 		$content.hide();
 		$placeholder.show();
+		getPanelHeaderElement(panelId)?.classList.remove('active');
 		return;
 	}
 
 	try {
 		const stats = await window.electronAPI.getItemStats(selectedItemState.path);
-		if (!stats) {
+		if (!stats || !stats.success) {
 			panelState[panelId].currentItemStats = null;
 			$content.hide();
 			$placeholder.show();
+			getPanelHeaderElement(panelId)?.classList.remove('active');
 			return;
+		}
+
+		// Show panel header with item's full path, styled with parent directory's category
+		if (panelId !== 0) {
+			const parentDir = selectedItemState.path.includes('\\')
+				? selectedItemState.path.substring(0, selectedItemState.path.lastIndexOf('\\'))
+				: selectedItemState.path;
+			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
+			panelState[panelId].currentCategory = parentCategory;
+			updatePanelHeader(panelId, selectedItemState.path);
 		}
 
 		panelState[panelId].itemInode = stats.inode;
@@ -5803,6 +5857,7 @@ export async function updateItemPropertiesPage(panelId) {
 		panelState[panelId].currentItemStats = null;
 		$content.hide();
 		$placeholder.show();
+		getPanelHeaderElement(panelId)?.classList.remove('active');
 	}
 }
 

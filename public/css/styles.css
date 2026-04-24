@@ -1518,6 +1518,11 @@ textarea {
   z-index: 5;
 }
 
+/* Hide overlay close button when the panel header is visible (header has its own X button) */
+.panel-content:has(.panel-header.active) .btn-panel-remove-overlay {
+  display: none;
+}
+
 .btn-panel-remove-overlay:hover {
   background: #d32f2f;
 }
