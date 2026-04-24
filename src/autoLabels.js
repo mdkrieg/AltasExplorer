@@ -283,6 +283,14 @@ class AutoLabelService {
         if (allAlreadyHaveTag) continue;
       }
 
+      // Silent-skip: category already set on ALL matched items
+      if (rule.applyType === 'category') {
+        const allAlreadyHaveCategory = matchedItems.every(item =>
+          item.category === rule.applyValue
+        );
+        if (allAlreadyHaveCategory) continue;
+      }
+
       suggestions.push({
         ruleId: rule.id,
         ruleName: rule.name,

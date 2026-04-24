@@ -128,15 +128,25 @@ async function buildSuggestionsGrid(suggestions) {
 			const req = p.required ? ' (required)' : '';
 			return `${check} ${p.description}${req}`;
 		});
-		const infoTitle = patternLines.join('\n');
+		const idLine = s.ruleId ? `ID: ${s.ruleId}` : '';
+		const infoLines = [idLine, ...patternLines].filter(Boolean);
+		const infoTitle = infoLines.join('\n');
 		const infoHtml = `<img src="assets/icons/comment-info.svg" style="width:14px;height:14px;cursor:default;vertical-align:middle;" title="${escHtml(infoTitle)}">`;
+
+		// Build items/paths column
+		const matchedItems = s.matchedItems || [];
+		const pathLines = matchedItems.map(m => m.path || '');
+		const basenames = pathLines.map(p => p.replace(/\\/g, '/').split('/').pop() || p);
+		const itemsHtml = basenames.length === 0
+			? ''
+			: `<span title="${escHtml(pathLines.join('\n'))}" style="display:block;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(basenames.join(', '))}</span>`;
 
 		records.push({
 			recid: i,
 			effectSort,
 			effect: effectHtml,
-			id: s.ruleId || '',
 			name: s.ruleName || '',
+			items: itemsHtml,
 			info: infoHtml,
 			description: s.ruleDescription || '',
 			_suggestion: s,
@@ -151,11 +161,14 @@ async function buildSuggestionsGrid(suggestions) {
 		columns: [
 			{ field: 'effectSort', text: '', hidden: true, size: '0px' },
 			{
-				field: 'effect', text: 'Effect', size: '110px', resizable: true, sortable: false,
+				field: 'effect', text: 'Effect', size: '130px', resizable: true, sortable: false,
 				render: record => record.effect || ''
 			},
-			{ field: 'id', text: 'ID', size: '240px', resizable: true, sortable: true },
-			{ field: 'name', text: 'Name', size: '180px', resizable: true, sortable: true },
+			{ field: 'name', text: 'Name', size: '140px', resizable: true, sortable: true },
+			{
+				field: 'items', text: 'Items', size: '160px', resizable: true, sortable: false,
+				render: record => record.items || ''
+			},
 			{
 				field: 'info', text: '', size: '30px', resizable: false, sortable: false,
 				render: record => record.info || ''
