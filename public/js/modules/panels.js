@@ -8,6 +8,7 @@ import * as utils from './utils.js';
 import * as terminal from './terminal.js';
 import { attachDragDropForPanel, attachDragDropForGallery } from './dragdrop.js';
 import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip } from './vendor/w2ui.es6.min.js';
+import * as autoLabels from './auto-labels.js';
 import {
 	panelState,
 	selectedItemState,
@@ -1037,6 +1038,7 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 	const state = panelState[panelId] || {};
 	const orphanCount = state.orphanCount || 0;
 	const trashCount  = state.trashCount  || 0;
+	const alCount     = state.autoLabelCount || 0;
 	const navParams   = state.currentNavParams || new Set();
 	const orphanActive = navParams.has('orphans');
 	const trashActive  = navParams.has('trash');
@@ -1073,6 +1075,10 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 		</button>
 		<button id="btn-toolbar-save-${panelId}" class="panel-tb-btn" title="Save">
 			<img src="assets/icons/save.svg" style="width: 16px; height: 16px; pointer-events: none;">
+		</button>
+		<button id="btn-toolbar-autolabel-${panelId}" class="panel-tb-btn" title="Suggested Labels${alCount ? ` (${alCount})` : ''}" style="position:relative;">
+			<img src="assets/icons/tag.svg" style="width: 16px; height: 16px; pointer-events: none;">
+			${alCount ? `<span class="panel-tb-badge">${alCount}</span>` : ''}
 		</button>
 		<div class="panel-tb-scan">
 			<button id="btn-stop-scan-${panelId}" class="panel-tb-stop-scan" style="display:none;" title="Stop the current scan">&#9632; Stop</button>
@@ -1143,6 +1149,10 @@ function attachPanelToolbarEventListeners(panelId) {
 	$(`#btn-toolbar-save-${panelId}`).off('click').on('click', function (e) {
 		e.stopPropagation();
 		showSaveButtonMenu(panelId, this);
+	});
+
+	$(`#btn-toolbar-autolabel-${panelId}`).off('click').on('click', function () {
+		autoLabels.openAutoLabelsModal(panelId);
 	});
 }
 
@@ -2729,6 +2739,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			}
 
 			panelState[panelId].hasBeenViewed = true;
+			autoLabels.refreshAutoLabelCountAndSuggestions(panelId).then(() => renderPanelToolbar(panelId, 'detail')).catch(() => {});
 			return;
 		}
 
@@ -2835,6 +2846,10 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		panelState[panelId].hasBeenViewed = true;
 		window.electronAPI.registerWatchedPath(panelId, normalizedPath);
+		autoLabels.refreshAutoLabelCountAndSuggestions(panelId).then(() => {
+			const mode = panelState[panelId]?.currentCategory?.displayMode === 'gallery' ? 'gallery' : 'detail';
+			renderPanelToolbar(panelId, mode);
+		}).catch(() => {});
 
 		if (category && category.enableChecksum) {
 			const grid = panelState[panelId].w2uiGrid;
@@ -4882,7 +4897,9 @@ function clearPanelState(panelId) {
 		currentAttrColumns: [],
 		currentAttrDefinitions: {},
 		galleryRecords: [],
-		gallerySelectedRecids: new Set()
+		gallerySelectedRecids: new Set(),
+		autoLabelCount: 0,
+		autoLabelSuggestions: []
 	};
 
 	window.electronAPI.unregisterWatchedPath(panelId);

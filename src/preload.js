@@ -95,6 +95,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addTagToItem: (data) => ipcRenderer.invoke('add-tag-to-item', data),
   removeTagFromItem: (data) => ipcRenderer.invoke('remove-tag-from-item', data),
 
+  // Auto-Label operations
+  loadAutoLabels: () => ipcRenderer.invoke('load-auto-labels'),
+  getAutoLabel: (id) => ipcRenderer.invoke('get-auto-label', id),
+  createAutoLabel: (data) => ipcRenderer.invoke('create-auto-label', data),
+  updateAutoLabel: (id, data) => ipcRenderer.invoke('update-auto-label', { id, data }),
+  deleteAutoLabel: (id) => ipcRenderer.invoke('delete-auto-label', id),
+  evaluateAutoLabels: (items) => ipcRenderer.invoke('evaluate-auto-labels', { items }),
+  applyAutoLabelSuggestions: (suggestions) => ipcRenderer.invoke('apply-auto-label-suggestions', { suggestions }),
+  updateHistoryComment: (id, comment) => ipcRenderer.invoke('update-history-comment', { id, comment }),
+  updateDirHistoryComment: (id, comment) => ipcRenderer.invoke('update-dir-history-comment', { id, comment }),
+
   // File Type operations
   getFileTypeIcons: () => ipcRenderer.invoke('get-file-type-icons'),
   getFileTypes: () => ipcRenderer.invoke('get-file-types'),

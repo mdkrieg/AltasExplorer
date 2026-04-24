@@ -4295,3 +4295,8 @@ hr {
 .w2ui-icon.icon-navigate-up {
   background-image: url('../assets/icons/navigate-up.svg');
 }
+
+/* Auto-label conflict highlight */
+.al-conflict-row td {
+  background-color: #ffebee !important;
+}

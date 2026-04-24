@@ -18,6 +18,7 @@ const notesParser = require('../src/notesParser');
 const todoAggregator = require('../src/todoAggregator');
 const customActions = require('../src/customActions');
 const layouts = require('../src/layouts');
+const autoLabels = require('../src/autoLabels');
 const { execFile } = require('child_process');
 const ffmpegBin = require('ffmpeg-static');
 const { dialog } = require('electron');
@@ -998,6 +999,203 @@ ipcMain.handle('delete-tag', (event, name) => {
 });
 
 // ============================================
+// Auto-Labels IPC Handlers
+// ============================================
+
+ipcMain.handle('load-auto-labels', () => {
+  try {
+    return { success: true, data: autoLabels.loadAutoLabels() };
+  } catch (err) {
+    logger.error('Error loading auto-labels:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-auto-label', (event, id) => {
+  try {
+    return { success: true, data: autoLabels.getAutoLabel(id) };
+  } catch (err) {
+    logger.error('Error getting auto-label:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('create-auto-label', (event, data) => {
+  try {
+    const rule = autoLabels.createAutoLabel(data);
+    return { success: true, data: rule };
+  } catch (err) {
+    logger.error('Error creating auto-label:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('update-auto-label', (event, { id, data }) => {
+  try {
+    const rule = autoLabels.updateAutoLabel(id, data);
+    return { success: true, data: rule };
+  } catch (err) {
+    logger.error('Error updating auto-label:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('delete-auto-label', (event, id) => {
+  try {
+    autoLabels.deleteAutoLabel(id);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error deleting auto-label:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Evaluate all auto-label rules against the provided items.
+ * Items come from the current panel view.
+ */
+ipcMain.handle('evaluate-auto-labels', (event, { items }) => {
+  try {
+    const rules = autoLabels.loadAutoLabels();
+    if (Object.keys(rules).length === 0) return { success: true, suggestions: [] };
+
+    // Enrich items with live DB data
+    const enrichedItems = items.map(item => {
+      try {
+        let tagsArr = [];
+        let attributesObj = {};
+        let categoryName = 'Default';
+        if (item.isDirectory) {
+          const dirEntry = db.getDirectory(item.path);
+          if (dirEntry) {
+            const rawTags = db.getTagsForDirectoryId(dirEntry.id);
+            tagsArr = rawTags ? (Array.isArray(rawTags) ? rawTags : (() => { try { return JSON.parse(rawTags); } catch { return []; } })()) : [];
+            const rawAttrs = db.getAttributesForDirectoryId(dirEntry.id);
+            attributesObj = rawAttrs ? (typeof rawAttrs === 'object' ? rawAttrs : (() => { try { return JSON.parse(rawAttrs); } catch { return {}; } })()) : {};
+          }
+          const cat = categories.getCategoryForDirectory(item.path);
+          categoryName = cat ? cat.name : 'Default';
+        } else {
+          const fileRow = item.inode ? db.getFileByInode(item.inode, item.dirId) : null;
+          if (fileRow) {
+            tagsArr = fileRow.tags ? (() => { try { return JSON.parse(fileRow.tags); } catch { return []; } })() : [];
+            attributesObj = fileRow.attributes ? (() => { try { return JSON.parse(fileRow.attributes); } catch { return {}; } })() : {};
+          }
+          // Files don't have their own category; use the parent directory's
+          const cat = categories.getCategoryForDirectory(path.dirname(item.path));
+          categoryName = cat ? cat.name : 'Default';
+        }
+        return { ...item, tags: tagsArr, attributes: attributesObj, category: categoryName };
+      } catch (e) {
+        logger.warn(`evaluate-auto-labels: failed to enrich item ${item.path}: ${e.message}`);
+        return { ...item, tags: [], attributes: {}, category: 'Default' };
+      }
+    });
+
+    // Build parent data cache
+    const parentPaths = new Set(enrichedItems.map(i => path.dirname(i.path)));
+    const parentDataCache = new Map();
+    for (const parentPath of parentPaths) {
+      try {
+        const dirEntry = db.getDirectory(parentPath);
+        const rawTags = dirEntry ? db.getTagsForDirectoryId(dirEntry.id) : null;
+        const tagsArr = rawTags ? (() => { try { return JSON.parse(rawTags); } catch { return []; } })() : [];
+        const rawAttrs = dirEntry ? db.getAttributesForDirectoryId(dirEntry.id) : null;
+        const attributesObj = rawAttrs ? (typeof rawAttrs === 'object' ? rawAttrs : (() => { try { return JSON.parse(rawAttrs); } catch { return {}; } })()) : {};
+        const cat = categories.getCategoryForDirectory(parentPath);
+        parentDataCache.set(parentPath, {
+          path: parentPath,
+          category: cat ? cat.name : 'Default',
+          tags: tagsArr,
+          attributes: attributesObj
+        });
+      } catch (e) {
+        parentDataCache.set(parentPath, { path: parentPath, category: 'Default', tags: [], attributes: {} });
+      }
+    }
+
+    const suggestions = autoLabels.evaluateAllRules(rules, enrichedItems, parentDataCache);
+    return { success: true, suggestions };
+  } catch (err) {
+    logger.error('Error evaluating auto-labels:', err.message);
+    return { success: false, error: err.message, suggestions: [] };
+  }
+});
+
+/**
+ * Apply the provided auto-label suggestions (only the checked rows are sent).
+ */
+ipcMain.handle('apply-auto-label-suggestions', (event, { suggestions }) => {
+  const errors = [];
+  for (const suggestion of suggestions) {
+    const comment = `${suggestion.ruleName} [${suggestion.ruleId}]`;
+    for (const item of (suggestion.matchedItems || [])) {
+      try {
+        if (suggestion.applyType === 'tag') {
+          if (item.isDirectory) {
+            db.addTagToDirectory(item.path, suggestion.applyValue);
+            const dirEntry = db.getDirectory(item.path);
+            if (dirEntry) {
+              const dotFile = db.getFileByInode(dirEntry.inode, dirEntry.id);
+              if (dotFile) {
+                const dirHistoryId = createStandaloneDirHistory(dirEntry, 'auto-label', 0, 1, 'autoLabelApplied');
+                db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, 'autoLabelApplied', { tags: suggestion.applyValue, status: 'added' }, dirHistoryId, comment);
+              }
+            }
+          } else {
+            db.addTagToFile(item.inode, item.dirId, suggestion.applyValue);
+            const fileRow = db.getFileByInode(item.inode, item.dirId);
+            if (fileRow) {
+              db.insertFileHistory(item.inode, item.dirId, fileRow.id, 'autoLabelApplied', { tags: suggestion.applyValue, status: 'added' }, null, comment);
+            }
+          }
+        } else if (suggestion.applyType === 'category' && item.isDirectory) {
+          categories.setCategoryForDirectory(item.path, suggestion.applyValue, true);
+          const dirEntry = db.getDirectory(item.path);
+          if (dirEntry) {
+            const dotFile = db.getFileByInode(dirEntry.inode, dirEntry.id);
+            if (dotFile) {
+              const dirHistoryId = createStandaloneDirHistory(dirEntry, 'auto-label', 0, 1, 'autoLabelApplied');
+              db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, 'autoLabelApplied', { category: suggestion.applyValue }, dirHistoryId, comment);
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(`apply-auto-label-suggestions: failed for item ${item.path}:`, err.message);
+        errors.push({ item: item.path, error: err.message });
+      }
+    }
+  }
+  return { success: errors.length === 0, errors };
+});
+
+/**
+ * Update comment on a file_history record
+ */
+ipcMain.handle('update-history-comment', (event, { id, comment }) => {
+  try {
+    db.updateHistoryComment(id, comment);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error updating history comment:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Update comment on a dir_history record
+ */
+ipcMain.handle('update-dir-history-comment', (event, { id, comment }) => {
+  try {
+    db.updateDirHistoryComment(id, comment);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error updating dir history comment:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ============================================
 // Attributes IPC Handlers
 // ============================================
 
@@ -1236,6 +1434,26 @@ ipcMain.handle('add-tag-to-item', (event, { path: itemPath, tagName, isDirectory
     try { updateNotesTagSync(itemPath, isDirectory, tagName, 'promote'); } catch (err) {
       logger.warn(`add-tag-to-item: notes sync failed for '${tagName}': ${err.message}`);
     }
+    // Record tag addition in history
+    try {
+      if (isDirectory) {
+        const dirEntry = db.getDirectory(itemPath);
+        if (dirEntry) {
+          const dotFile = db.getFileByInode(dirEntry.inode, dirEntry.id);
+          if (dotFile) {
+            const dirHistoryId = createStandaloneDirHistory(dirEntry, 'tag-added', 0, 1, 'tagAdded');
+            db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, 'tagAdded', { tags: tagName, status: 'added' }, dirHistoryId);
+          }
+        }
+      } else {
+        const fileRow = db.getFileByInode(inode, dir_id);
+        if (fileRow) {
+          db.insertFileHistory(inode, dir_id, fileRow.id, 'tagAdded', { tags: tagName, status: 'added' });
+        }
+      }
+    } catch (histErr) {
+      logger.warn('add-tag-to-item: failed to record history:', histErr.message);
+    }
     return { success: true };
   } catch (err) {
     logger.error('Error adding tag to item:', err.message);
@@ -1255,6 +1473,26 @@ ipcMain.handle('remove-tag-from-item', (event, { path: itemPath, tagName, isDire
     }
     try { updateNotesTagSync(itemPath, isDirectory, tagName, 'demote'); } catch (err) {
       logger.warn(`remove-tag-from-item: notes sync failed for '${tagName}': ${err.message}`);
+    }
+    // Record tag removal in history
+    try {
+      if (isDirectory) {
+        const dirEntry = db.getDirectory(itemPath);
+        if (dirEntry) {
+          const dotFile = db.getFileByInode(dirEntry.inode, dirEntry.id);
+          if (dotFile) {
+            const dirHistoryId = createStandaloneDirHistory(dirEntry, 'tag-removed', 0, 1, 'tagRemoved');
+            db.insertFileHistory(dirEntry.inode, dirEntry.id, dotFile.id, 'tagRemoved', { tags: tagName, status: 'removed' }, dirHistoryId);
+          }
+        }
+      } else {
+        const fileRow = db.getFileByInode(inode, dir_id);
+        if (fileRow) {
+          db.insertFileHistory(inode, dir_id, fileRow.id, 'tagRemoved', { tags: tagName, status: 'removed' });
+        }
+      }
+    } catch (histErr) {
+      logger.warn('remove-tag-from-item: failed to record history:', histErr.message);
     }
     return { success: true };
   } catch (err) {

@@ -330,6 +330,18 @@ class DatabaseService {
       `);
       this.db.exec('DROP TABLE trash_staging');
     }
+
+    // Migration: add comment column to file_history and dir_history
+    const fileHistoryColsNow = this.db.prepare('PRAGMA table_info(file_history)').all();
+    const hasFileHistoryComment = fileHistoryColsNow.some(c => c.name === 'comment');
+    if (!hasFileHistoryComment) {
+      this.db.exec('ALTER TABLE file_history ADD COLUMN comment TEXT');
+    }
+    const dirHistoryCols = this.db.prepare('PRAGMA table_info(dir_history)').all();
+    const hasDirHistoryComment = dirHistoryCols.some(c => c.name === 'comment');
+    if (!hasDirHistoryComment) {
+      this.db.exec('ALTER TABLE dir_history ADD COLUMN comment TEXT');
+    }
   }
 
   normalizeAlertRuleName(name) {
@@ -1184,7 +1196,7 @@ class DatabaseService {
    * Allowed keys: filename, dateModified, filesizeBytes, checksumValue, checksumStatus, dirname, category, status
    */
   validateChangeValue(changeValue) {
-    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'dirname', 'category', 'status', 'mode', 'previousFilename', 'source', 'hasChanges', 'fileChanges', 'dirChanges', 'newPath', 'oldPath', 'parentDirname'];
+    const ALLOWED_KEYS = ['filename', 'dateModified', 'filesizeBytes', 'checksumValue', 'checksumStatus', 'dirname', 'category', 'status', 'mode', 'previousFilename', 'source', 'hasChanges', 'fileChanges', 'dirChanges', 'newPath', 'oldPath', 'parentDirname', 'tags'];
     
     // Check if it's valid JSON
     let obj;
@@ -1215,7 +1227,7 @@ class DatabaseService {
   }
 
   validateDirHistoryChangeValue(changeValue) {
-    const ALLOWED_KEYS = ['dirname', 'source', 'hasChanges', 'fileChanges', 'dirChanges', 'status', 'category', 'oldPath', 'newPath', 'parentDirname'];
+    const ALLOWED_KEYS = ['dirname', 'source', 'hasChanges', 'fileChanges', 'dirChanges', 'status', 'category', 'oldPath', 'newPath', 'parentDirname', 'tags'];
 
     let obj;
     try {
@@ -1238,14 +1250,14 @@ class DatabaseService {
     return obj;
   }
 
-  insertDirHistory(dirId, eventType, changeValue, detectedAt = Date.now()) {
+  insertDirHistory(dirId, eventType, changeValue, detectedAt = Date.now(), comment = null) {
     const validatedChange = this.validateDirHistoryChangeValue(changeValue);
     const changeValueJson = typeof changeValue === 'string' ? changeValue : JSON.stringify(validatedChange);
 
     return this.db.prepare(`
-      INSERT INTO dir_history (dir_id, eventType, changeValue, detectedAt)
-      VALUES (?, ?, ?, ?)
-    `).run(dirId, eventType, changeValueJson, detectedAt);
+      INSERT INTO dir_history (dir_id, eventType, changeValue, detectedAt, comment)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(dirId, eventType, changeValueJson, detectedAt, comment || null);
   }
 
   getDirectoryHistory(dirId) {
@@ -1280,17 +1292,25 @@ class DatabaseService {
    * @param {number|null} dirHistoryId - Optional linked directory history row
    * @returns {object} Insert result with lastID
    */
-  insertFileHistory(inode, dir_id, file_id, eventType, changeValue, dirHistoryId = null) {
+  insertFileHistory(inode, dir_id, file_id, eventType, changeValue, dirHistoryId = null, comment = null) {
     // Validate and stringify changeValue if needed
     const validatedChange = this.validateChangeValue(changeValue);
     const changeValueJson = typeof changeValue === 'string' ? changeValue : JSON.stringify(validatedChange);
 
     const stmt = this.db.prepare(`
-      INSERT INTO file_history (inode, dir_id, file_id, dir_history_id, eventType, changeValue, detectedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO file_history (inode, dir_id, file_id, dir_history_id, eventType, changeValue, detectedAt, comment)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    return stmt.run(inode, dir_id, file_id, dirHistoryId, eventType, changeValueJson, Date.now());
+    return stmt.run(inode, dir_id, file_id, dirHistoryId, eventType, changeValueJson, Date.now(), comment || null);
+  }
+
+  updateHistoryComment(id, comment) {
+    return this.db.prepare('UPDATE file_history SET comment = ? WHERE id = ?').run(comment || null, id);
+  }
+
+  updateDirHistoryComment(id, comment) {
+    return this.db.prepare('UPDATE dir_history SET comment = ? WHERE id = ?').run(comment || null, id);
   }
 
   /**

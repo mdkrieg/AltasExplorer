@@ -137,6 +137,9 @@ export function hideTaggingModal() {
 	if (w2ui['attributes-grid']) {
 		w2ui['attributes-grid'].destroy();
 	}
+	if (w2ui['auto-labels-grid']) {
+		w2ui['auto-labels-grid'].destroy();
+	}
 }
 
 export function hideSettingsModal() {
@@ -224,6 +227,11 @@ export function switchTaggingTab(tabName) {
 	if (tabName === 'attribute' && !initializedTaggingTabs.has('attribute')) {
 		initializedTaggingTabs.add('attribute');
 		initializeAttributesGrid().then(() => initializeAttributesForm()).then(() => setupAttributeDivider());
+	}
+
+	if (tabName === 'auto-label' && !initializedTaggingTabs.has('auto-label')) {
+		initializedTaggingTabs.add('auto-label');
+		initializeAutoLabelsGrid().then(() => setupAutoLabelDivider());
 	}
 
 	$('.tagging-tab-btn').each(function () {
@@ -2207,3 +2215,434 @@ export async function deleteCustomActionFromForm() {
 		}
 	});
 }
+
+// ============================================
+// Auto Labels Tab
+// ============================================
+
+let autoLabelFormState = { editingId: null };
+
+function setupAutoLabelDivider() {
+	setupFormDivider('#auto-label-divider', '#auto-label-form-panel');
+}
+
+async function initializeAutoLabelsGrid() {
+	const gridName = 'auto-labels-grid';
+	if (w2ui && w2ui[gridName]) w2ui[gridName].destroy();
+
+	const [result, catsData, tagsData] = await Promise.all([
+		window.electronAPI.loadAutoLabels(),
+		window.electronAPI.loadCategories().catch(() => ({})),
+		window.electronAPI.getTagsList().catch(() => [])
+	]);
+	const rulesMap = (result && result.success) ? (result.data || {}) : {};
+	const catsMap = catsData || {};
+	const tagsMap = {};
+	(tagsData || []).forEach(t => { tagsMap[t.name] = t; });
+
+	// Build records with async effect HTML
+	const ruleList = Object.values(rulesMap);
+	const records = [];
+	for (let index = 0; index < ruleList.length; index++) {
+		const rule = ruleList[index];
+		let effectHtml = '';
+		if (!rule._isNewRow && rule.applyType && rule.applyValue) {
+			if (rule.applyType === 'category') {
+				const cat = catsMap[rule.applyValue] || null;
+				if (cat) {
+					const iconUrl = await window.electronAPI.generateFolderIcon(cat.bgColor, cat.textColor, null).catch(() => null);
+					effectHtml = iconUrl
+						? `<span style="display:inline-flex;align-items:center;gap:4px;"><img src="${iconUrl}" style="width:18px;height:18px;object-fit:contain;flex-shrink:0;">${rule.applyValue}</span>`
+						: `<span style="display:inline-flex;align-items:center;gap:4px;">&#128193;${rule.applyValue}</span>`;
+				} else {
+					effectHtml = `<span style="display:inline-flex;align-items:center;gap:4px;">&#128193;${rule.applyValue}</span>`;
+				}
+			} else {
+				const tag = tagsMap[rule.applyValue] || null;
+				if (tag) {
+					const tagIconUrl = await window.electronAPI.generateTagIcon(tag.bgColor, tag.textColor).catch(() => null);
+					const tagIconHtml = tagIconUrl ? `<img src="${tagIconUrl}" style="width:16px;height:16px;object-fit:contain;flex-shrink:0;">` : '';
+					effectHtml = `<span style="display:inline-flex;align-items:center;gap:4px;">${tagIconHtml}${rule.applyValue}</span>`;
+				} else {
+					effectHtml = `<span style="display:inline-flex;align-items:center;gap:4px;">${rule.applyValue}</span>`;
+				}
+			}
+		}
+		records.push({
+			recid: index,
+			ruleId: rule.id,
+			name: rule.name || '',
+			description: rule.description || '',
+			effect: effectHtml,
+			_rule: rule
+		});
+	}
+
+	records.push({
+		recid: 'new',
+		ruleId: null,
+		name: '(new)',
+		description: '',
+		effect: '',
+		_rule: null,
+		_isNewRow: true
+	});
+
+	w2ui[gridName] = new w2grid({
+		name: gridName,
+		show: { header: false, toolbar: false, footer: false },
+		columns: [
+			{
+				field: 'name', text: 'Name', size: '140px', resizable: true, sortable: true,
+				render: record => record._isNewRow
+					? `<span style="color:#aaa;font-style:italic;">(new)</span>`
+					: (record.name || '')
+			},
+			{
+				field: 'effect', text: 'Effect', size: '160px', resizable: true, sortable: false,
+				render: record => record._isNewRow ? '' : (record.effect || '')
+			},
+			{
+				field: 'description', text: 'Description', size: '100%', resizable: true, sortable: true,
+				render: record => record._isNewRow ? '' : (record.description || '')
+			}
+		],
+		records
+	});
+
+	w2ui[gridName].render('#auto-labels-grid');
+	attachGridRowSelection('auto-labels-grid', 'form-al-status', record => {
+		if (record._isNewRow) clearAutoLabelForm();
+		else populateAutoLabelForm(record._rule);
+	});
+
+	$('#btn-auto-label-grid-new').off('click.alGridNew').on('click.alGridNew', function () {
+		clearAutoLabelForm();
+	});
+}
+
+function clearAutoLabelForm() {
+	autoLabelFormState.editingId = null;
+	$('#form-al-name').val('');
+	$('#form-al-description').val('');
+	$('#form-al-id').text('');
+	$('input[name="form-al-applyType"][value="tag"]').prop('checked', true);
+	refreshAutoLabelApplyDropdown('tag');
+	$('#form-al-patterns-list').empty();
+	clearFormStatus(null, 'form-al-status');
+	$('#btn-al-delete').prop('disabled', true).css('opacity', 0.4);
+}
+
+function _setAlIconSelDisplay($wrap, val, placeholder) {
+	placeholder = placeholder || '-- Select --';
+	$wrap.find('.cat-icon-select-option').removeClass('cat-icon-select-option-selected');
+	const $icon = $wrap.find('.cat-icon-select-icon');
+	$icon.empty();
+	$wrap.find('.cat-icon-select-text').text(val || placeholder);
+	if (val) {
+		const $selectedOpt = $wrap.find('.cat-icon-select-option').filter(function () { return $(this).data('value') === val; });
+		if ($selectedOpt.length) {
+			$selectedOpt.addClass('cat-icon-select-option-selected');
+			const $img = $selectedOpt.find('img');
+			if ($img.length) $img.clone().appendTo($icon);
+		}
+	}
+}
+
+async function refreshAutoLabelApplyDropdown(type) {
+	const $hidden = $('#form-al-apply-value');
+	const $wrap = $('#form-al-apply-value-wrap');
+	const $optionsEl = $('#form-al-apply-value-options');
+	$hidden.val('');
+	$optionsEl.empty().hide();
+
+	const makeOpt = (value, iconUrl, label) => {
+		const $opt = $('<div class="cat-icon-select-option"></div>').attr('data-value', value);
+		const $iconSpan = $('<span class="cat-icon-select-opt-icon"></span>');
+		if (iconUrl) $('<img>').attr({ src: iconUrl, style: 'width:16px;height:16px;object-fit:contain;vertical-align:middle;' }).appendTo($iconSpan);
+		$opt.append($iconSpan);
+		$opt.append($('<span class="cat-icon-select-opt-text"></span>').text(label));
+		return $opt;
+	};
+
+	$optionsEl.append(makeOpt('', null, '-- Select --'));
+	if (type === 'tag') {
+		const tagsList = await window.electronAPI.getTagsList();
+		for (const t of (tagsList || [])) {
+			const iconUrl = await window.electronAPI.generateTagIcon(t.bgColor, t.textColor).catch(() => null);
+			$optionsEl.append(makeOpt(t.name, iconUrl, t.name));
+		}
+	} else {
+		const catsList = await window.electronAPI.getCategoriesList();
+		for (const c of (catsList || [])) {
+			const iconUrl = await window.electronAPI.generateFolderIcon(c.bgColor, c.textColor, null).catch(() => null);
+			$optionsEl.append(makeOpt(c.name, iconUrl, c.name));
+		}
+	}
+	_setAlIconSelDisplay($wrap, '', '-- Select --');
+}
+
+function populateAutoLabelForm(rule) {
+	autoLabelFormState.editingId = rule.id;
+	$('#form-al-name').val(rule.name || '');
+	$('#form-al-description').val(rule.description || '');
+	$('#form-al-id').text(rule.id || '');
+	const applyType = rule.applyType || 'tag';
+	$(`input[name="form-al-applyType"][value="${applyType}"]`).prop('checked', true);
+	refreshAutoLabelApplyDropdown(applyType).then(() => {
+		const val = rule.applyValue || '';
+		$('#form-al-apply-value').val(val);
+		_setAlIconSelDisplay($('#form-al-apply-value-wrap'), val, '-- Select --');
+	});
+	renderAllPatternRows(rule.patterns || []);
+	clearFormStatus(null, 'form-al-status');
+	$('#btn-al-delete').prop('disabled', false).css('opacity', 1);
+}
+
+function renderAllPatternRows(patterns) {
+	const $list = $('#form-al-patterns-list');
+	$list.empty();
+	patterns.forEach((p, i) => renderPatternRow(p, i));
+}
+
+function renderPatternRow(pattern, index) {
+	const target = pattern.target || 'self';
+	const conditionType = pattern.conditionType || 'hasCategory';
+	const required = !!pattern.required;
+	const normalizePaths = !!pattern.normalizePathSeparators;
+	const caseInsensitive = !!pattern.caseInsensitive;
+
+	const rowHtml = `
+		<div class="al-pattern-row" data-index="${index}" style="border:1px solid #ddd;border-radius:4px;padding:8px;background:#fafafa;">
+			<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+				<select class="al-pat-target" style="padding:4px;border:1px solid #ccc;border-radius:3px;font-size:11px;">
+					<option value="self" ${target === 'self' ? 'selected' : ''}>Self</option>
+					<option value="parent" ${target === 'parent' ? 'selected' : ''}>Parent</option>
+				</select>
+				<select class="al-pat-condtype" style="padding:4px;border:1px solid #ccc;border-radius:3px;font-size:11px;">
+					<option value="hasCategory" ${conditionType === 'hasCategory' ? 'selected' : ''}>Has Category</option>
+					<option value="hasTags" ${conditionType === 'hasTags' ? 'selected' : ''}>Has Tags (any)</option>
+					<option value="hasAttribute" ${conditionType === 'hasAttribute' ? 'selected' : ''}>Has Attribute</option>
+					<option value="nameMatchesRegex" ${conditionType === 'nameMatchesRegex' ? 'selected' : ''}>Name matches regex</option>
+					<option value="pathMatchesRegex" ${conditionType === 'pathMatchesRegex' ? 'selected' : ''}>Path matches regex</option>
+				</select>
+				<label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;">
+					<input type="checkbox" class="al-pat-required" ${required ? 'checked' : ''}> Required
+				</label>
+				<button type="button" class="al-pat-remove" style="margin-left:auto;padding:2px 8px;background:#f44336;color:white;border:none;border-radius:3px;cursor:pointer;font-size:11px;">✕</button>
+			</div>
+			<div class="al-pat-value-area" style="margin-top:6px;"></div>
+		</div>
+	`;
+	$('#form-al-patterns-list').append(rowHtml);
+	const $row = $('#form-al-patterns-list .al-pattern-row').last();
+	renderPatternValueArea($row, conditionType, pattern.value, normalizePaths, caseInsensitive);
+	wirePatternRowEvents($row);
+}
+
+async function renderPatternValueArea($row, conditionType, value, normalizePaths, caseInsensitive = false) {
+	const $area = $row.find('.al-pat-value-area');
+	$area.empty();
+
+	if (conditionType === 'hasCategory') {
+		const catsList = await window.electronAPI.getCategoriesList();
+		const $widgetWrap = $('<div class="cat-icon-select al-icon-sel" style="width:100%;font-size:11px;"></div>');
+		const $hidden = $('<input type="hidden" class="al-pat-value-single">').val(value || '');
+		const $trigger = $('<div class="cat-icon-select-trigger"><span class="cat-icon-select-icon"></span><span class="cat-icon-select-text">-- Select category --</span><span class="cat-icon-select-chevron">▼</span></div>');
+		const $opts = $('<div class="cat-icon-select-options" style="display:none;z-index:600;"></div>');
+		const makeOpt = (val, iconUrl, label) => {
+			const $opt = $('<div class="cat-icon-select-option"></div>').attr('data-value', val);
+			const $iconSpan = $('<span class="cat-icon-select-opt-icon"></span>');
+			if (iconUrl) $('<img>').attr({ src: iconUrl, style: 'width:16px;height:16px;object-fit:contain;vertical-align:middle;' }).appendTo($iconSpan);
+			$opt.append($iconSpan).append($('<span class="cat-icon-select-opt-text"></span>').text(label));
+			return $opt;
+		};
+		$opts.append(makeOpt('', null, '-- Select category --'));
+		for (const c of (catsList || [])) {
+			const iconUrl = await window.electronAPI.generateFolderIcon(c.bgColor, c.textColor, null).catch(() => null);
+			$opts.append(makeOpt(c.name, iconUrl, c.name));
+		}
+		$widgetWrap.append($hidden).append($trigger).append($opts);
+		$area.empty().append($widgetWrap);
+		_setAlIconSelDisplay($widgetWrap, value || '', '-- Select category --');
+
+	} else if (conditionType === 'hasTags') {
+		const tagsList = await window.electronAPI.getTagsList();
+		const selectedTags = Array.isArray(value) ? value : (value ? [value] : []);
+		const $list = $('<div style="max-height:110px;overflow-y:auto;border:1px solid #ccc;border-radius:3px;padding:4px;display:flex;flex-direction:column;gap:2px;background:#fff;"></div>');
+		for (const t of (tagsList || [])) {
+			const checked = selectedTags.includes(t.name);
+			const iconUrl = await window.electronAPI.generateTagIcon(t.bgColor, t.textColor).catch(() => null);
+			const $label = $('<label style="font-size:11px;display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 4px;border-radius:2px;"></label>');
+			if (checked) $label.css('background', '#e3eef9');
+			const $cb = $('<input type="checkbox" class="al-pat-tag-checkbox">').val(t.name).prop('checked', checked);
+			$label.append($cb);
+			if (iconUrl) $label.append($('<img>').attr({ src: iconUrl, style: 'width:14px;height:14px;object-fit:contain;flex-shrink:0;' }));
+			$label.append($('<span></span>').text(t.name));
+			$list.append($label);
+		}
+		$area.empty().append($list).append($('<span style="font-size:10px;color:#888;">Check to select multiple</span>'));
+
+	} else if (conditionType === 'hasAttribute') {
+		const attrsList = await window.electronAPI.getAttributesList();
+		const attrVal = (typeof value === 'object' && value) ? value : { attr: '', attrValue: '' };
+		let opts = '<option value="">-- Select attribute --</option>';
+		(attrsList || []).forEach(a => {
+			opts += `<option value="${a.name}" ${attrVal.attr === a.name ? 'selected' : ''}>${a.name}</option>`;
+		});
+		$area.html(`
+			<div style="display:flex;gap:6px;align-items:center;">
+				<select class="al-pat-attr-name" style="flex:1;padding:4px;border:1px solid #ccc;border-radius:3px;font-size:11px;">${opts}</select>
+				<span style="font-size:11px;">=</span>
+				<input type="text" class="al-pat-attr-value" value="${attrVal.attrValue || ''}" placeholder="value (blank=empty)" style="flex:1;padding:4px;border:1px solid #ccc;border-radius:3px;font-size:11px;">
+			</div>
+		`);
+
+	} else if (conditionType === 'nameMatchesRegex') {
+		const strVal = (typeof value === 'string') ? value : '';
+		$area.html(`
+			<input type="text" class="al-pat-value-single" value="${strVal.replace(/"/g, '&quot;')}" placeholder="Regular expression" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid #ccc;border-radius:3px;font-size:11px;margin-bottom:4px;">
+			<label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+				<input type="checkbox" class="al-pat-case-insensitive" ${caseInsensitive ? 'checked' : ''}> Case insensitive
+			</label>
+		`);
+
+	} else if (conditionType === 'pathMatchesRegex') {
+		const strVal = (typeof value === 'string') ? value : '';
+		$area.html(`
+			<input type="text" class="al-pat-value-single" value="${strVal.replace(/"/g, '&quot;')}" placeholder="Regular expression" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid #ccc;border-radius:3px;font-size:11px;margin-bottom:4px;">
+			<label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+				<input type="checkbox" class="al-pat-case-insensitive" ${caseInsensitive ? 'checked' : ''}> Case insensitive
+			</label>
+			<label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+				<input type="checkbox" class="al-pat-normalize-paths" ${normalizePaths ? 'checked' : ''}> Normalize to Unix-style separators (/)
+			</label>
+		`);
+	}
+}
+
+function wirePatternRowEvents($row) {
+	$row.find('.al-pat-condtype').on('change', function () {
+		renderPatternValueArea($row, $(this).val(), null, false, false);
+	});
+	$row.find('.al-pat-remove').on('click', function () {
+		$row.remove();
+	});
+}
+
+function collectAutoLabelFormData() {
+	const name = $('#form-al-name').val().trim();
+	const description = $('#form-al-description').val().trim();
+	const applyType = $('input[name="form-al-applyType"]:checked').val() || 'tag';
+	const applyValue = $('#form-al-apply-value').val() || '';
+
+	const patterns = [];
+	$('#form-al-patterns-list .al-pattern-row').each(function () {
+		const $row = $(this);
+		const target = $row.find('.al-pat-target').val();
+		const conditionType = $row.find('.al-pat-condtype').val();
+		const required = $row.find('.al-pat-required').is(':checked');
+		const normalizePaths = $row.find('.al-pat-normalize-paths').is(':checked');
+		const caseInsensitive = $row.find('.al-pat-case-insensitive').is(':checked');
+
+		let value = null;
+		if (conditionType === 'hasTags') {
+			const selected = [];
+			$row.find('.al-pat-tag-checkbox:checked').each(function () { selected.push($(this).val()); });
+			value = selected;
+		} else if (conditionType === 'hasAttribute') {
+			value = {
+				attr: $row.find('.al-pat-attr-name').val() || '',
+				attrValue: $row.find('.al-pat-attr-value').val() || ''
+			};
+		} else {
+			value = $row.find('.al-pat-value-single').val() || '';
+		}
+
+		patterns.push({ target, conditionType, value, required, normalizePathSeparators: normalizePaths, caseInsensitive });
+	});
+
+	return { name, description, applyType, applyValue, patterns };
+}
+
+$(document).on('click', '#btn-al-save', async function () {
+	const data = collectAutoLabelFormData();
+	if (!data.name) {
+		showFormError(null, 'form-al-status', 'Name is required.');
+		return;
+	}
+	if (data.patterns.length === 0) {
+		showFormError(null, 'form-al-status', 'At least one pattern is required.');
+		return;
+	}
+	if (!data.applyValue) {
+		showFormError(null, 'form-al-status', 'Please select a label to apply.');
+		return;
+	}
+	try {
+		let result;
+		if (autoLabelFormState.editingId) {
+			result = await window.electronAPI.updateAutoLabel(autoLabelFormState.editingId, data);
+		} else {
+			result = await window.electronAPI.createAutoLabel(data);
+		}
+		if (!result.success) throw new Error(result.error || 'Save failed');
+		if (!autoLabelFormState.editingId && result.data) {
+			autoLabelFormState.editingId = result.data.id;
+			$('#form-al-id').text(result.data.id);
+		}
+		showFormSuccess(null, 'form-al-status', 'Saved.');
+		await initializeAutoLabelsGrid();
+	} catch (err) {
+		showFormError(null, 'form-al-status', 'Error: ' + err.message);
+	}
+});
+
+$(document).on('click', '#btn-al-delete', async function () {
+	if (!autoLabelFormState.editingId) return;
+	const id = autoLabelFormState.editingId;
+	try {
+		const result = await window.electronAPI.deleteAutoLabel(id);
+		if (!result.success) throw new Error(result.error || 'Delete failed');
+		clearAutoLabelForm();
+		await initializeAutoLabelsGrid();
+	} catch (err) {
+		showFormError(null, 'form-al-status', 'Error: ' + err.message);
+	}
+});
+
+$(document).on('click', '#btn-al-add-pattern', function () {
+	const index = $('#form-al-patterns-list .al-pattern-row').length;
+	renderPatternRow({ target: 'self', conditionType: 'hasCategory', value: '', required: false }, index);
+});
+
+$(document).on('change', 'input[name="form-al-applyType"]', function () {
+	const type = $(this).val();
+	refreshAutoLabelApplyDropdown(type);
+});
+
+// Generic al-icon-sel widget interaction
+$(document).on('click.alIconSel', '.al-icon-sel .cat-icon-select-trigger', function (e) {
+	e.stopPropagation();
+	const $wrap = $(this).closest('.al-icon-sel');
+	if ($wrap.hasClass('cat-icon-select-disabled')) return;
+	const $opts = $wrap.find('> .cat-icon-select-options');
+	$('.al-icon-sel .cat-icon-select-options').not($opts).hide();
+	$opts.toggle();
+});
+
+$(document).on('click.alIconSelOpt', '.al-icon-sel .cat-icon-select-option', function (e) {
+	e.stopPropagation();
+	const $opt = $(this);
+	const $wrap = $opt.closest('.al-icon-sel');
+	const val = $opt.data('value');
+	$wrap.find('input[type="hidden"]:first').val(val);
+	_setAlIconSelDisplay($wrap, val);
+	$wrap.find('> .cat-icon-select-options').hide();
+});
+
+$(document).on('click.alIconSelClose', function (e) {
+	if (!$(e.target).closest('.al-icon-sel').length) {
+		$('.al-icon-sel .cat-icon-select-options').hide();
+	}
+});

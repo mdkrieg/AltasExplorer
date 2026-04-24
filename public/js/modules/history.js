@@ -20,8 +20,13 @@ const EVENT_LABELS = {
   fileRenamed: 'File Renamed',
   fileModified: 'File Modified',
   fileChanged: 'File Changed',
-  categoryChanged: 'Category Changed'
+  categoryChanged: 'Category Changed',
+  tagAdded: 'Tag Added',
+  tagRemoved: 'Tag Removed',
+  autoLabelApplied: 'Auto-Label Applied'
 };
+
+let _isDirectoryItem = false;
 
 export function hideHistoryModal() {
   $('#history-modal').hide();
@@ -37,6 +42,8 @@ export async function openHistoryModal(selectedRecord) {
       inode: selectedRecord.inode,
       dirId: selectedRecord.dir_id || null
     });
+
+    _isDirectoryItem = !!selectedRecord.isFolder;
 
     if (!result.success) {
       alert('Error loading history: ' + result.error);
@@ -59,7 +66,8 @@ export async function openHistoryModal(selectedRecord) {
       columns: [
         { field: 'detectedAt', text: 'Detected At', size: '160px', resizable: true, sortable: true },
         { field: 'changeValue', text: 'Change', size: '200px', resizable: true, sortable: true },
-        { field: 'path', text: 'Path', size: '100%', resizable: true, sortable: true }
+        { field: 'path', text: 'Path', size: '100%', resizable: true, sortable: true },
+        { field: 'comment', text: 'Comment', size: '200px', resizable: true, sortable: true, editable: { type: 'text' } }
       ],
       records: historyData,
       show: { header: true, toolbar: false, footer: true },
@@ -68,6 +76,23 @@ export async function openHistoryModal(selectedRecord) {
           const selectedIndex = event.detail.recid - 1;
           console.log('Grid row clicked, index:', selectedIndex);
           updateHistoryChangeSummary(fullState, selectedIndex);
+        }
+      },
+      onChange: async function (event) {
+        await event.complete;
+        const rec = w2ui['history-grid']?.get(event.detail?.recid);
+        if (!rec || event.detail?.column === undefined) return;
+        const col = w2ui['history-grid'].columns[event.detail.column];
+        if (!col || col.field !== 'comment') return;
+        const newComment = event.detail?.value?.new ?? '';
+        try {
+          if (_isDirectoryItem) {
+            await window.electronAPI.updateDirHistoryComment(rec._id, newComment);
+          } else {
+            await window.electronAPI.updateHistoryComment(rec._id, newComment);
+          }
+        } catch (err) {
+          console.error('Failed to update comment:', err);
         }
       }
     });
@@ -83,9 +108,11 @@ export async function openHistoryModal(selectedRecord) {
 export function formatHistoryData(historyRecords, fullState) {
   return historyRecords.map((record, index) => ({
       recid: index + 1,
+      _id: record.id,
       detectedAt: record.detectedAt ? new Date(record.detectedAt).toLocaleString() : '-',
       changeValue: EVENT_LABELS[record.eventType] || record.eventType || '-',
       path: fullState.path || '-',
+      comment: record.comment || '',
       _rawData: record
     }));
 }
