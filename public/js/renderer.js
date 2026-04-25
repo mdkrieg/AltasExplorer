@@ -209,10 +209,10 @@ async function initialize() {
     await sidebar.initializeSidebar();
     sidebar.handleSidebarLayoutResize(w2layoutInstance.get('left').size);
 
-    const settings = await window.electronAPI.getSettings();
-    console.log('Settings loaded:', settings);
+    const appSettings = await window.electronAPI.getSettings();
+    console.log('Settings loaded:', appSettings);
 
-    const homePath = settings.home_directory;
+    const homePath = appSettings.home_directory;
 
     await panels.switchLayout(1);
     panels.initializeDividers();
