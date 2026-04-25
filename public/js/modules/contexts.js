@@ -730,7 +730,11 @@ function buildMenuEl(items, panelId) {
 			row.addEventListener('click', (event) => {
 				event.stopPropagation();
 				hideCustomContextMenu();
-				handleContextMenuClick({ detail: { menuItem: item } }, panelId);
+				if (typeof item.onClick === 'function') {
+					item.onClick();
+				} else {
+					handleContextMenuClick({ detail: { menuItem: item } }, panelId);
+				}
 			});
 		}
 

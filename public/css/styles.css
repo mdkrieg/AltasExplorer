@@ -2531,6 +2531,16 @@ hr {
   box-sizing: border-box;
 }
 
+/* Blue outline on column headers when reorder mode is active */
+.w2ui-grid td.w2ui-head.w2ui-col-reorderable {
+  outline: 2px solid #2196f3;
+  outline-offset: -2px;
+  cursor: grab;
+}
+.w2ui-grid td.w2ui-head.w2ui-col-reorderable:active {
+  cursor: grabbing;
+}
+
 .w2ui-grid .w2ui-col-header.w2ui-col-sorted .grid-header-filter {
   width: calc(100% - 14px);
 }

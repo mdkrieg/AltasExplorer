@@ -2285,6 +2285,14 @@ export function hideCreateTagModal() {
 }
 
 export function handleTransientEscape() {
+	// Exit column reorder mode first if active on any panel
+	for (let panelId = 1; panelId <= 4; panelId++) {
+		if (panelState[panelId]?.columnReorderMode) {
+			setColumnReorderMode(panelId, false);
+			return true;
+		}
+	}
+
 	if ($('#item-tag-create-modal').is(':visible')) {
 		hideCreateTagModal();
 		return true;
@@ -2961,7 +2969,7 @@ async function initializeGridForPanel(panelId) {
 	const recordHeight = await getRecordHeight();
 	const state = panelState[panelId];
 	const columns = [
-		{ field: 'icon', headerLabel: '', text: getColumnHeaderText(panelId, 'icon', ''), size: '40px', resizable: false, sortable: false, hideable: false },
+		{ field: 'icon', headerLabel: '', text: getColumnHeaderText(panelId, 'icon', ''), size: '30px', resizable: false, sortable: false, hideable: false },
 		{ field: 'filename', headerLabel: 'Name', text: getColumnHeaderText(panelId, 'filename', 'Name'), size: '50%', resizable: true, sortable: true, hideable: false },
 		{ field: 'type', headerLabel: 'Type', text: getColumnHeaderText(panelId, 'type', 'Type'), size: '80px', resizable: true, sortable: true },
 		{ field: 'size', headerLabel: 'Size', text: getColumnHeaderText(panelId, 'size', 'Size'), size: '60px', resizable: true, sortable: true, align: 'right' },
@@ -3016,7 +3024,7 @@ async function initializeGridForPanel(panelId) {
 
 	w2ui[gridName] = new w2grid({
 		name: gridName,
-		reorderColumns: true,
+		reorderColumns: false,
 		recordHeight: recordHeight,
 		show: {
 			header: false,
@@ -3208,6 +3216,35 @@ async function initializeGridForPanel(panelId) {
 				const origEvent = event.detail.originalEvent;
 				showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId);
 			}
+		},
+		onColumnContextMenu: function (event) {
+			event.preventDefault();
+			const origEvent = event.detail.originalEvent;
+			if (origEvent) origEvent.preventDefault();
+			const field = event.detail.field;
+			// Icon column: end reorder mode, no menu
+			if (field === 'icon') {
+				setColumnReorderMode(panelId, false);
+				return;
+			}
+			showColumnContextMenuForPanel(panelId, field, origEvent);
+		},
+		onColumnDragEnd: function (event) {
+			const grid = this;
+			const dragData = event.detail?.dragData;
+			if (!dragData) return;
+			const srcField = grid.columns[dragData.originalPos]?.field;
+			// Prevent moving icon or filename columns, and prevent displacing them
+			if (srcField === 'icon' || srcField === 'filename' ||
+				dragData.targetPos <= 1) {
+				event.preventDefault();
+				return;
+			}
+			const previousOnComplete = event.onComplete;
+			event.onComplete = () => {
+				if (typeof previousOnComplete === 'function') previousOnComplete.call(grid, event);
+				snapshotSessionDirLayout(panelId);
+			};
 		},
 		onColumnOnOff: function (event) {
 			if (event.detail.field === 'dateCreated') {
@@ -3414,6 +3451,166 @@ function snapshotSessionDirLayout(panelId) {
 		sortData: grid.sortData ? grid.sortData.map(s => ({ ...s })) : [],
 		columns: grid.columns.map(c => ({ field: c.field, size: c.size, hidden: !!c.hidden }))
 	};
+}
+
+/**
+ * Enable or disable column reorder drag mode for a panel.
+ * When active, w2ui renders column headers with a draggable handle and a blue outline (CSS).
+ */
+function setColumnReorderMode(panelId, active) {
+	const state = panelState[panelId];
+	const grid = state?.w2uiGrid;
+	if (!grid) return;
+	state.columnReorderMode = active;
+	grid.reorderColumns = active;
+	grid.refresh();
+}
+
+/**
+ * Apply the "Default" column layout for a panel:
+ * If a per-directory layout was previously saved with "Remember grid layout", apply it.
+ * Otherwise, reset all columns to factory visibility and order.
+ */
+async function applyDefaultColumnLayout(panelId) {
+	const state = panelState[panelId];
+	const grid = state?.w2uiGrid;
+	if (!grid || !state.currentPath) return;
+
+	const result = await window.electronAPI.getDirGridLayout(state.currentPath);
+	if (result?.success && result.layout?.columns?.length > 0) {
+		// A saved layout exists — apply it
+		const currentFields = new Set(grid.columns.map(c => c.field));
+		const validColumns = result.layout.columns.filter(c => currentFields.has(c.field));
+		if (validColumns.length > 0) {
+			panelState[panelId].columnOverrides = validColumns;
+			applyColumnOverrides(panelId);
+		}
+		if (result.layout.sortData?.length > 0) {
+			grid.sortData = result.layout.sortData;
+			grid.localSort();
+			repositionMetaDirs(grid, panelId);
+			grid.refresh();
+		}
+	} else {
+		// No saved layout — reset to factory defaults
+		const FACTORY_ORDER = ['icon', 'filename', 'type', 'size', 'dateModified', 'modified',
+			'dateCreated', 'perms', 'checksum', 'tags', 'notes', 'todo'];
+		// Reorder columns: factory columns first (in order), then any attr_ columns
+		const attrCols = grid.columns.filter(c => c.field.startsWith('attr_'));
+		const standardCols = FACTORY_ORDER
+			.map(f => grid.columns.find(c => c.field === f))
+			.filter(Boolean);
+		grid.columns = [...standardCols, ...attrCols];
+		// Reset hidden state to factory defaults
+		grid.columns.forEach(col => {
+			if (col.field === 'dateModified') col.hidden = true;
+			else if (col.field === 'dateCreated') col.hidden = !state.showDateCreated;
+			else col.hidden = false;
+		});
+		grid.refresh();
+	}
+	snapshotSessionDirLayout(panelId);
+}
+
+/**
+ * Show the custom column header context menu for the given column field.
+ */
+function showColumnContextMenuForPanel(panelId, field, mouseEvent) {
+	const state = panelState[panelId];
+	const grid = state?.w2uiGrid;
+	if (!grid || !mouseEvent) return;
+
+	const col = grid.columns.find(c => c.field === field);
+	if (!col) return;
+	const col_ind = grid.columns.indexOf(col);
+
+	const items = [];
+
+	// Filter
+	if (isColumnFilterable(panelId, field)) {
+		items.push({
+			text: 'Filter',
+			onClick: () => {
+				const headerEl = grid.box?.querySelector(`td.w2ui-head[col="${col_ind}"]`);
+				if (headerEl) {
+					openColumnFilterMenu(panelId, field, headerEl);
+				}
+			}
+		});
+		items.push({ text: '--' });
+	}
+
+	// Sort
+	if (col.sortable !== false) {
+		items.push({
+			text: 'Sort Ascending',
+			onClick: () => {
+				grid.sortData = [{ field, direction: 'asc' }];
+				grid.localSort();
+				repositionMetaDirs(grid, panelId);
+				grid.refresh();
+				snapshotSessionDirLayout(panelId);
+			}
+		});
+		items.push({
+			text: 'Sort Descending',
+			onClick: () => {
+				grid.sortData = [{ field, direction: 'desc' }];
+				grid.localSort();
+				repositionMetaDirs(grid, panelId);
+				grid.refresh();
+				snapshotSessionDirLayout(panelId);
+			}
+		});
+		items.push({ text: '--' });
+	}
+
+	// Hide (not for the filename column)
+	if (field !== 'filename') {
+		items.push({
+			text: 'Hide',
+			onClick: () => {
+				col.hidden = true;
+				if (field === 'dateCreated') state.showDateCreated = false;
+				grid.refresh();
+				snapshotSessionDirLayout(panelId);
+			}
+		});
+	}
+
+	// Show submenu
+	const hiddenCols = grid.columns.filter(c => c.hidden && c.field !== 'icon');
+	const showSubItems = [
+		{
+			text: 'Default',
+			onClick: () => applyDefaultColumnLayout(panelId)
+		}
+	];
+	for (const hiddenCol of hiddenCols) {
+		const label = hiddenCol.headerLabel || hiddenCol.field;
+		showSubItems.push({
+			text: label,
+			onClick: () => {
+				hiddenCol.hidden = false;
+				if (hiddenCol.field === 'dateCreated') state.showDateCreated = true;
+				grid.refresh();
+				snapshotSessionDirLayout(panelId);
+			}
+		});
+	}
+	items.push({ text: 'Show', items: showSubItems });
+
+	items.push({ text: '--' });
+
+	// Reorder Columns toggle
+	const reorderActive = !!state.columnReorderMode;
+	items.push({
+		text: 'Reorder Columns',
+		iconHtml: reorderActive ? '<span style="font-size:12px;line-height:1;">✓</span>' : '',
+		onClick: () => setColumnReorderMode(panelId, !reorderActive)
+	});
+
+	showCustomContextMenu(items, mouseEvent.clientX, mouseEvent.clientY, panelId);
 }
 
 async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {

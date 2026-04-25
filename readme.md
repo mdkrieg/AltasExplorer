@@ -111,9 +111,9 @@ Gallery View:
 
 Grid View:
 [x] Add browser option for keeping the meta-directories (./..) always at the top of the sort order regardless of sort (what about filter?)
-[ ] Looks like the sort order gets retained in the column header but may not represent the actual sort order of the view
-  [ ] I think it is time to make the sort order and column sizing retained in the db (see Saved Layouts for proposed UX plan)
-  [ ] (4) But first add some more robust method of sizing the columns, would like to add a scalable portion, min/max etc, maybe a percentile text-fit (ie, minimum width fits 90% of elements)
+[x] Looks like the sort order gets retained in the column header but may not represent the actual sort order of the view - sort order now retained
+  [x] I think it is time to make the --sort order--(no) and column sizing retained in the db (see Saved Layouts for proposed UX plan)
+[ ] add some more robust method of sizing the columns, would like to add a scalable portion, min/max etc, maybe a percentile text-fit (ie, minimum width fits 90% of elements)
 [ ] Formatting nitpicks, that tiny bit of whitespace to the left of the grid, and the micro-shift when the path input is selected
 [ ] Make the column organizer context menu only appear on the header above the icons
   [ ] Add a "Reorder columns" mode checkbox on the column organizer context menu
