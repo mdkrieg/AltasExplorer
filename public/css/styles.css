@@ -2582,10 +2582,9 @@ hr {
   cursor: pointer;
   opacity: 0;
   overflow: hidden;
-  transition: width 0.12s ease, margin-left 0.12s ease, opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
-.w2ui-grid .w2ui-col-header:hover .grid-header-filter-btn,
 .grid-header-filter-btn.is-active,
 .grid-header-filter-btn.is-open {
   width: 16px;
@@ -2608,6 +2607,7 @@ hr {
 
 .grid-filter-overlay {
   padding: 0;
+  background: #DDD !important;
 }
 
 .grid-filter-menu {

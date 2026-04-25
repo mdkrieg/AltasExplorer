@@ -53,31 +53,27 @@ Philosophy:
 [x] Option for Folder initials do inherit down to child directories
 [x] Display names that appear in app title and optionally inherit like initials
 [x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
-[ ] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need - seems like maybe the sidebar width is retentive, need to investigate how much more is needed
-[-] CTRL + Enter to do same as double click in grid --- nvm, change this:
-  [ ] Enter browses dirs in same folders, opens Item Properties in modal for files
-  [x] Ctrl+Enter does the same in a new panel
+[x] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need - seems like maybe the sidebar width is retentive, need to investigate how much more is needed
 [x] (mostly done, maybe some missed but seems okay) Add some passive ui notifications (https://w2ui.com/web/demos/#/utils/8) for when settings are saved, this includes: Browser Settings, Alerts and Monitoring Settings, Maybe others? Any time one of the "gridded" settings are updated such as Categories and Tabs
 [x] Update the color inputs to use the w2ui color picker (https://w2ui.com/web/demos/#/fields/8)
 [x] (got the color picker, not sure others are used but meh) Update the forms to use more of the standard w2ui elements, see: https://w2ui.com/web/demos/#/form
 [x] Update the forms to not throw alert popups but instead use inline styling and remarks like a modern webform
 [x] Add option on custom attributes for "copyable" which adds a copy button in the grid to copy its value to clipboard
-[ ] Add a "pin" to Item Properties that prevents it from updating to the selected item
 [x] Instead of having the "History" option in the context menu, change this to the Properties page - check if history modal is vestigial and/or still needed - history modal was still there and is now a button in the item properteis page
-* I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
-* Forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)
-* Would it be possible to have a global hotkey (fires even without focus) that opens an always-on-top popup which offers a list of every path of all currently open directories and all favorites?
+[ ] I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
+[ ] un-forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)
+* (I don't remember why I wanted this) Would it be possible to have a global hotkey (fires even without focus) that opens an always-on-top popup which offers a list of every path of all currently open directories and all favorites?
 [x] LOCAL FAVORITES - instead of links, the user can populate local favorites. I'm thinking this should be in notes.txt - possibly without any special directive but anything that is a valid path gets shown in the sidebar when the user is browsing that dir.
 [x] TODOs in notes get aggregated
 [x] Copy as Path in context menu
 [x] Autotagging rules - need some kind of confirmation pattern for this
-[ ] Make some kind of connection where a tag that came from notes will point the user to the notes mentioning it
-[ ] One-click Backups
+[ ] Make some kind of mark for tags that came from notes
+[ ] Backup Macros (need to use the app more in practice to think about what this should be like)
 [ ] Diffing between files
-[ ] Icons for context menu
+[ ] Icons for context menu (Do I really want icons on every menu item? seems too cluttered)
+[ ] Historical snapshot viewer
 [x] Photo / Media mode per category - thumbnails and preview pane
 [x] Fix / figure out what to do with link in markdown (web links open in Electron)
-[ ] Historical snapshot viewer
 [x] Option for "Active Monitoring", taking combination of category, tags, and attributes
 [x] Notes column change - when there are no notes for a file or dir the notes column offers a "+" icon that opens a notes modal already in edit mode.
 [x] Tags column - add "+" icon to quickly add new tags to the item
@@ -101,9 +97,21 @@ Label Manager
 [x] Clicking a new item in the grid should clear any validation and styling in the form
 [x] Instead of a New button, have an item at the bottom that says (New) and to assist in selecting it add a button in the header that says +New and merely functions to select it
 [x] Categories once again not available immediately in the grid context menu after adding new
-[test] Add global attributes, with default entry for Description
+[x] Add global attributes, with default entry for Description
 [x] Attribute type options show invalid character in dropdown menu
 [x] Attribute applies-to field make Directory the default, move Both to bottom of list
+
+Item Properties:
+[-] CTRL + Enter to do same as double click in grid --- nvm, change this:
+  [ ] Enter browses dirs in same folders, opens Item Properties in modal for files
+  [x] Ctrl+Enter does the same in a new panel
+[ ] Add a "pin" to Item Properties that prevents it from updating to the selected item
+[ ] Support multi-select in item properties
+  [ ] phase 1 is to allow for categories and tags to be changed on many items at once
+  [ ] phase 2 is to aggregate as many statistics as we can, list the count of different file types, the range (maybe even show distribution) of dates modified, dates created, etc.
+  [ ] Phase 3 would be to aggregate the multiple items' history
+  * Notes and previews would be hidden
+  * What would the title-bar show? parameter list based on inodes?
 
 Gallery View:
 [ ] Support coordinate organizing, like the old windows desktops
@@ -113,19 +121,23 @@ Grid View:
 [x] Add browser option for keeping the meta-directories (./..) always at the top of the sort order regardless of sort (what about filter?)
 [x] Looks like the sort order gets retained in the column header but may not represent the actual sort order of the view - sort order now retained
   [x] I think it is time to make the --sort order--(no) and column sizing retained in the db (see Saved Layouts for proposed UX plan)
+[x] Formatting nitpicks, that tiny bit of whitespace to the left of the grid, and the micro-shift when the path input is selected
+[x] Make the column organizer context menu only appear on the header above the icons
+  [x] Add a "Reorder columns" mode checkbox on the column organizer context menu
+[x] Make the context menu click on the other columns offer a "Filter, Sort Asc, Sort Desc, Size (see pt 4 in this list)" Filter offers the same type of popover we have currently
+[x] Make the filter popover less ugly - DONE, it is slightly less ugly
 [ ] add some more robust method of sizing the columns, would like to add a scalable portion, min/max etc, maybe a percentile text-fit (ie, minimum width fits 90% of elements)
-[ ] Formatting nitpicks, that tiny bit of whitespace to the left of the grid, and the micro-shift when the path input is selected
-[ ] Make the column organizer context menu only appear on the header above the icons
-  [ ] Add a "Reorder columns" mode checkbox on the column organizer context menu
-[ ] Make the context menu click on the other columns offer a "Filter, Sort Asc, Sort Desc, Size (see pt 4 in this list)" Filter offers the same type of popover we have currently
-[ ] Make the filter popover less ugly
+[ ] make the grid toolbar command prompt open a popup in the grid context
+  [ ] add P2 - P(n+1) button to the grid context command prompt
+  [ ] add right click context on the grid command prompt button like is on the sidebar command prompt button
 
 Both Browser Views:
-[ ] Add Tagging button up top which opens a Tagging modal
-  [ ] Shows a badge with any pending auto-tagging rules on button
-  [ ] Shows summary of pending auto-tags (need some way to ignore per-file - should retain in db, no effect in notes, not offered on files with tags already, remove tag from ignored when adding to file)
-  [ ] Modal shows a summary of tags and files containing them, with ability to remove files from a tag (respecting notes file archival rule)
-  [ ] Modal offers the ability to add all items from grid (respecting filter)
+[x] Add Tagging button up top which opens a Tagging modal
+  [x] Shows a badge with any pending auto-tagging rules on button
+  [x] Shows summary of pending auto-tags (need some way to ignore per-file - should retain in db, no effect in notes, not offered on files with tags already, remove tag from ignored when adding to file)
+Didn't add the below with previous pass, and not bad ideas, to consider...
+[ ] Modal shows a summary of tags and files containing them, with ability to remove files from a tag (respecting notes file archival rule)
+[ ] Modal offers the ability to add all items from grid (respecting filter)
 
 Saved Layouts:
 [x] Add save button in the toolbar for saving layouts in the local directory, the button should offer a dropdown (check demos)/context menu on click with the following:
@@ -137,13 +149,13 @@ Saved Layouts:
 
 General:
 [x] All dropdowns for selecting category must have the customized folder icon next to them
-  [ ] Show sample icon when creating a category
-  [ ] Show in dropdown for category "Inherits" field
-[ ] When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
+  [ ] Show sample icon when creating a category or tag
+  [x] Show in dropdown for category "Inherits" field
+[ ] BACKBURNER When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
 [ ] Make Notes and TODOs support screenshots, uploading automatically to notes_files when pasted in (like github) - then if they are in a TODO, to save space just have a link that opens the photo, and a tooltip like this one (https://w2ui.com/web/demos/#/tooltip/8)
 
 Sidebar:
-[ ] make the icons "squish" when the sidebard is made small
+[x] make the icons "squish" when the sidebard is made small
   
 Other crazy stuff:
 [ ] Make a servable version for hosting a demo on github pages (use source files as part virtual filesystem, plus some additional example things)

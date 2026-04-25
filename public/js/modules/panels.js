@@ -3231,15 +3231,6 @@ async function initializeGridForPanel(panelId) {
 		},
 		onColumnDragEnd: function (event) {
 			const grid = this;
-			const dragData = event.detail?.dragData;
-			if (!dragData) return;
-			const srcField = grid.columns[dragData.originalPos]?.field;
-			// Prevent moving icon or filename columns, and prevent displacing them
-			if (srcField === 'icon' || srcField === 'filename' ||
-				dragData.targetPos <= 1) {
-				event.preventDefault();
-				return;
-			}
 			const previousOnComplete = event.onComplete;
 			event.onComplete = () => {
 				if (typeof previousOnComplete === 'function') previousOnComplete.call(grid, event);
@@ -3532,8 +3523,10 @@ function showColumnContextMenuForPanel(panelId, field, mouseEvent) {
 			text: 'Filter',
 			onClick: () => {
 				const headerEl = grid.box?.querySelector(`td.w2ui-head[col="${col_ind}"]`);
-				if (headerEl) {
-					openColumnFilterMenu(panelId, field, headerEl);
+				const filterBtn = headerEl?.querySelector('.grid-header-filter-btn');
+				const anchorEl = filterBtn || headerEl;
+				if (anchorEl) {
+					openColumnFilterMenu(panelId, field, anchorEl);
 				}
 			}
 		});
