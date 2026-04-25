@@ -1818,6 +1818,14 @@ hr {
   overflow-y: auto;
 }
 
+/* w2ui always initialises fwidth=1 even with no frozen columns, which pushes
+   w2ui-grid-records/columns to left:1px. Since this app never uses frozen
+   columns, override that 1px left gap here. */
+.w2ui-grid .w2ui-grid-body .w2ui-grid-records,
+.w2ui-grid .w2ui-grid-body .w2ui-grid-columns {
+  left: 0 !important;
+}
+
 .w2ui-grid .w2ui-grid-row {
   background: white;
   border-bottom: 1px solid #eee;
