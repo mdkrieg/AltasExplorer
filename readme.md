@@ -153,6 +153,7 @@ General:
   [x] Show in dropdown for category "Inherits" field
 [ ] BACKBURNER When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
 [ ] Make Notes and TODOs support screenshots, uploading automatically to notes_files when pasted in (like github) - then if they are in a TODO, to save space just have a link that opens the photo, and a tooltip like this one (https://w2ui.com/web/demos/#/tooltip/8)
+[ ] TODO modal, refine how CTRL+Enter works (currently seems to cancel edits?)
 
 Sidebar:
 [x] make the icons "squish" when the sidebard is made small

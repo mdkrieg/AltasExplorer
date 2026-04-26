@@ -3001,7 +3001,9 @@ async function initializeGridForPanel(panelId) {
 		},
 		{
 			field: 'todo', headerLabel: 'TODO', text: getColumnHeaderText(panelId, 'todo', 'TODO'), size: '60px', resizable: true, sortable: false, render: (record) => {
-				if (!record.todo || record.todo.total === 0) return '';
+				if (!record.todo || record.todo.total === 0) {
+					return `<span class="notes-cell-icon notes-cell-icon-add" title="Add TODO" data-todo-add-icon="true"><img src="assets/icons/add-notes.png"></span>`;
+				}
 				const { completed, total } = record.todo;
 				const cls = completed === total ? 'todo-count todo-count-complete' : 'todo-count todo-count-partial';
 				return `<span class="${cls}" style="cursor:pointer;" data-todo-cell="true">${completed}/${total}</span>`;
@@ -3148,7 +3150,7 @@ async function initializeGridForPanel(panelId) {
 				const col = this.columns[event.detail.column];
 				if (col && col.field === 'todo') {
 					const record = this.records.find(r => r.recid === event.detail.recid);
-					if (record && record.todo && record.todo.total > 0) {
+					if (record) {
 						openTodoModal(record, panelId);
 						event.preventDefault();
 						return;

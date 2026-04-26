@@ -437,19 +437,17 @@ export async function openTodoModal(record, panelId) {
   let sectionContent = '';
   try {
     const rawContent = await window.electronAPI.readFileContent(notesFilePath);
-    if (!rawContent) {
-      console.warn('TODO: notes.txt not found or empty at', notesFilePath);
-      return;
+    if (rawContent) {
+      const sections = await window.electronAPI.invoke('parse-notes-file', rawContent);
+      sectionContent = sections[sectionKey] || '';
     }
-    const sections = await window.electronAPI.invoke('parse-notes-file', rawContent);
-    sectionContent = sections[sectionKey] || '';
   } catch (err) {
     console.error('TODO: failed to read notes file', err);
-    return;
   }
 
-  const parsedBlocks = await window.electronAPI.parseTodoSection(sectionContent);
-  if (!parsedBlocks || parsedBlocks.length === 0) return;
+  const parsedBlocks = sectionContent
+    ? (await window.electronAPI.parseTodoSection(sectionContent) || [])
+    : [];
 
   todoModalContext = { notesFilePath, sectionKey, sectionContent, parsedBlocks, panelId, record };
 
@@ -568,8 +566,11 @@ async function saveTodo() {
   let content = lines.join('\n');
 
   // 4. Collect new items, comments, replies per group from the DOM
+  // (skip items belonging to brand-new sections — handled in step 5.5)
   const newItemsByGroup = [];
   document.querySelectorAll('#todo-modal-items .todo-item-row.todo-item-new').forEach(row => {
+    const group = row.closest('.todo-group');
+    if (group && group.dataset.newSection) return; // handled separately
     const gi = parseInt(row.dataset.groupIndex, 10);
     if (!newItemsByGroup[gi]) newItemsByGroup[gi] = [];
     const span = row.querySelector('.todo-item-text');
@@ -681,6 +682,24 @@ async function saveTodo() {
     }
   }
 
+  // 5.5 Append brand-new TODO sections added via "Add Section"
+  document.querySelectorAll('#todo-modal-items .todo-group-new').forEach(groupEl => {
+    const labelInput = groupEl.querySelector('.todo-new-section-label-input');
+    const label = labelInput ? labelInput.value.trim() : '';
+    const items = [];
+    groupEl.querySelectorAll('.todo-item-row.todo-item-new').forEach(row => {
+      const span = row.querySelector('.todo-item-text');
+      if (span && span.textContent.trim()) items.push(span.textContent.trim());
+    });
+    if (items.length === 0) return; // skip empty sections with no items
+    const header = label ? `TODO: ${label}` : 'TODO:';
+    const itemLines = items.map(t => `[ ] ${t}`).join('\n');
+    const block = `${header}\n${itemLines}`;
+    if (content.length > 0 && !content.endsWith('\n')) content += '\n';
+    if (content.length > 0) content += '\n';
+    content += block;
+  });
+
   // 6. Normalize (coerce indentation, asterisks → [ ], insert synthetic COMMENT before orphan REPLYs)
   content = await window.electronAPI.normalizeTodoSection(content);
 
@@ -745,6 +764,39 @@ function closeTodoModal() {
 }
 
 // ---------------------------------------------------------------------------
+// Add new section
+// ---------------------------------------------------------------------------
+
+function addNewSection() {
+  const container = document.getElementById('todo-modal-items');
+  if (!container) return;
+
+  const gi = container.querySelectorAll('.todo-group').length;
+  const div = document.createElement('div');
+  div.className = 'todo-group todo-group-new';
+  div.dataset.groupIndex = String(gi);
+  div.dataset.newSection = 'true';
+  div.innerHTML = `<div class="todo-group-header">
+      <button class="todo-group-toggle" aria-label="Toggle group">&#9660;</button>
+      <input type="text" class="todo-new-section-label-input" placeholder="Section name..." data-group-index="${gi}">
+    </div>
+    <div class="todo-group-body">
+      <div class="todo-add-row">
+        <input type="text" class="todo-add-input" data-group-index="${gi}" placeholder="Add item..." value="${escapeHtml(todayIso() + ' ')}">
+        <button class="todo-add-btn" data-group-index="${gi}" title="Add item">+</button>
+      </div>
+    </div>`;
+  container.appendChild(div);
+
+  const collapseControls = document.getElementById('todo-collapse-controls');
+  if (collapseControls && container.querySelectorAll('.todo-group').length > 1) {
+    collapseControls.style.display = 'flex';
+  }
+
+  div.querySelector('.todo-new-section-label-input').focus();
+}
+
+// ---------------------------------------------------------------------------
 // Init -- wire up static buttons + event delegation for dynamic content
 // ---------------------------------------------------------------------------
 
@@ -754,9 +806,11 @@ export function initTodoModal() {
   const collapseAllBtn = document.getElementById('btn-todo-collapse-all');
   const expandAllBtn = document.getElementById('btn-todo-expand-all');
   const expandModalBtn = document.getElementById('btn-todo-expand');
+  const addSectionBtn = document.getElementById('btn-todo-add-section');
 
   if (saveBtn) saveBtn.addEventListener('click', saveTodo);
   if (cancelBtn) cancelBtn.addEventListener('click', closeTodoModal);
+  if (addSectionBtn) addSectionBtn.addEventListener('click', addNewSection);
 
   if (expandModalBtn) {
     expandModalBtn.addEventListener('click', () => {

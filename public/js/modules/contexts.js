@@ -12,6 +12,7 @@ import {
 	selectedItemState,
 	activePanelId,
 	openNotesModal,
+	openTodoModal,
 	getAllCategories,
 	getAllTags
 } from '../renderer.js';
@@ -232,6 +233,11 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 	if (!isMultiSelect) {
 		addSeparator(contextMenu);
 		contextMenu.push({ id: 'view-notes', text: 'Notes', icon: 'fa fa-sticky-note' });
+		const singleRecord = selectedRecords[0];
+		const todoCompleted = singleRecord?.todo?.completed ?? 0;
+		const todoTotal = singleRecord?.todo?.total ?? 0;
+		const todoLabel = todoTotal > 0 ? `TODO (${todoCompleted}/${todoTotal})` : 'TODO';
+		contextMenu.push({ id: 'view-todo', text: todoLabel, icon: 'fa fa-check-square' });
 		contextMenu.push({ id: 'view-properties', text: 'Properties', icon: 'fa fa-info-circle' });
 	}
 
@@ -398,6 +404,17 @@ async function handleContextMenuClick(event, panelId) {
 			await openNotesModal(selectedRecord);
 		} catch (err) {
 			alert('Error opening notes: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'view-todo') {
+		const selectedRecord = selectedRecords[0];
+		if (!selectedRecord) return;
+
+		try {
+			await openTodoModal(selectedRecord, activePanelId);
+		} catch (err) {
+			alert('Error opening TODO: ' + err.message);
 		}
 	}
 
