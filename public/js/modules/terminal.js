@@ -192,24 +192,79 @@ export function getTerminalPanelIds() {
 	return Object.keys(terminalSessions).map(Number);
 }
 
-// ─── Terminal Modal ────────────────────────────────────────────────────────────
+// ─── Terminal Drawer ──────────────────────────────────────────────────────────
 
 let modalSession = null;
+let drawerHeight = null;      // stored px height before minimize
+let drawerDragState = null;   // true while dragging
+let currentCommand = '';      // tracks the last command typed (cleared on Enter)
+
+function _drawerOnMouseMove(e) {
+	if (!drawerDragState) return;
+	const drawerEl = document.getElementById('terminal-drawer');
+	if (!drawerEl) return;
+
+	// Auto-expand if currently minimized
+	if (drawerEl.classList.contains('terminal-drawer--minimized')) {
+		drawerEl.classList.remove('terminal-drawer--minimized');
+		document.getElementById('terminal-drawer-title').textContent = 'Terminal';
+	}
+
+	const panelEl = drawerEl.parentElement;
+	const panelBottom = panelEl ? panelEl.getBoundingClientRect().bottom : window.innerHeight;
+	const newHeight = Math.max(120, panelBottom - e.clientY);
+	drawerEl.style.height = newHeight + 'px';
+	drawerHeight = newHeight;
+}
+
+function _drawerOnMouseUp() {
+	drawerDragState = null;
+	window.removeEventListener('mousemove', _drawerOnMouseMove);
+	window.removeEventListener('mouseup', _drawerOnMouseUp);
+}
 
 /**
- * Open the terminal modal and start an xterm session inside it.
+ * Open the terminal drawer and start an xterm session inside it.
  * @param {string} [cwd] - Working directory for the shell (defaults to home dir)
+ * @param {number} [panelId] - Panel to anchor the drawer to (defaults to 1)
  */
-export async function openTerminalModal(cwd) {
+export async function openTerminalModal(cwd, panelId = 1) {
 	ensureIpcListeners();
 
-	// Destroy any existing modal session first
+	// Destroy any existing drawer session first
 	await closeTerminalModal();
 
-	const containerEl = document.getElementById('terminal-modal-container');
+	const containerEl = document.getElementById('terminal-drawer-container');
 	if (!containerEl) return;
 
 	containerEl.innerHTML = '';
+	currentCommand = '';
+
+	const drawerEl = document.getElementById('terminal-drawer');
+	if (!drawerEl) return;
+
+	// Move drawer into the calling panel so it is anchored to that panel
+	const panelEl = document.getElementById(`panel-${panelId}`);
+	if (panelEl && drawerEl.parentElement !== panelEl) {
+		panelEl.appendChild(drawerEl);
+	}
+
+	// Restore previous height or default to 40vh
+	if (drawerHeight !== null) {
+		drawerEl.style.height = drawerHeight + 'px';
+	} else {
+		drawerEl.style.height = '';
+	}
+
+	// Ensure not minimized on (re)open
+	drawerEl.classList.remove('terminal-drawer--minimized');
+	document.getElementById('terminal-drawer-title').textContent = 'Terminal';
+
+	// Show drawer (triggers CSS slide-up)
+	drawerEl.style.display = 'flex';
+	// Force reflow so transition fires
+	drawerEl.getBoundingClientRect();
+	drawerEl.classList.add('terminal-drawer--open');
 
 	const term = new window.Terminal({
 		fontFamily: 'Consolas, "Courier New", monospace',
@@ -231,14 +286,19 @@ export async function openTerminalModal(cwd) {
 	term.loadAddon(fitAddon);
 	term.loadAddon(webLinksAddon);
 	term.open(containerEl);
-
-	// Show modal before fitting so dimensions are correct
-	const modalEl = document.getElementById('terminal-modal');
-	modalEl.style.display = 'flex';
-
 	fitAddon.fit();
 
 	term.onData(data => {
+		// Track typed command for the minimized title (Option B)
+		if (data === '\r' || data === '\n') {
+			currentCommand = '';
+		} else if (data === '\x7f' || data === '\b') {
+			// Backspace
+			currentCommand = currentCommand.slice(0, -1);
+		} else if (data.length === 1 && data >= ' ') {
+			currentCommand += data;
+		}
+
 		if (modalSession && modalSession.termId) {
 			window.electronAPI.terminalSendInput(modalSession.termId, data);
 		}
@@ -261,20 +321,111 @@ export async function openTerminalModal(cwd) {
 	resizeObserver.observe(containerEl);
 	modalSession.resizeObserver = resizeObserver;
 
+	// ── Panel resize observer — clamp drawer height to avoid top overflow ────
+	if (panelEl) {
+		const panelResizeObserver = new ResizeObserver(() => {
+			const drawerEl2 = document.getElementById('terminal-drawer');
+			if (!drawerEl2 || drawerEl2.classList.contains('terminal-drawer--minimized')) return;
+			const maxH = panelEl.offsetHeight - 48; // leave room for header bar above
+			if (maxH < 120) return;
+			const currentH = drawerEl2.offsetHeight;
+			if (currentH > maxH) {
+				drawerEl2.style.height = maxH + 'px';
+				drawerHeight = maxH;
+				if (modalSession) {
+					try {
+						modalSession.fitAddon.fit();
+						const { cols, rows } = modalSession.term;
+						if (modalSession.termId) {
+							window.electronAPI.terminalResize(modalSession.termId, cols, rows);
+						}
+					} catch (_) {}
+				}
+			}
+		});
+		panelResizeObserver.observe(panelEl);
+		modalSession.panelResizeObserver = panelResizeObserver;
+	}
+
+	// ── Drag-resize handle ────────────────────────────────────────────
+	const dragHandle = drawerEl.querySelector('.terminal-drawer-drag-handle');
+	$(dragHandle).off('mousedown.drawer').on('mousedown.drawer', function (e) {
+		e.preventDefault();
+		drawerDragState = true;
+		window.addEventListener('mousemove', _drawerOnMouseMove);
+		window.addEventListener('mouseup', _drawerOnMouseUp);
+	});
+
+	// ── Minimize / Restore toggle ─────────────────────────────────────
+	$('#btn-terminal-drawer-toggle').off('click.drawer').on('click.drawer', function () {
+		const isMinimized = drawerEl.classList.contains('terminal-drawer--minimized');
+		if (isMinimized) {
+			// Restore
+			drawerEl.classList.remove('terminal-drawer--minimized');
+			if (drawerHeight !== null) {
+				drawerEl.style.height = drawerHeight + 'px';
+			} else {
+				drawerEl.style.height = '';
+			}
+			document.getElementById('terminal-drawer-title').textContent = 'Terminal';
+			setTimeout(() => {
+				if (modalSession) {
+					try {
+						modalSession.fitAddon.fit();
+						const { cols, rows } = modalSession.term;
+						if (modalSession.termId) {
+							window.electronAPI.terminalResize(modalSession.termId, cols, rows);
+						}
+					} catch (_) {}
+					modalSession.term.focus();
+				}
+			}, 50);
+		} else {
+			// Minimize
+			drawerHeight = drawerEl.offsetHeight;
+			drawerEl.classList.add('terminal-drawer--minimized');
+			drawerEl.style.height = ''; // let height:auto take effect
+			document.getElementById('terminal-drawer-title').textContent =
+				currentCommand.trim() || 'Terminal';
+		}
+	});
+
+	// ── Close ─────────────────────────────────────────────────────────
+	$('#btn-terminal-drawer-close').off('click.drawer').on('click.drawer', function () {
+		closeTerminalModal();
+	});
+
 	term.focus();
 }
 
 /**
- * Close the terminal modal and destroy its session.
+ * Close the terminal drawer and destroy its session.
  */
 export async function closeTerminalModal() {
-	const modalEl = document.getElementById('terminal-modal');
-	if (modalEl) modalEl.style.display = 'none';
+	const drawerEl = document.getElementById('terminal-drawer');
+	if (drawerEl) {
+		drawerEl.classList.remove('terminal-drawer--open', 'terminal-drawer--minimized');
+		drawerEl.style.display = 'none';
+		// Return drawer to body so it is not anchored to any panel
+		if (drawerEl.parentElement !== document.body) {
+			document.body.appendChild(drawerEl);
+		}
+	}
+
+	// Clean up drag listeners if a drag was in progress
+	window.removeEventListener('mousemove', _drawerOnMouseMove);
+	window.removeEventListener('mouseup', _drawerOnMouseUp);
+	drawerDragState = null;
+	currentCommand = '';
 
 	if (!modalSession) return;
 
 	if (modalSession.resizeObserver) {
 		modalSession.resizeObserver.disconnect();
+	}
+
+	if (modalSession.panelResizeObserver) {
+		modalSession.panelResizeObserver.disconnect();
 	}
 
 	if (modalSession.termId) {
@@ -287,7 +438,7 @@ export async function closeTerminalModal() {
 }
 
 /**
- * Snap the modal terminal session into a panel, retaining the live PTY.
+ * Snap the drawer terminal session into a panel, retaining the live PTY.
  * The xterm DOM tree is moved to the panel container so no reconnection is needed.
  * @param {number} panelId - Target panel (2-4)
  * @param {Function} ensurePanelVisible - Callback that shows the panel and calls
@@ -296,14 +447,19 @@ export async function closeTerminalModal() {
 export async function snapModalTerminalToPanel(panelId, ensurePanelVisible) {
 	if (!modalSession) return;
 
-	const srcContainer = document.getElementById('terminal-modal-container');
+	const srcContainer = document.getElementById('terminal-drawer-container');
 	const dstContainer = document.getElementById(`terminal-container-${panelId}`);
 	if (!srcContainer || !dstContainer) return;
 
-	// Detach resize observer from modal container
+	// Detach resize observers from drawer container
 	if (modalSession.resizeObserver) {
 		modalSession.resizeObserver.disconnect();
 		modalSession.resizeObserver = null;
+	}
+
+	if (modalSession.panelResizeObserver) {
+		modalSession.panelResizeObserver.disconnect();
+		modalSession.panelResizeObserver = null;
 	}
 
 	// Destroy any existing session in the target panel first (without touching the DOM yet)
@@ -317,7 +473,7 @@ export async function snapModalTerminalToPanel(panelId, ensurePanelVisible) {
 		delete terminalSessions[panelId];
 	}
 
-	// Move xterm DOM children from modal container to panel container
+	// Move xterm DOM children from drawer container to panel container
 	dstContainer.innerHTML = '';
 	while (srcContainer.firstChild) {
 		dstContainer.appendChild(srcContainer.firstChild);
@@ -326,13 +482,25 @@ export async function snapModalTerminalToPanel(panelId, ensurePanelVisible) {
 	// Transfer session ownership
 	const session = modalSession;
 	modalSession = null;
+	currentCommand = '';
 
 	// Re-wire input handler to use the panel slot
 	terminalSessions[panelId] = session;
 
-	// Hide modal (session is no longer owned by it)
-	const modalEl = document.getElementById('terminal-modal');
-	if (modalEl) modalEl.style.display = 'none';
+	// Hide drawer and return it to body
+	const drawerEl = document.getElementById('terminal-drawer');
+	if (drawerEl) {
+		drawerEl.classList.remove('terminal-drawer--open', 'terminal-drawer--minimized');
+		drawerEl.style.display = 'none';
+		if (drawerEl.parentElement !== document.body) {
+			document.body.appendChild(drawerEl);
+		}
+	}
+
+	// Clean up drag listeners
+	window.removeEventListener('mousemove', _drawerOnMouseMove);
+	window.removeEventListener('mouseup', _drawerOnMouseUp);
+	drawerDragState = null;
 
 	// Ensure the panel is visible
 	if (typeof ensurePanelVisible === 'function') {
@@ -376,15 +544,15 @@ export async function snapModalTerminalToPanel(panelId, ensurePanelVisible) {
 }
 
 /**
- * Rebuild the panel-snap buttons inside the terminal modal header.
- * Call this each time the modal is opened so the button list reflects the
+ * Rebuild the panel-snap buttons inside the terminal drawer header.
+ * Call this each time the drawer is opened so the button list reflects the
  * current number of visible panels.
  * @param {number} visiblePanels
  * @param {Function} onSnap - Called with panelId when a button is clicked.
  *   Signature: (panelId: number) => void
  */
 export function updateTerminalModalPanelButtons(visiblePanels, onSnap) {
-	const $btns = $('#terminal-modal-panel-btns').empty();
+	const $btns = $('#terminal-drawer-panel-btns').empty();
 	const maxPanel = Math.min(visiblePanels + 1, 4);
 	for (let p = 2; p <= maxPanel; p++) {
 		const targetPanel = p;

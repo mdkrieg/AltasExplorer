@@ -3402,7 +3402,17 @@ async function initializeGridForPanel(panelId) {
 	$(document).off(`click.toolbar-terminal-${panelId}`, `#btn-toolbar-terminal-${panelId}`)
 		.on(`click.toolbar-terminal-${panelId}`, `#btn-toolbar-terminal-${panelId}`, function () {
 			const cwd = panelState[panelId]?.currentPath;
-			terminal.openTerminalModal(cwd);
+			terminal.updateTerminalModalPanelButtons(visiblePanels, (targetPanelId) => {
+				terminal.snapModalTerminalToPanel(targetPanelId, (pid) => {
+					if (pid > visiblePanels) {
+						setVisiblePanels(pid);
+						$(`#panel-${pid}`).show();
+						attachPanelEventListeners(pid);
+						updatePanelLayout();
+					}
+				});
+			});
+			terminal.openTerminalModal(cwd, panelId);
 		});
 
 	bindGridFilterControls(panelId);

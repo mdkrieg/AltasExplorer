@@ -539,6 +539,7 @@ tr.dragging-source {
   overflow: hidden;
   border: 1px solid #d0d0d0;
   background: white;
+  position: relative;
 }
 
 /* Panel Dividers for Resizing */
@@ -3856,6 +3857,111 @@ hr {
   object-fit: contain;
   border-radius: 4px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+/* =====================================================================
+   Terminal Drawer — bottom slide-up panel (no overlay)
+   ===================================================================== */
+
+#terminal-drawer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  height: 40vh;
+  min-height: 10px;
+  display: none;
+  flex-direction: column;
+  background: #1e1e1e;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.45);
+  transform: translateY(100%);
+  transition: transform 0.22s ease;
+  margin: 0px 25px;
+}
+
+#terminal-drawer.terminal-drawer--open {
+  display: flex;
+  transform: translateY(0);
+}
+
+#terminal-drawer.terminal-drawer--minimized #terminal-drawer-container {
+  display: none;
+}
+
+#terminal-drawer.terminal-drawer--minimized {
+  height: auto;
+}
+
+.terminal-drawer-drag-handle {
+  height: 6px;
+  background: #3a3a3a;
+  cursor: ns-resize;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.terminal-drawer-drag-handle:hover {
+  background: #555;
+}
+
+#terminal-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #444;
+  flex-shrink: 0;
+}
+
+#terminal-drawer-title {
+  color: #d4d4d4;
+  font-size: 13px;
+  font-family: Consolas, monospace;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#terminal-drawer-panel-btns {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+#btn-terminal-drawer-toggle,
+#btn-terminal-drawer-close {
+  padding: 2px 9px;
+  background: #555;
+  color: #d4d4d4;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+#btn-terminal-drawer-toggle:hover,
+#btn-terminal-drawer-close:hover {
+  background: #777;
+}
+
+/* Chevron icon: ▼ when expanded, ▲ when minimized (mirrors sidebar chevrons) */
+#btn-terminal-drawer-toggle::before {
+  content: '\25BC';
+}
+#terminal-drawer.terminal-drawer--minimized #btn-terminal-drawer-toggle::before {
+  content: '\25B2';
+}
+
+#terminal-drawer-container {
+  flex: 1;
+  overflow: hidden;
+  background: #1e1e1e;
+  min-height: 0;
 }
 
 /* =====================================================================

@@ -1150,7 +1150,7 @@ function attachEventListeners() {
         }
       });
     });
-    terminal.openTerminalModal(cwd);
+    terminal.openTerminalModal(cwd, Number(activePanel) || 1);
   });
 
   $('#btn-sidebar-terminal').on('contextmenu', function (e) {
@@ -1232,16 +1232,9 @@ function attachEventListeners() {
     document.addEventListener('keydown', onEsc);
   });
 
-  // Terminal modal: close button
-  $('#btn-terminal-modal-close').click(function () {
+  // Terminal drawer: close button (also bound inside openTerminalModal, this is a belt-and-suspenders binding)
+  $('#btn-terminal-drawer-close').click(function () {
     terminal.closeTerminalModal();
-  });
-
-  // Terminal modal: overlay click to close
-  $('#terminal-modal').click(function (e) {
-    if (e.target === this) {
-      terminal.closeTerminalModal();
-    }
   });
 
   // Tagging modal close button

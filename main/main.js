@@ -1393,6 +1393,16 @@ ipcMain.handle('get-item-stats', (event, { itemPath }) => {
       .map(name => allAttributeDefs[name])
       .filter(Boolean);
 
+    // Append global attributes not already included via the category, filtered by appliesTo
+    for (const attr of Object.values(allAttributeDefs)) {
+      if (!attr.global) continue;
+      if (categoryAttrNames.includes(attr.name)) continue;
+      const appliesTo = (attr.appliesTo || 'Both').toLowerCase();
+      if (appliesTo === 'directory' && !isDir) continue;
+      if (appliesTo === 'files' && isDir) continue;
+      categoryAttributeDefs.push(attr);
+    }
+
     // Resolve file icon
     const allFileTypes = filetypes.getFileTypes();
     let fileType = isDir ? 'Directory' : 'File';
