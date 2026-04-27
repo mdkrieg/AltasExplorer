@@ -264,6 +264,27 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		}
 	}
 
+	// Trash actions (visible only for soft-deleted records)
+	{
+		const deletedRecords = selectedRecords.filter(r => r.changeState === 'deleted');
+		if (deletedRecords.length > 0) {
+			addSeparator(contextMenu);
+			// Restore — only if trash_path is set (XDG trash; not available for legacy Windows deletes)
+			const restorableRecords = deletedRecords.filter(r => r.trash_path);
+			if (restorableRecords.length > 0) {
+				const restoreLabel = restorableRecords.length > 1
+					? `Restore (${restorableRecords.length} items)`
+					: 'Restore';
+				contextMenu.push({ id: 'restore-from-trash', text: restoreLabel, icon: 'fa fa-undo' });
+			}
+			// Delete Permanently — always available for deleted records
+			const permDeleteLabel = deletedRecords.length > 1
+				? `Delete Permanently (${deletedRecords.length} items)`
+				: 'Delete Permanently';
+			contextMenu.push({ id: 'permanently-delete-from-trash', text: permDeleteLabel, icon: 'fa fa-times-circle' });
+		}
+	}
+
 	// Custom Actions
 	try {
 		const allActions = await window.electronAPI.getCustomActions();
@@ -581,6 +602,43 @@ async function handleContextMenuClick(event, panelId) {
 			grid.select(...deletableRecords.map(r => r.recid));
 			grid['delete'](); // triggers onDelete with force=false → shows confirm dialog
 		}
+	}
+
+	if (menuItemId === 'restore-from-trash') {
+		const restorableRecords = selectedRecords.filter(r => r.changeState === 'deleted' && r.trash_path);
+		if (restorableRecords.length === 0) return;
+		try {
+			const items = restorableRecords.map(r => ({ path: r.path, trash_path: r.trash_path, isDirectory: !!r.isFolder }));
+			const result = await window.electronAPI.restoreFromTrash(items);
+			if (result && result.errors && result.errors.length > 0) {
+				w2alert(`<b>Some items could not be restored:</b><br><br>${result.errors.map(e => e.message).join('<br>')}`, 'Restore Error');
+			}
+			const grid = panelState[panelId]?.w2uiGrid;
+			if (grid) grid.reload();
+		} catch (err) {
+			w2alert(`<b>Restore failed:</b><br><br>${err.message}`, 'Restore Error');
+		}
+	}
+
+	if (menuItemId === 'permanently-delete-from-trash') {
+		const deletedRecords = selectedRecords.filter(r => r.changeState === 'deleted');
+		if (deletedRecords.length === 0) return;
+		const countLabel = deletedRecords.length > 1 ? `${deletedRecords.length} items` : `"${deletedRecords[0].filename || deletedRecords[0].filenameRaw}"`;
+		w2confirm(`<b>Permanently delete ${countLabel}?</b><br><br>This cannot be undone. The files will be removed from disk and the database record will be archived.`)
+			.yes(async () => {
+				try {
+					const items = deletedRecords.map(r => ({ path: r.path, trash_path: r.trash_path, isDirectory: !!r.isFolder }));
+					const result = await window.electronAPI.permanentlyDeleteFromTrash(items);
+					if (result && result.errors && result.errors.length > 0) {
+						w2alert(`<b>Some items could not be permanently deleted:</b><br><br>${result.errors.map(e => e.message).join('<br>')}`, 'Delete Error');
+					}
+					const grid = panelState[panelId]?.w2uiGrid;
+					if (grid) grid.reload();
+				} catch (err) {
+					w2alert(`<b>Permanent delete failed:</b><br><br>${err.message}`, 'Delete Error');
+				}
+			})
+			.no(() => {});
 	}
 
 	if (menuItemId === 'open-in-default-app') {

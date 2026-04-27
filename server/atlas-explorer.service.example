@@ -1,0 +1,57 @@
+# AtlasExplorer HTTP Server — systemd unit file
+#
+# Installation (Raspberry Pi / Debian / Ubuntu):
+#
+#   1. Copy this file to /etc/systemd/system/atlas-explorer.service
+#   2. Edit WorkingDirectory and ExecStart to match your installation path.
+#   3. Edit User= to the non-root user that owns the AtlasExplorer directory.
+#   4. Run:
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable atlas-explorer
+#        sudo systemctl start  atlas-explorer
+#   5. Check status with:
+#        sudo systemctl status atlas-explorer
+#        journalctl -u atlas-explorer -f
+#
+# Notes:
+#   - The server reads server/config.js. Run `node server/hash-password.js` first
+#     to set a password, then run `node server/build.js` to generate the web root.
+#   - The default port is 3000. Change it in server/config.js.
+#   - To use HTTPS, set https.enabled = true in config.js and provide cert/key paths.
+
+[Unit]
+Description=AtlasExplorer HTTP Server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+# Edit this path to match where you cloned AtlasExplorer:
+WorkingDirectory=/home/pi/AtlasExplorer
+
+# Pass --config to use an alternate config file (optional):
+ExecStart=/usr/bin/node server/run.js
+
+# Restart on crash
+Restart=on-failure
+RestartSec=5s
+
+# Environment
+Environment=NODE_ENV=production
+
+# Limit resource usage
+# Uncomment and adjust as needed:
+# MemoryMax=512M
+# CPUQuota=80%
+
+# Security hardening (optional but recommended)
+# NoNewPrivileges=true
+# ProtectSystem=strict
+# ProtectHome=read-only
+# ReadWritePaths=/home/pi/.atlasexplorer /home/pi/.local/share/Trash
+
+[Install]
+WantedBy=multi-user.target

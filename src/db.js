@@ -357,6 +357,29 @@ class DatabaseService {
     if (!hasDirHistoryComment) {
       this.db.exec('ALTER TABLE dir_history ADD COLUMN comment TEXT');
     }
+
+    // Migration: XDG Trash support — soft-delete state machine columns.
+    // trash_path  = absolute path inside ~/.local/share/Trash/files/ (NULL for legacy Windows deletes)
+    // purged_at   = Unix ms timestamp when file was permanently wiped from disk (row kept for audit)
+    // State machine:
+    //   deleted_at=NULL  / trash_path=NULL  / purged_at=NULL  → Active
+    //   deleted_at=set   / trash_path=NULL  / purged_at=NULL  → Legacy Windows delete (shell.trashItem)
+    //   deleted_at=set   / trash_path=set   / purged_at=NULL  → Software trash (restorable)
+    //   deleted_at=set   / trash_path=*     / purged_at=set   → Permanently deleted (audit row only)
+    const latestFileCols  = new Set(this.db.prepare('PRAGMA table_info(files)').all().map(c => c.name));
+    const latestDirCols   = new Set(this.db.prepare('PRAGMA table_info(dirs)').all().map(c => c.name));
+    if (!latestFileCols.has('trash_path')) {
+      this.db.exec('ALTER TABLE files ADD COLUMN trash_path TEXT');
+    }
+    if (!latestFileCols.has('purged_at')) {
+      this.db.exec('ALTER TABLE files ADD COLUMN purged_at INTEGER');
+    }
+    if (!latestDirCols.has('trash_path')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN trash_path TEXT');
+    }
+    if (!latestDirCols.has('purged_at')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN purged_at INTEGER');
+    }
   }
 
   normalizeAlertRuleName(name) {

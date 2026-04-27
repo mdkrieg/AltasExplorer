@@ -14,6 +14,8 @@
     "sync-assets": "node scripts/sync-assets.js",
     "db:reinit": "node scripts/reinitialize-db.js",
     "build:demo": "node demo/build.js",
+    "build:server": "node server/build.js",
+    "server": "node server/run.js",
     "postinstall": "electron-rebuild better-sqlite3 node-pty --build-from-source"
   },
   "build": {
