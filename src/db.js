@@ -205,6 +205,21 @@ class DatabaseService {
         sort_data TEXT NOT NULL DEFAULT '[]',
         saved_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
       );
+
+      CREATE TABLE IF NOT EXISTS reminder_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        notes_file_id INTEGER NOT NULL,
+        section_key TEXT NOT NULL,
+        due_datetime TEXT,
+        text TEXT NOT NULL,
+        line_start INTEGER,
+        text_hash TEXT NOT NULL,
+        is_cohabitated INTEGER NOT NULL DEFAULT 0,
+        linked_todo_line INTEGER,
+        FOREIGN KEY (notes_file_id) REFERENCES todo_notes_files(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_reminder_items_notes_file ON reminder_items(notes_file_id);
+      CREATE INDEX IF NOT EXISTS idx_reminder_items_due ON reminder_items(due_datetime);
     `;
 
     this.db.exec(schema);
@@ -1761,6 +1776,49 @@ class DatabaseService {
       LEFT JOIN dirs d ON tnf.dir_id = d.id
       ${whereCompleted}
       ORDER BY ti.group_label ASC, tnf.notes_path ASC, ti.section_key ASC, ti.group_index ASC, ti.item_index ASC
+    `).all();
+  }
+
+  // ============================================
+  // Reminder Items
+  // ============================================
+
+  replaceReminderItems(notesFileId, items) {
+    const del = this.db.prepare('DELETE FROM reminder_items WHERE notes_file_id = ?');
+    const ins = this.db.prepare(`
+      INSERT INTO reminder_items
+        (notes_file_id, section_key, due_datetime, text, line_start, text_hash, is_cohabitated, linked_todo_line)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const tx = this.db.transaction((fileId, rows) => {
+      del.run(fileId);
+      for (const r of rows) {
+        ins.run(
+          fileId,
+          r.section_key,
+          r.due_datetime || null,
+          r.text,
+          r.line_start ?? null,
+          r.text_hash,
+          r.is_cohabitated ? 1 : 0,
+          r.linked_todo_line ?? null
+        );
+      }
+    });
+    tx(notesFileId, items);
+  }
+
+  getReminderAggregates() {
+    return this.db.prepare(`
+      SELECT
+        ri.id, ri.notes_file_id, ri.section_key, ri.due_datetime,
+        ri.text, ri.line_start, ri.text_hash, ri.is_cohabitated, ri.linked_todo_line,
+        tnf.notes_path, tnf.dir_id,
+        d.dirname AS dirname
+      FROM reminder_items ri
+      JOIN todo_notes_files tnf ON ri.notes_file_id = tnf.id
+      LEFT JOIN dirs d ON tnf.dir_id = d.id
+      ORDER BY ri.due_datetime ASC NULLS LAST, ri.line_start ASC
     `).all();
   }
 

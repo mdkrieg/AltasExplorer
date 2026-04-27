@@ -7,6 +7,16 @@
  */
 
 import { panelState } from '../renderer.js';
+import {
+  renderCommentSection,
+  startEditAnnotation,
+  confirmEditAnnotation,
+  cancelEditAnnotation,
+  deleteAnnotation,
+  addPendingComment,
+  addPendingReply
+} from './annotationHelpers.js';
+import { openReminderModal } from './reminders.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -71,15 +81,30 @@ function addPendingItem(groupIndex) {
   row.className = 'todo-item-row todo-item-new';
   row.dataset.new = 'true';
   row.dataset.groupIndex = String(groupIndex);
+  const newItemId = `new-${groupIndex}-${Date.now()}`;
+  row.dataset.itemIndex = newItemId;
   row.innerHTML = `<input type="checkbox" class="todo-item-checkbox" style="flex-shrink:0; margin-top:3px; cursor:pointer;">
     <span class="todo-item-text">${escapeHtml(text)}</span>
-    <div class="todo-item-actions" style="display:flex;">
+    <div class="todo-item-actions">
+      <button class="todo-comments-toggle" data-item-index="${newItemId}" title="Toggle comments">&#128172;</button>
+      <button class="todo-item-action-btn todo-item-edit-btn" title="Edit">&#9998;</button>
       <button class="todo-item-action-btn todo-item-delete-new-btn" title="Remove">&#10005;</button>
-    </div>`;
+    </div>
+    <span class="todo-comment-badge"></span>`;
   body.insertBefore(row, addRow);
 
+  // Insert empty comment section so the toggle works
+  const commentSection = document.createElement('div');
+  commentSection.className = 'todo-comments-section collapsed';
+  commentSection.dataset.itemIndex = newItemId;
+  commentSection.innerHTML = `<div class="todo-comment-add-row">
+      <input type="text" class="todo-annotation-add-input todo-comment-add-input" placeholder="Add comment..." data-item-index="${newItemId}">
+      <button class="todo-comment-add-btn" data-item-index="${newItemId}" title="Add comment">+</button>
+    </div>`;
+  body.insertBefore(commentSection, addRow);
+
   if (addInput) {
-    addInput.value = todayIso() + ' ';
+    addInput.value = '';
     addInput.focus();
   }
 }
@@ -125,8 +150,9 @@ function confirmEditItem(row) {
   input.replaceWith(span);
   row.classList.remove('editing');
 
+  const deleteClass = row.dataset.new ? 'todo-item-delete-new-btn' : 'todo-item-delete-btn';
   actions.innerHTML = `<button class="todo-item-action-btn todo-item-edit-btn" title="Edit">&#9998;</button>
-    <button class="todo-item-action-btn todo-item-delete-btn" title="Remove">&#10005;</button>`;
+    <button class="todo-item-action-btn ${deleteClass}" title="Remove">&#10005;</button>`;
 }
 
 function cancelEditItem(row) {
@@ -148,8 +174,9 @@ function cancelEditItem(row) {
   input.replaceWith(span);
   row.classList.remove('editing');
 
+  const deleteClass = row.dataset.new ? 'todo-item-delete-new-btn' : 'todo-item-delete-btn';
   actions.innerHTML = `<button class="todo-item-action-btn todo-item-edit-btn" title="Edit">&#9998;</button>
-    <button class="todo-item-action-btn todo-item-delete-btn" title="Remove">&#10005;</button>`;
+    <button class="todo-item-action-btn ${deleteClass}" title="Remove">&#10005;</button>`;
 }
 
 function deleteItem(row) {
@@ -172,192 +199,9 @@ function deleteItem(row) {
 // Comment edit / delete helpers
 // ---------------------------------------------------------------------------
 
-function startEditAnnotation(row) {
-  if (row.classList.contains('editing')) return;
-  const span = row.querySelector('.todo-annotation-text');
-  const actions = row.querySelector('.todo-item-actions');
-  if (!span || !actions) return;
-
-  row.classList.add('editing');
-  const current = row.dataset.editedText !== undefined ? row.dataset.editedText : span.textContent;
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'todo-item-edit-input';
-  input.value = current;
-  span.replaceWith(input);
-  input.focus();
-  input.select();
-
-  actions.innerHTML = `<button class="todo-item-action-btn todo-item-confirm-btn" title="Confirm">&#10003;</button>
-    <button class="todo-item-action-btn todo-item-cancel-edit-btn" title="Cancel">&#10005;</button>`;
-}
-
-function confirmEditAnnotation(row) {
-  const input = row.querySelector('.todo-item-edit-input');
-  const actions = row.querySelector('.todo-item-actions');
-  if (!input || !actions) return;
-
-  const newText = input.value.trim() || input.value;
-  row.dataset.editedText = newText;
-
-  const span = document.createElement('span');
-  span.className = 'todo-annotation-text';
-  span.textContent = newText;
-  input.replaceWith(span);
-  row.classList.remove('editing');
-
-  actions.innerHTML = `<button class="todo-item-action-btn todo-item-edit-btn" title="Edit">&#9998;</button>
-    <button class="todo-item-action-btn todo-item-delete-btn" title="Remove">&#10005;</button>`;
-}
-
-function cancelEditAnnotation(row) {
-  const input = row.querySelector('.todo-item-edit-input');
-  const actions = row.querySelector('.todo-item-actions');
-  if (!input || !actions) return;
-
-  const restoreText = row.dataset.editedText !== undefined ? row.dataset.editedText : input.value;
-  const span = document.createElement('span');
-  span.className = 'todo-annotation-text';
-  span.textContent = restoreText;
-  input.replaceWith(span);
-  row.classList.remove('editing');
-
-  actions.innerHTML = `<button class="todo-item-action-btn todo-item-edit-btn" title="Edit">&#9998;</button>
-    <button class="todo-item-action-btn todo-item-delete-btn" title="Remove">&#10005;</button>`;
-}
-
-function deleteAnnotation(row) {
-  const isDeleted = row.classList.contains('todo-item-deleted');
-  const actions = row.querySelector('.todo-item-actions');
-  if (isDeleted) {
-    row.classList.remove('todo-item-deleted');
-    delete row.dataset.deleted;
-    if (actions) actions.innerHTML = `<button class="todo-item-action-btn todo-item-edit-btn" title="Edit">&#9998;</button>
-      <button class="todo-item-action-btn todo-item-delete-btn" title="Remove">&#10005;</button>`;
-  } else {
-    if (row.classList.contains('editing')) cancelEditAnnotation(row);
-    row.classList.add('todo-item-deleted');
-    row.dataset.deleted = 'true';
-    if (actions) actions.innerHTML = `<button class="todo-item-action-btn todo-item-delete-btn" title="Undo remove" style="color:#1976d2;">&#8617;</button>`;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Add pending comment / reply rows
-// ---------------------------------------------------------------------------
-
-function addPendingComment(itemIndex) {
-  const section = document.querySelector(`.todo-comments-section[data-item-index="${itemIndex}"]`);
-  if (!section) return;
-  const addRow = section.querySelector('.todo-comment-add-row');
-  const input = addRow ? addRow.querySelector('.todo-annotation-add-input') : null;
-  const text = input ? input.value.trim() : '';
-  if (!text) return;
-
-  const row = document.createElement('div');
-  row.className = 'todo-comment-row todo-annotation-new';
-  row.dataset.new = 'true';
-  row.dataset.kind = 'comment';
-  row.dataset.itemIndex = String(itemIndex);
-  row.innerHTML = `<div class="todo-comment-header">
-      <span class="todo-annotation-label">COMMENT:</span>
-      <span class="todo-annotation-text">${escapeHtml(text)}</span>
-      <div class="todo-item-actions">
-        <button class="todo-item-action-btn todo-item-delete-new-btn" title="Remove">&#10005;</button>
-      </div>
-    </div>
-    <div class="todo-reply-list"></div>
-    <div class="todo-reply-add-row">
-      <input type="text" class="todo-annotation-add-input todo-reply-add-input" placeholder="Add reply..." data-item-index="${itemIndex}" data-comment-new="true">
-      <button class="todo-reply-add-btn" data-item-index="${itemIndex}" data-comment-new="true" title="Add reply">+</button>
-    </div>`;
-  section.insertBefore(row, addRow);
-
-  if (input) { input.value = ''; input.focus(); }
-}
-
-function addPendingReply(commentRow) {
-  const addRow = commentRow.querySelector('.todo-reply-add-row');
-  const input = addRow ? addRow.querySelector('.todo-reply-add-input') : null;
-  const text = input ? input.value.trim() : '';
-  if (!text) return;
-
-  const replyList = commentRow.querySelector('.todo-reply-list');
-  if (!replyList) return;
-
-  const row = document.createElement('div');
-  row.className = 'todo-reply-row todo-annotation-new';
-  row.dataset.new = 'true';
-  row.dataset.kind = 'reply';
-  row.innerHTML = `<span class="todo-annotation-label">REPLY:</span>
-    <span class="todo-annotation-text">${escapeHtml(text)}</span>
-    <div class="todo-item-actions" style="display:flex;">
-      <button class="todo-item-action-btn todo-item-delete-new-btn" title="Remove">&#10005;</button>
-    </div>`;
-  replyList.appendChild(row);
-
-  if (input) { input.value = ''; input.focus(); }
-}
-
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
-
-function renderCommentSection(item, flatIndex) {
-  const comments = item.comments || [];
-  const count = comments.reduce((n, c) => n + 1 + (c.replies ? c.replies.length : 0), 0);
-  const badge = count > 0 ? ` (${count})` : '';
-
-  let html = `<div class="todo-comments-section collapsed" data-item-index="${flatIndex}">`;
-
-  for (let ci = 0; ci < comments.length; ci++) {
-    const comment = comments[ci];
-    // For synthetic comments (lineStart === -1), still render replies but don't show an editable label
-    const isSynthetic = comment.lineStart === -1;
-    html += `<div class="todo-comment-row" data-item-index="${flatIndex}" data-comment-index="${ci}" data-line="${comment.lineStart}">`;
-    if (!isSynthetic) {
-      html += `<div class="todo-comment-header">
-          <span class="todo-annotation-label">COMMENT:</span>
-          <span class="todo-annotation-text">${escapeHtml(comment.text)}</span>
-          <div class="todo-item-actions">
-            <button class="todo-item-action-btn todo-item-edit-btn" title="Edit">&#9998;</button>
-            <button class="todo-item-action-btn todo-item-delete-btn" title="Remove">&#10005;</button>
-          </div>
-        </div>`;
-    }
-    // Replies
-    html += `<div class="todo-reply-list">`;
-    for (let ri = 0; ri < (comment.replies || []).length; ri++) {
-      const reply = comment.replies[ri];
-      html += `<div class="todo-reply-row" data-item-index="${flatIndex}" data-comment-index="${ci}" data-reply-index="${ri}" data-line="${reply.lineStart}">
-          <span class="todo-annotation-label">REPLY:</span>
-          <span class="todo-annotation-text">${escapeHtml(reply.text)}</span>
-          <div class="todo-item-actions">
-            <button class="todo-item-action-btn todo-item-edit-btn" title="Edit">&#9998;</button>
-            <button class="todo-item-action-btn todo-item-delete-btn" title="Remove">&#10005;</button>
-          </div>
-        </div>`;
-    }
-    html += `</div>`; // .todo-reply-list
-    // Per-comment reply add row
-    html += `<div class="todo-reply-add-row">
-        <input type="text" class="todo-annotation-add-input todo-reply-add-input" placeholder="Add reply..." data-item-index="${flatIndex}" data-comment-index="${ci}">
-        <button class="todo-reply-add-btn" data-item-index="${flatIndex}" data-comment-index="${ci}" title="Add reply">+</button>
-      </div>`;
-    html += `</div>`; // .todo-comment-row
-  }
-
-  // Comment add row
-  html += `<div class="todo-comment-add-row">
-      <input type="text" class="todo-annotation-add-input todo-comment-add-input" placeholder="Add comment..." data-item-index="${flatIndex}">
-      <button class="todo-comment-add-btn" data-item-index="${flatIndex}" title="Add comment">+</button>
-    </div>`;
-
-  html += `</div>`; // .todo-comments-section
-
-  return { html, badge };
-}
 
 function renderTodoGroups(parsedBlocks) {
   const container = document.getElementById('todo-modal-items');
@@ -395,12 +239,28 @@ function renderTodoGroups(parsedBlocks) {
           </div>
           <span class="todo-comment-badge">${badge}</span>
         </div>`;
+
+      // Cohabitation banner: show linked REMINDER below the item
+      if (item.cohabitatingReminder) {
+        const rem = item.cohabitatingReminder;
+        const dateLabel = rem.parsedDate ? ` <span class="todo-cohab-reminder-date">${escapeHtml(rem.parsedDate)}</span>` : '';
+        html += `<div class="todo-cohab-reminder-banner" data-item-index="${idx}"
+            data-reminder-line="${rem.lineStart ?? ''}"
+            data-reminder-date="${escapeHtml(rem.parsedDate || '')}"
+            data-reminder-text="${escapeHtml(rem.text)}">
+            <span class="todo-cohab-reminder-icon" title="Linked reminder">&#9201;</span>
+            ${dateLabel}
+            <span class="todo-cohab-reminder-text">${escapeHtml(rem.text)}</span>
+            <button class="btn-todo-switch-reminder" data-item-index="${idx}" title="Switch to Reminder modal">&#8594; Reminder</button>
+          </div>`;
+      }
+
       html += commentsHtml;
     }
 
     // Per-group add row
     html += `<div class="todo-add-row">
-        <input type="text" class="todo-add-input" data-group-index="${gi}" placeholder="Add item..." value="${escapeHtml(todayIso() + ' ')}">
+        <input type="text" class="todo-add-input" data-group-index="${gi}" placeholder="Add item..." value="">
         <button class="todo-add-btn" data-group-index="${gi}" title="Add item">+</button>
       </div>`;
 
@@ -446,7 +306,7 @@ export async function openTodoModal(record, panelId) {
   }
 
   const parsedBlocks = sectionContent
-    ? (await window.electronAPI.parseTodoSection(sectionContent) || [])
+    ? (await window.electronAPI.parseTodoBlocksWithReminders(sectionContent) || [])
     : [];
 
   todoModalContext = { notesFilePath, sectionKey, sectionContent, parsedBlocks, panelId, record };
@@ -782,7 +642,7 @@ function addNewSection() {
     </div>
     <div class="todo-group-body">
       <div class="todo-add-row">
-        <input type="text" class="todo-add-input" data-group-index="${gi}" placeholder="Add item..." value="${escapeHtml(todayIso() + ' ')}">
+        <input type="text" class="todo-add-input" data-group-index="${gi}" placeholder="Add item..." value="">
         <button class="todo-add-btn" data-group-index="${gi}" title="Add item">+</button>
       </div>
     </div>`;
@@ -853,6 +713,14 @@ export function initTodoModal() {
         return;
       }
 
+      // Toggle replies section inside a comment
+      const repliesToggle = e.target.closest('.todo-replies-toggle');
+      if (repliesToggle) {
+        const repliesSection = repliesToggle.closest('.todo-comment-row')?.querySelector('.todo-replies-section');
+        if (repliesSection) repliesSection.classList.toggle('collapsed');
+        return;
+      }
+
       // + add item button
       const addBtn = e.target.closest('.todo-add-btn');
       if (addBtn) {
@@ -879,7 +747,7 @@ export function initTodoModal() {
       const editBtn = e.target.closest('.todo-item-edit-btn');
       if (editBtn) {
         const itemRow = editBtn.closest('.todo-item-row');
-        if (itemRow && !itemRow.dataset.new && !itemRow.classList.contains('todo-item-deleted')) {
+        if (itemRow && !itemRow.classList.contains('todo-item-deleted')) {
           startEditItem(itemRow);
           return;
         }
@@ -926,6 +794,28 @@ export function initTodoModal() {
       if (deleteNewBtn) {
         const row = deleteNewBtn.closest('.todo-item-row, .todo-comment-row, .todo-reply-row');
         if (row) row.remove();
+        return;
+      }
+
+      // Switch to Reminder modal from cohabitation banner
+      const switchRemBtn = e.target.closest('.btn-todo-switch-reminder');
+      if (switchRemBtn && todoModalContext) {
+        const banner = switchRemBtn.closest('.todo-cohab-reminder-banner');
+        if (banner) {
+          const reminderItem = {
+            text:            banner.dataset.reminderText || '',
+            due_datetime:    banner.dataset.reminderDate || null,
+            lineStart:       parseInt(banner.dataset.reminderLine, 10) || null,
+            notesPath:       todoModalContext.notesFilePath,
+            sectionKey:      todoModalContext.sectionKey,
+            isCohabitated:   true,
+            linkedTodoLine:  null, // will be resolved in modal
+            dirId:           null
+          };
+          const { record, panelId } = todoModalContext;
+          closeTodoModal();
+          void openReminderModal(reminderItem, record, panelId);
+        }
         return;
       }
     });

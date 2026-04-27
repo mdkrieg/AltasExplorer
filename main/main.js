@@ -15,7 +15,8 @@ const icons = require('../src/icons');
 const checksum = require('../src/checksum');
 const attributes = require('../src/attributes');
 const notesParser = require('../src/notesParser');
-const todoAggregator = require('../src/todoAggregator');
+const todoAggregator     = require('../src/todoAggregator');
+const reminderAggregator = require('../src/reminderAggregator');
 const customActions = require('../src/customActions');
 const layouts = require('../src/layouts');
 const autoLabels = require('../src/autoLabels');
@@ -2081,6 +2082,15 @@ ipcMain.handle('refresh-todo-aggregate', async (event, { notesPath, dirId }) => 
     if (result.changed && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('todo-aggregates-changed');
     }
+    // Also refresh reminders for this file (runs after todo aggregator upserts the row)
+    try {
+      const remResult = reminderAggregator.ensureAndRefresh(notesPath, resolvedDirId);
+      if (remResult.changed && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('reminder-aggregates-changed');
+      }
+    } catch (remErr) {
+      logger.warn(`refresh-todo-aggregate: reminder refresh failed for ${notesPath}: ${remErr.message}`);
+    }
     return result;
   } catch (err) {
     logger.error(`Error refreshing TODO aggregate for ${notesPath}: ${err.message}`);
@@ -2112,6 +2122,88 @@ ipcMain.handle('normalize-todo-section', async (event, sectionContent) => {
     return notesParser.normalizeTodoBlock(sectionContent);
   } catch (err) {
     logger.error('Error normalizing TODO section:', err.message);
+    throw err;
+  }
+});
+
+// ============================================================
+// REMINDER Aggregator IPC handlers
+// ============================================================
+
+ipcMain.handle('get-reminder-aggregates', async () => {
+  try {
+    return reminderAggregator.getAggregates();
+  } catch (err) {
+    logger.error('Error getting reminder aggregates:', err.message);
+    throw err;
+  }
+});
+
+ipcMain.handle('refresh-reminder-aggregate', async (event, { notesPath, dirId }) => {
+  try {
+    let resolvedDirId = dirId;
+    if (resolvedDirId == null && notesPath) {
+      const sep = notesPath.includes('\\') ? '\\' : '/';
+      const dirname = notesPath.substring(0, notesPath.lastIndexOf(sep));
+      const existingRow = db.getTodoNotesFile(notesPath);
+      if (existingRow) {
+        resolvedDirId = existingRow.dir_id;
+      } else {
+        const dirRow = db.getDirectory(dirname);
+        if (dirRow) resolvedDirId = dirRow.id;
+      }
+    }
+    if (resolvedDirId == null) {
+      logger.warn(`refresh-reminder-aggregate: could not resolve dir_id for ${notesPath}`);
+      return { changed: false, notesFileId: null };
+    }
+    const result = reminderAggregator.ensureAndRefresh(notesPath, resolvedDirId);
+    if (result.changed && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('reminder-aggregates-changed');
+    }
+    return result;
+  } catch (err) {
+    logger.error(`Error refreshing reminder aggregate for ${notesPath}: ${err.message}`);
+    throw err;
+  }
+});
+
+ipcMain.handle('refresh-reminder-aggregates', async () => {
+  try {
+    const result = reminderAggregator.refreshAll();
+    if (result.changed > 0 && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('reminder-aggregates-changed');
+    }
+    return result;
+  } catch (err) {
+    logger.error('Error refreshing all reminder aggregates:', err.message);
+    throw err;
+  }
+});
+
+ipcMain.handle('parse-reminder-section', async (event, sectionContent) => {
+  try {
+    return notesParser.parseReminderBlocks(sectionContent);
+  } catch (err) {
+    logger.error('Error parsing reminder section:', err.message);
+    throw err;
+  }
+});
+
+ipcMain.handle('normalize-reminder-section', async (event, sectionContent) => {
+  try {
+    return notesParser.normalizeReminderSection(sectionContent);
+  } catch (err) {
+    logger.error('Error normalizing reminder section:', err.message);
+    throw err;
+  }
+});
+
+ipcMain.handle('parse-todo-blocks-with-reminders', async (event, sectionContent) => {
+  try {
+    return notesParser.parseTodoBlocksWithReminders(sectionContent);
+  } catch (err) {
+    logger.error('Error parsing todo blocks with reminders:', err.message);
     throw err;
   }
 });
@@ -4002,6 +4094,14 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       } catch (err) {
         logger.warn(`todoAggregator.ensureAndRefresh failed for ${localNotesFilePath}: ${err.message}`);
       }
+      try {
+        const remResult = reminderAggregator.ensureAndRefresh(localNotesFilePath, dirId, { contentOverride: localNotesContent });
+        if (remResult.changed && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('reminder-aggregates-changed');
+        }
+      } catch (err) {
+        logger.warn(`reminderAggregator.ensureAndRefresh failed for ${localNotesFilePath}: ${err.message}`);
+      }
     } else {
       // If a previous scan had a notes.txt row but the file is gone, drop it.
       const notesFilePath = path.join(normalizedPath, 'notes.txt');
@@ -4035,13 +4135,18 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
             }
             directoryNotes = notesParser.extractDirectoryNotes(dirNotesContent);
 
-            // Opportunistically feed child notes.txt into the TODO aggregator
+            // Opportunistically feed child notes.txt into the TODO and reminder aggregators
             if (dirNotesContent && entry.dir_id) {
               try {
                 const childAgg = todoAggregator.ensureAndRefresh(dirNotesFilePath, entry.dir_id, { contentOverride: dirNotesContent });
                 if (childAgg.changed) todoAggChanged = true;
               } catch (err) {
                 logger.warn(`todoAggregator child refresh failed for ${dirNotesFilePath}: ${err.message}`);
+              }
+              try {
+                reminderAggregator.ensureAndRefresh(dirNotesFilePath, entry.dir_id, { contentOverride: dirNotesContent });
+              } catch (err) {
+                logger.warn(`reminderAggregator child refresh failed for ${dirNotesFilePath}: ${err.message}`);
               }
             }
           } else {

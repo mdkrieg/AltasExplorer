@@ -131,13 +131,16 @@ Grid View:
   [ ] add P2 - P(n+1) button to the grid context command prompt
   [ ] add right click context on the grid command prompt button like is on the sidebar command prompt button
 
-Both Browser Views:
+Tagging modal:
 [x] Add Tagging button up top which opens a Tagging modal
   [x] Shows a badge with any pending auto-tagging rules on button
   [x] Shows summary of pending auto-tags (need some way to ignore per-file - should retain in db, no effect in notes, not offered on files with tags already, remove tag from ignored when adding to file)
-Didn't add the below with previous pass, and not bad ideas, to consider...
+Possible other tab (Tag Summary?), to consider...
 [ ] Modal shows a summary of tags and files containing them, with ability to remove files from a tag (respecting notes file archival rule)
 [ ] Modal offers the ability to add all items from grid (respecting filter)
+
+TODO Feature:
+* Would be nice to have a timestamp on all todos and all comments but there is no good way to maintain continuity if the user edits them in the notes.txt file directly. Perhaps we add some uuid to the file on save but I'm not sure how I feel about this. I Think the least intrusive way would be to have a line with just {uuid} that obeys indenting rules appended after the todo/reminder/item/comment/reply and this would link to timestamp + metadata in the db.
 
 Saved Layouts:
 [x] Add save button in the toolbar for saving layouts in the local directory, the button should offer a dropdown (check demos)/context menu on click with the following:
@@ -157,6 +160,7 @@ General:
 
 Sidebar:
 [x] make the icons "squish" when the sidebard is made small
+[ ] Change the icon for the local links (shortcuts) to a chain link icon. If the existing icon is for anything it should be to represent items that will open in a modal.
   
 Other crazy stuff:
 [ ] Make a servable version for hosting a demo on github pages (use source files as part virtual filesystem, plus some additional example things)

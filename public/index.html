@@ -83,6 +83,16 @@
         </div>
         <div id="sidebar-todos-body" class="sidebar-section-body"></div>
       </div>
+      <!-- REMINDERS Section -->
+      <div class="sidebar-section collapsed" data-section="reminders">
+        <div class="sidebar-section-header">
+          <button class="sidebar-section-chevron" data-section-toggle="reminders" title="Expand/collapse">&#9654;</button>
+          <span class="sidebar-section-label sidebar-section-label-full">REMINDERS</span>
+          <span class="sidebar-section-label sidebar-section-label-short">REM</span>
+          <button class="sidebar-section-action btn-reminders-refresh" title="Refresh Reminders">&#x21BB;</button>
+        </div>
+        <div id="sidebar-reminders-body" class="sidebar-section-body"></div>
+      </div>
     </div>
   </div>
 
@@ -1941,6 +1951,56 @@
           <button id="btn-todo-save" class="btn-todo-save">Save</button>
           <button id="btn-todo-cancel" class="btn-todo-cancel">Cancel</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reminder Modal -->
+  <div id="reminder-modal"
+    style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1002; align-items: center; justify-content: center;">
+    <div class="reminder-modal-box">
+      <div class="reminder-modal-header">
+        <span class="reminder-modal-title">REMINDER</span>
+        <span id="reminder-modal-subtitle" class="reminder-modal-subtitle"></span>
+      </div>
+      <div class="reminder-modal-body">
+        <!-- Reminder text -->
+        <div class="reminder-field-row">
+          <label class="reminder-field-label" for="reminder-text-input">Text</label>
+          <textarea id="reminder-text-input" class="reminder-text-input" rows="3" placeholder="Reminder text…"></textarea>
+        </div>
+        <!-- Date + time -->
+        <div class="reminder-datetime-section">
+          <div class="reminder-field-row reminder-field-row-inline">
+            <label class="reminder-field-label" for="reminder-date-input">Date</label>
+            <input type="date" id="reminder-date-input" class="reminder-date-input">
+          </div>
+          <div class="reminder-field-row reminder-field-row-inline">
+            <label class="reminder-field-label" for="reminder-time-input">Time</label>
+            <input type="time" id="reminder-time-input" class="reminder-time-input">
+          </div>
+        </div>
+        <!-- Push buttons -->
+        <div class="reminder-push-buttons">
+          <button class="btn-reminder-push" data-push="+1hr">+1 hr</button>
+          <button class="btn-reminder-push" data-push="15:00">→ 15:00</button>
+          <button class="btn-reminder-push" data-push="tomorrow">Tomorrow</button>
+          <button class="btn-reminder-push" data-push="nextweek">Next week</button>
+        </div>
+        <!-- Cohabitation panel (shown only when reminder lives inside a TODO item) -->
+        <div id="reminder-cohabitation-panel" class="reminder-cohabitation-panel" style="display:none;">
+          <div class="reminder-cohab-header">
+            <span class="reminder-cohab-label">Linked TODO item</span>
+            <button id="btn-reminder-switch-todo" class="btn-reminder-switch">Switch to TODO</button>
+          </div>
+          <div id="reminder-cohab-todo-text" class="reminder-cohab-body"></div>
+        </div>
+        <!-- Comments / replies -->
+        <div id="reminder-annotations" class="reminder-annotations"></div>
+      </div>
+      <div class="reminder-modal-footer">
+        <button id="btn-reminder-save" class="btn-reminder-save">Save</button>
+        <button id="btn-reminder-cancel" class="btn-reminder-cancel">Cancel</button>
       </div>
     </div>
   </div>
