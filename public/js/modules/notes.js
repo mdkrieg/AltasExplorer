@@ -56,7 +56,7 @@ function attachImagePasteHandler(editor, notesFilePath) {
         reader.readAsDataURL(blob);
       });
       const rawExt = imageItem.type.split('/')[1] || 'png';
-      const ext = rawExt.replace('jpeg', 'jpg').replace('svg+xml', 'svg').replace(/[^a-z0-9]/g, '').slice(0, 5) || 'png';
+      const ext = rawExt === 'jpeg' ? 'jpg' : 'png';
       const result = await window.electronAPI.saveNotesImage({ notesFilePath, base64, ext });
       if (result && result.relativePath) {
         const position = editor.getPosition();
