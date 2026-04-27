@@ -1,6 +1,7 @@
 node_modules/
 dist/
 private/
+demo/dist/
 public/assets/
 .claude/
 .vscode/

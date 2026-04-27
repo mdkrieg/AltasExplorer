@@ -13,6 +13,7 @@
     "test:coverage": "jest --coverage",
     "sync-assets": "node scripts/sync-assets.js",
     "db:reinit": "node scripts/reinitialize-db.js",
+    "build:demo": "node demo/build.js",
     "postinstall": "electron-rebuild better-sqlite3 node-pty --build-from-source"
   },
   "build": {
@@ -48,7 +49,11 @@
       "owner": "mdkrieg",
       "repo": "AltasExplorer",
       "releaseType": "draft"
-    }
+    },
+    "files": [
+      "**/*",
+      "!demo/**"
+    ]
   },
   "keywords": [
     "file",

@@ -165,6 +165,7 @@ Sidebar:
 Other crazy stuff:
 [ ] Make a servable version for hosting a demo on github pages (use source files as part virtual filesystem, plus some additional example things)
 
+
 Manipulation phase:
 * NOTE: Important here that changes made in the app don't trigger alerts (perhaps option to include?)
 [x] Dragon Dropping
