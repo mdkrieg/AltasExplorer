@@ -3103,9 +3103,7 @@ async function initializeGridForPanel(panelId) {
 			}
 			
 			// Handle notes icon click to open modal
-			if (event.detail.originalEvent && event.detail.originalEvent.target &&
-				event.detail.originalEvent.target.dataset &&
-				event.detail.originalEvent.target.dataset.notesIcon) {
+			if (originalTarget && originalTarget.closest && originalTarget.closest('[data-notes-icon="true"]')) {
 				event.preventDefault();
 				event.stopPropagation();
 				if (event.detail.recid) {

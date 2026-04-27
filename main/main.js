@@ -1947,6 +1947,33 @@ ipcMain.handle('read-file-content', async (event, filePath) => {
 });
 
 /**
+ * Notes: Save a pasted image into the notes_files directory sibling to notes.txt.
+ * Returns { relativePath } — the markdown-ready relative path (e.g. "notes_files/img-xxxx.png").
+ */
+ipcMain.handle('save-notes-image', async (event, { notesFilePath, base64, ext }) => {
+  try {
+    if (!notesFilePath || typeof notesFilePath !== 'string') throw new Error('Invalid notesFilePath');
+    if (!base64 || typeof base64 !== 'string') throw new Error('Invalid image data');
+    const safeExt = (ext || 'png').replace(/[^a-zA-Z0-9]/g, '').toLowerCase().slice(0, 5) || 'png';
+    const notesDir = path.dirname(notesFilePath);
+    const notesFilesDir = path.join(notesDir, 'notes_files');
+    if (!fsSync.existsSync(notesFilesDir)) {
+      fsSync.mkdirSync(notesFilesDir, { recursive: true });
+    }
+    const timestamp = Date.now();
+    const rand = Math.random().toString(36).slice(2, 6);
+    const filename = `img-${timestamp}-${rand}.${safeExt}`;
+    const absolutePath = path.join(notesFilesDir, filename);
+    fsSync.writeFileSync(absolutePath, Buffer.from(base64, 'base64'));
+    const relativePath = 'notes_files/' + filename;
+    return { relativePath, absolutePath };
+  } catch (err) {
+    logger.error('Error saving notes image:', err.message);
+    throw err;
+  }
+});
+
+/**
  * Notes: Write notes.txt file
  */
 ipcMain.handle('write-file-content', async (event, { filePath, content }) => {
@@ -2223,8 +2250,11 @@ ipcMain.handle('update-todo-items', async (event, { sectionContent, updates }) =
 /**
  * Markdown: Render markdown to HTML
  */
-ipcMain.handle('render-markdown', async (event, content) => {
+ipcMain.handle('render-markdown', async (event, arg) => {
   try {
+    // Support both legacy string arg and new { content, basePath } object
+    const content = typeof arg === 'string' ? arg : (arg && arg.content) || '';
+    const basePath = typeof arg === 'string' ? null : (arg && arg.basePath) || null;
     const MarkdownIt = require('markdown-it');
     const md = new MarkdownIt({
       html: false, // Disable raw HTML for security
@@ -2278,6 +2308,18 @@ ipcMain.handle('render-markdown', async (event, content) => {
         return `<span class="todo-marker">TODO:</span>`;
       }
     });
+
+    // Resolve relative image src paths to absolute file:// URLs when a basePath is provided.
+    // This allows notes_files/ images to display correctly in the notes modal.
+    if (basePath) {
+      const baseDir = path.dirname(basePath);
+      html = html.replace(/(<img\b[^>]*?\bsrc=")([^"]+)(")/g, (match, prefix, src, suffix) => {
+        if (/^(file:|data:|https?:)/i.test(src)) return match;
+        const absoluteImgPath = path.resolve(baseDir, src);
+        const fileUrl = 'file:///' + absoluteImgPath.replace(/\\/g, '/');
+        return prefix + fileUrl + suffix;
+      });
+    }
 
     return html;
   } catch (err) {

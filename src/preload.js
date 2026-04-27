@@ -203,6 +203,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Notes file operations
   readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
   writeFileContent: (filePath, content) => ipcRenderer.invoke('write-file-content', { filePath, content }),
+  saveNotesImage: (opts) => ipcRenderer.invoke('save-notes-image', opts),
 
   // TODO operations
   parseTodoSection: (sectionContent) => ipcRenderer.invoke('parse-todo-section', sectionContent),
@@ -225,7 +226,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onReminderAggregatesChanged: (callback) => ipcRenderer.on('reminder-aggregates-changed', () => callback()),
 
   // Markdown rendering via IPC
-  renderMarkdown: (content) => ipcRenderer.invoke('render-markdown', content),
+  renderMarkdown: (content, basePath) => ipcRenderer.invoke('render-markdown', basePath ? { content, basePath } : content),
 
   // EXIF metadata
   getExifData: (filePath) => ipcRenderer.invoke('get-exif-data', filePath),

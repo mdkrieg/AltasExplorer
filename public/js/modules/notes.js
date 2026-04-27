@@ -31,6 +31,52 @@ let notesModalEditor = null;
 let notesModalEditMode = false;
 let notesModalContext = null;
 
+/**
+ * Attach an image-paste handler to a Monaco editor instance.
+ * Listens at the document level (capture phase) so it fires before Monaco's
+ * internal textarea handler, which otherwise consumes the paste event.
+ * Gated on editor.hasTextFocus() so it only activates when this editor is
+ * the active target. Cleans itself up automatically when the editor is disposed.
+ */
+function attachImagePasteHandler(editor, notesFilePath) {
+  const handler = async (e) => {
+    if (!editor.hasTextFocus()) return;
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageItem = items.find(item => item.type.startsWith('image/'));
+    if (!imageItem) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const blob = imageItem.getAsFile();
+    if (!blob) return;
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const rawExt = imageItem.type.split('/')[1] || 'png';
+      const ext = rawExt.replace('jpeg', 'jpg').replace('svg+xml', 'svg').replace(/[^a-z0-9]/g, '').slice(0, 5) || 'png';
+      const result = await window.electronAPI.saveNotesImage({ notesFilePath, base64, ext });
+      if (result && result.relativePath) {
+        const position = editor.getPosition();
+        editor.executeEdits('paste-image', [{
+          range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+          text: `![image](${result.relativePath})`
+        }]);
+        editor.focus();
+      }
+    } catch (err) {
+      console.error('Error saving pasted image:', err);
+    }
+  };
+
+  document.addEventListener('paste', handler, true);
+  editor.onDidDispose(() => {
+    document.removeEventListener('paste', handler, true);
+  });
+}
+
 function syncRecordHasNotes(record, hasNotes) {
   if (!record || !record.path) {
     return;
@@ -256,6 +302,7 @@ export async function showFileView(panelId, filePathOverride) {
     const fileFormat = settings.file_format || 'Markdown';
 
     createMonacoEditorInstance($fileEditorContainer[0]);
+    attachImagePasteHandler(monacoEditor, filePath);
 
     const content = await window.electronAPI.readFileContent(filePath);
 
@@ -273,7 +320,7 @@ export async function showFileView(panelId, filePathOverride) {
     }
 
     if (fileFormat === 'Markdown') {
-      const htmlContent = await window.electronAPI.renderMarkdown(content);
+      const htmlContent = await window.electronAPI.renderMarkdown(content, filePath);
       $fileContentView.html(htmlContent);
     } else {
       const htmlContent = formatFileContent(content, fileFormat);
@@ -377,7 +424,7 @@ export async function toggleFileEditMode(panelId) {
     const fileFormat = settings.file_format || 'Markdown';
 
     if (fileFormat === 'Markdown') {
-      const htmlContent = await window.electronAPI.renderMarkdown(content);
+      const htmlContent = await window.electronAPI.renderMarkdown(content, filePath);
       $fileContentView.html(htmlContent);
     } else {
       const htmlContent = formatFileContent(content, fileFormat);
@@ -445,11 +492,12 @@ export async function openNotesModal(record) {
     fontSize: 13,
     fontFamily: 'Consolas, "Courier New", monospace'
   });
+  attachImagePasteHandler(notesModalEditor, notesFilePath);
 
   const fileFormat = settings.file_format || 'Markdown';
   const $contentView = $('#notes-content-view');
   if (fileFormat === 'Markdown') {
-    const htmlContent = await window.electronAPI.renderMarkdown(sectionContent);
+    const htmlContent = await window.electronAPI.renderMarkdown(sectionContent, notesFilePath);
     $contentView.html(htmlContent);
   } else {
     $contentView.html(formatFileContent(sectionContent, fileFormat));
@@ -523,7 +571,7 @@ export async function toggleNotesEditMode() {
   const settings = await window.electronAPI.getSettings();
   const fileFormat = settings.file_format || 'Markdown';
   if (fileFormat === 'Markdown') {
-    const htmlContent = await window.electronAPI.renderMarkdown(newContent);
+    const htmlContent = await window.electronAPI.renderMarkdown(newContent, notesFilePath);
     $contentView.html(htmlContent);
   } else {
     $contentView.html(formatFileContent(newContent, fileFormat));
