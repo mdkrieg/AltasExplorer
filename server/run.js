@@ -59,16 +59,9 @@ function initServices(config) {
   const customActions = require('../src/customActions');
   const logger     = require('../src/logger');
 
-  logger.initialize(config.dataDir);
-  db.initialize(config.dataDir);
-  categories.initialize(config.dataDir);
-  tags.initialize(config.dataDir);
-  filetypes.initialize(config.dataDir);
-  icons.initialize(config.dataDir);
-  attributes.initialize(config.dataDir);
-  autoLabels.initialize(config.dataDir);
-  layouts.initialize(config.dataDir);
-  customActions.initialize(config.dataDir);
+  // Only db has an initialize() method; all other services self-initialize
+  // using hardcoded paths (os.homedir()/.atlasexplorer) matching main/main.js.
+  db.initialize();
 
   return { db, categories, tags, filetypes, icons, checksum, attributes, autoLabels, layouts, customActions, logger };
 }
