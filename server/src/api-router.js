@@ -29,9 +29,18 @@ function init(config) {
 const HANDLERS = {
 
   // ── Categories (src/categories.js) ───────────────────────────────────────
-  loadCategories:               async () => null,
-  getCategory:                  async ([name]) => null,
-  getCategoriesList:            async () => null,
+  loadCategories: async () => {
+    const categories = require('../../src/categories');
+    try { return categories.loadCategories(); } catch { return {}; }
+  },
+  getCategory: async ([name]) => {
+    const categories = require('../../src/categories');
+    try { return categories.getCategory(name); } catch { return null; }
+  },
+  getCategoriesList: async () => {
+    const categories = require('../../src/categories');
+    try { return Object.values(categories.loadCategories()); } catch { return []; }
+  },
   createCategory:               async ([name, bgColor, textColor, patterns]) => null,
   saveCategory:                 async ([categoryData]) => null,
   updateCategory:               async ([name, categoryData]) => null,
@@ -40,12 +49,28 @@ const HANDLERS = {
   assignCategoryToDirectories:  async ([dirPaths, categoryName, force]) => null,
   getDirectoryAssignment:       async ([dirPath]) => null,
   removeDirectoryAssignment:    async ([dirPath]) => null,
-  getCategoryForDirectory:      async ([dirPath]) => null,
+  getCategoryForDirectory: async ([dirPath]) => {
+    const categories = require('../../src/categories');
+    try {
+      return categories.getCategoryForDirectory(dirPath);
+    } catch {
+      return categories.createDefaultCategory ? categories.createDefaultCategory() : null;
+    }
+  },
 
   // ── Tags (src/tags.js) ────────────────────────────────────────────────────
-  loadTags:           async () => null,
-  getTag:             async ([name]) => null,
-  getTagsList:        async () => null,
+  loadTags: async () => {
+    const tags = require('../../src/tags');
+    try { return tags.loadTags(); } catch { return {}; }
+  },
+  getTag: async ([name]) => {
+    const tags = require('../../src/tags');
+    try { return tags.getTag(name); } catch { return null; }
+  },
+  getTagsList: async () => {
+    const tags = require('../../src/tags');
+    try { return Object.values(tags.loadTags()); } catch { return []; }
+  },
   createTag:          async ([name, bgColor, textColor, description]) => null,
   saveTag:            async ([tagData]) => null,
   updateTag:          async ([name, tagData]) => null,
@@ -75,29 +100,145 @@ const HANDLERS = {
 
   // ── File Types (src/filetypes.js) ─────────────────────────────────────────
   getFileTypeIcons:  async () => null,
-  getFileTypes:      async () => null,
+  getFileTypes: async () => {
+    const filetypes = require('../../src/filetypes');
+    return filetypes.getFileTypes();
+  },
   addFileType:       async ([pattern, type, icon, openWith]) => null,
   updateFileType:    async ([pattern, newPattern, newType, icon, openWith]) => null,
   deleteFileType:    async ([pattern]) => null,
 
   // ── Settings & Config (src/categories.js) ────────────────────────────────
-  getSettings:   async () => null,
-  saveSettings:  async ([settings]) => null,
-  getHotkeys:    async () => null,
-  saveHotkeys:   async ([hotkeyData]) => null,
-  getFavorites:  async () => null,
-  saveFavorites: async ([favorites]) => null,
+  getSettings: async () => {
+    const categories = require('../../src/categories');
+    try {
+      return categories.getSettings();
+    } catch (err) {
+      return {};
+    }
+  },
+  saveSettings: async ([settings]) => {
+    const categories = require('../../src/categories');
+    try {
+      categories.saveSettings(settings);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+  getHotkeys: async () => {
+    const categories = require('../../src/categories');
+    try {
+      return categories.getHotkeys();
+    } catch (err) {
+      return {};
+    }
+  },
+  saveHotkeys: async ([hotkeyData]) => {
+    const categories = require('../../src/categories');
+    try {
+      categories.saveHotkeys(hotkeyData);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+  getFavorites: async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const categories = require('../../src/categories');
+    const favPath = path.join(os.homedir(), '.atlasexplorer', 'favorites.json');
+    try {
+      if (fs.existsSync(favPath)) {
+        return JSON.parse(fs.readFileSync(favPath, 'utf8'));
+      }
+      // Migration: pull favorites out of settings.json into favorites.json
+      const settings = categories.getSettings();
+      const favorites = Array.isArray(settings.favorites) ? settings.favorites : [];
+      fs.writeFileSync(favPath, JSON.stringify(favorites, null, 2), 'utf8');
+      if (Array.isArray(settings.favorites)) {
+        delete settings.favorites;
+        categories.saveSettings(settings);
+      }
+      return favorites;
+    } catch (err) {
+      return [];
+    }
+  },
+  saveFavorites: async ([favorites]) => {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const favPath = path.join(os.homedir(), '.atlasexplorer', 'favorites.json');
+    try {
+      fs.writeFileSync(favPath, JSON.stringify(favorites, null, 2), 'utf8');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
 
   // ── Filesystem Reads (src/filesystem.js) ─────────────────────────────────
   readDirectory:              async ([dirPath]) => null,
   getRootDrives:              async () => null,
-  getParentDirectoryMetadata: async ([dirPath]) => null,
+  getParentDirectoryMetadata: async ([dirPath]) => {
+    const path = require('path');
+    const filesystem = require('../../src/filesystem');
+    const db = require('../../src/db');
+    const categories = require('../../src/categories');
+    try {
+      const fsMetadata = filesystem.getParentDirectoryMetadata(dirPath);
+      if (!fsMetadata) return null;
+      const parentDirPath = path.dirname(dirPath);
+      const dbMetadata = db.getParentDirectoryInfo(dirPath);
+      let parentAttributes = null;
+      if (dbMetadata) {
+        const dotFile = db.getFileByFilename(dbMetadata.id, '.');
+        if (dotFile && dotFile.attributes) parentAttributes = dotFile.attributes;
+      }
+      const parentTags = dbMetadata ? db.getTagsForDirectory(parentDirPath) : null;
+      const parentResolution = categories.getCategoryResolutionForDirectory(parentDirPath);
+      const resolvedInitials = db.resolveDirectoryInitials(parentDirPath);
+      return {
+        ...fsMetadata,
+        category: parentResolution.categoryName,
+        tags: parentTags,
+        initials: dbMetadata?.initials || null,
+        resolvedInitials: resolvedInitials.value,
+        description: dbMetadata?.description || null,
+        attributes: parentAttributes
+      };
+    } catch (err) {
+      return null;
+    }
+  },
   getShortcutsInDirectory:    async ([dirPath]) => null,
   getFilesInDirectory:        async ([dirPath]) => null,
-  isDirectory:                async ([dirPath]) => null,
+  isDirectory: async ([dirPath]) => {
+    const filesystem = require('../../src/filesystem');
+    try {
+      return filesystem.isDirectory(dirPath);
+    } catch {
+      return false;
+    }
+  },
 
   // ── Filesystem Scan (src/filesystem.js + src/db.js) ──────────────────────
-  scanDirectoryWithComparison: async ([dirPath, isManualNavigation]) => null,
+  scanDirectoryWithComparison: async ([dirPath, isManualNavigation]) => {
+    const { doScanDirectoryWithComparison } = require('../../src/scanner');
+    const wsHandler = require('./ws-handler');
+    return doScanDirectoryWithComparison(
+      dirPath,
+      isManualNavigation !== false,
+      false,
+      {},
+      (event) => {
+        if (event === 'todo-aggregates-changed') wsHandler.pushTodoAggregatesChanged();
+        else if (event === 'reminder-aggregates-changed') wsHandler.pushReminderAggregatesChanged();
+      }
+    );
+  },
   getVirtualView:              async ([basePath, params, depth]) => null,
   getBadgeCounts:              async ([dirPath, depth]) => null,
 
@@ -117,14 +258,40 @@ const HANDLERS = {
   updateFileModificationDate: async ([dirPath, inode, newDateModified]) => null,
 
   // ── Directory Labels & Initials (src/db.js) ──────────────────────────────
-  getDirectoryInitials:  async ([dirPath]) => null,
-  saveDirectoryInitials: async ([dirPath, initials]) => null,
-  getDirectoryLabels:    async ([dirPath]) => null,
-  saveDirectoryLabels:   async ([dirPath, labels]) => null,
+  getDirectoryInitials: async ([dirPath]) => {
+    const db = require('../../src/db');
+    try { const dir = db.getDirectory(dirPath); return dir ? (dir.initials || null) : null; } catch { return null; }
+  },
+  saveDirectoryInitials: async ([dirPath, initials]) => {
+    const db = require('../../src/db');
+    try { db.updateDirectoryInitials(dirPath, initials); return { success: true }; } catch (err) { return { success: false, error: err.message }; }
+  },
+  getDirectoryLabels: async ([dirPath]) => {
+    const db = require('../../src/db');
+    try {
+      const dir = db.getDirectory(dirPath);
+      if (!dir) return { initials: null, initialsInherit: false, initialsForce: false, displayName: null, displayNameInherit: false, displayNameForce: false, resolvedInitials: null, initialsIsInherited: false, resolvedDisplayName: null, displayNameIsInherited: false, displayNameSourceDir: null };
+      const ri = db.resolveDirectoryInitials(dirPath);
+      const rn = db.resolveDirectoryDisplayName(dirPath);
+      return { initials: dir.initials || null, initialsInherit: Boolean(dir.initials_inherit), initialsForce: Boolean(dir.initials_force), displayName: dir.display_name || null, displayNameInherit: Boolean(dir.display_name_inherit), displayNameForce: Boolean(dir.display_name_force), resolvedInitials: ri.value, initialsIsInherited: ri.isInherited, resolvedDisplayName: rn.value, displayNameIsInherited: rn.isInherited, displayNameSourceDir: rn.sourceDir };
+    } catch { return null; }
+  },
+  saveDirectoryLabels: async ([dirPath, labels]) => {
+    const db = require('../../src/db');
+    try { db.updateDirectoryLabels(dirPath, labels); return { success: true }; } catch (err) { return { success: false, error: err.message }; }
+  },
 
   // ── Dir Grid Layout (src/db.js) ───────────────────────────────────────────
   saveDirGridLayout: async ([dirname, columns, sortData]) => null,
-  getDirGridLayout:  async ([dirname]) => null,
+  getDirGridLayout: async ([dirname]) => {
+    const db = require('../../src/db');
+    try {
+      const layout = db.getDirGridLayout(dirname);
+      return { success: true, layout };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
 
   // ── Notes File I/O (fs, path-jailed) ─────────────────────────────────────
   readFileContent:  async ([filePath]) => null,
@@ -158,7 +325,14 @@ const HANDLERS = {
   // ── Alerts (src/db.js) ────────────────────────────────────────────────────
   getAlertsSummary:           async () => null,
   getAlertsHistory:           async () => null,
-  getUnacknowledgedAlertCount: async () => null,
+  getUnacknowledgedAlertCount: async () => {
+    const db = require('../../src/db');
+    try {
+      return { success: true, count: db.getUnacknowledgedAlertCount() };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
   acknowledgeAlerts:          async ([ids, comment]) => null,
   getAlertRules:              async () => null,
   saveAlertRule:              async ([rule]) => null,
@@ -203,8 +377,24 @@ const HANDLERS = {
   deleteLayout:      async ([filePath]) => null,
 
   // ── Icons (src/icons.js) ──────────────────────────────────────────────────
-  generateFolderIcon: async ([bgColor, textColor, initials]) => null,
-  generateTagIcon:    async ([bgColor, textColor]) => null,
+  generateFolderIcon: async ([bgColor, textColor, initials]) => {
+    const icons = require('../../src/icons');
+    try {
+      const buf = await icons.generateWindowIcon(bgColor, textColor, initials || null);
+      return buf ? 'data:image/png;base64,' + buf.toString('base64') : null;
+    } catch {
+      return null;
+    }
+  },
+  generateTagIcon: async ([bgColor, textColor]) => {
+    const icons = require('../../src/icons');
+    try {
+      const buf = await icons.generateTagIcon(bgColor, textColor);
+      return buf ? 'data:image/png;base64,' + buf.toString('base64') : null;
+    } catch {
+      return null;
+    }
+  },
 
   // ── Background Refresh (in-server timer) ─────────────────────────────────
   startBackgroundRefresh:  async ([enabled, interval]) => null,
@@ -232,7 +422,18 @@ const HANDLERS = {
   closeWindow:       async () => ({ ok: true }),
   allowClose:        async () => ({ ok: true }),
   setWindowTitle:    async ([title]) => ({ ok: true }), // ws-handler broadcasts push:setWindowTitle
-  updateWindowIcon:  async ([categoryName, initials]) => ({ ok: true }),
+  updateWindowIcon: async ([categoryName, initials]) => {
+    const categories = require('../../src/categories');
+    const icons = require('../../src/icons');
+    try {
+      const cat = categories.getCategory(categoryName);
+      if (cat) {
+        const buf = await icons.generateWindowIcon(cat.bgColor, cat.textColor, initials || null);
+        if (buf) return { ok: true, dataUrl: 'data:image/png;base64,' + buf.toString('base64') };
+      }
+    } catch {}
+    return { ok: true, dataUrl: null };
+  },
   startExternalDrag: async ([filePaths]) => ({ ok: false }), // N/A in browser
   pickFile:          async ([options]) => ({ cancelled: true, filePaths: [] }),
   openInDefaultApp:  async ([filePath]) => ({ ok: false }),

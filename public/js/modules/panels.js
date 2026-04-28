@@ -2835,10 +2835,37 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			await initializeGridForPanel(panelId);
 		}
 
+		console.log('[favicon probe] panelId:', panelId, 'category:', category ? category.name : 'NULL', 'bgColor:', category ? category.bgColor : 'n/a');
 		if (panelId === 1 && category) {
 			const dotEntry = (scanResult.entries || []).find(e => e.filename === '.' && e.isDirectory);
 			const currentDirInitials = dotEntry ? (dotEntry.resolvedInitials || dotEntry.initials || null) : null;
-			await window.electronAPI.updateWindowIcon(category.name, currentDirInitials);
+			window.electronAPI.updateWindowIcon(category.name, currentDirInitials);
+			window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, currentDirInitials).then(dataUrl => {
+				console.log('[favicon] dataUrl length:', dataUrl ? dataUrl.length : 'null');
+				if (dataUrl) {
+					// Convert data URL to blob URL — Firefox ignores data: favicons and
+					// caches them separately; blob: URLs are always treated as fresh.
+					const base64 = dataUrl.split(',')[1];
+					const binary = atob(base64);
+					const bytes = new Uint8Array(binary.length);
+					for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+					const blob = new Blob([bytes], { type: 'image/png' });
+					const blobUrl = URL.createObjectURL(blob);
+
+					// Revoke previous blob URL to avoid memory leaks
+					const old = document.querySelector('link[rel~="icon"]');
+					if (old && old._blobUrl) URL.revokeObjectURL(old._blobUrl);
+
+					// Remove all existing icon links and insert a fresh one
+					document.querySelectorAll('link[rel~="icon"]').forEach(l => l.remove());
+					const link = document.createElement('link');
+					link.rel = 'icon';
+					link.type = 'image/png';
+					link.href = blobUrl;
+					link._blobUrl = blobUrl;
+					document.head.appendChild(link);
+				}
+			}).catch(err => console.warn('[favicon] error:', err));
 
 			// Build window title from resolved display name (if any)
 			const settings = await window.electronAPI.getSettings();
@@ -4612,7 +4639,7 @@ export async function loadTagsList() {
 
 export async function loadFileTypes() {
 	try {
-		allFileTypes = await window.electronAPI.getFileTypes();
+		allFileTypes = await window.electronAPI.getFileTypes() ?? [];
 	} catch (err) {
 		console.error('Error loading file types:', err);
 		allFileTypes = [];
@@ -4688,9 +4715,11 @@ export function navigateBack() {
 export function navigateToParent(panelId) {
 	setActivePanelId(panelId);
 	const state = panelState[panelId];
-	if (state.currentPath && state.currentPath.length > 3) {
-		const parentPath = state.currentPath.substring(0, state.currentPath.lastIndexOf('\\'));
-		if (parentPath.length >= 2) {
+	if (state.currentPath) {
+		const sep = state.currentPath.includes('/') ? '/' : '\\';
+		const parts = state.currentPath.split(/[\/\\]/).filter(p => p.length > 0);
+		if (parts.length > 1) {
+			const parentPath = (state.currentPath.startsWith('/') ? '/' : '') + parts.slice(0, -1).join(sep);
 			navigateToDirectory(parentPath, panelId);
 		}
 	}
@@ -6803,7 +6832,7 @@ function applySessionDirLayout(panelId, layout) {
 
 export async function applyDirGridLayoutIfExists(panelId, dirPath) {
 	const result = await window.electronAPI.getDirGridLayout(dirPath);
-	if (!result.success || !result.layout) return;
+	if (!result || !result.success || !result.layout) return;
 
 	const { columns, sortData } = result.layout;
 	const grid = panelState[panelId]?.w2uiGrid;

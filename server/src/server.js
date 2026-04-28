@@ -9,6 +9,7 @@
 
 const http          = require('http');
 const path          = require('path');
+const os            = require('os');
 const express       = require('express');
 const helmet        = require('helmet');
 const cookieParser  = require('cookie-parser');
@@ -50,7 +51,7 @@ function createApp(config) {
   app.use(express.json({ limit: '50mb' }));
 
   // ── Sessions ───────────────────────────────────────────────────────────────
-  app.use(session({
+  const sessionMiddleware = session({
     secret:            config.sessionSecret,
     resave:            false,
     saveUninitialized: false,
@@ -60,11 +61,19 @@ function createApp(config) {
       sameSite: 'strict',
       maxAge:   7 * 24 * 60 * 60 * 1000, // 7 days
     },
-  }));
+  });
+  app.use(sessionMiddleware);
 
   // ── Auth middleware + routes ───────────────────────────────────────────────
   app.use(auth.middleware);
   app.use('/auth', auth.router);
+
+  // ── Default favicon from repo assets ─────────────────────────────────────
+  const FAVICON_PATH = path.join(__dirname, '..', '..', 'assets', 'icon.ico');
+  app.get('/favicon.ico', (req, res) => res.sendFile(FAVICON_PATH));
+
+  // ── User icons — served before the dist static so custom icons take effect ──
+  app.use('/assets/icons', express.static(path.join(os.homedir(), '.atlasexplorer', 'icons')));
 
   // ── Static renderer build ─────────────────────────────────────────────────
   app.use(express.static(DIST_APP));
@@ -84,7 +93,7 @@ function createApp(config) {
 
   // ── Wrap in http.Server so ws-handler can attach ──────────────────────────
   const httpServer = http.createServer(app);
-  wsHandler.attach(httpServer, config);
+  wsHandler.attach(httpServer, config, sessionMiddleware);
 
   return { app, httpServer };
 }

@@ -167,21 +167,10 @@ function handleMessage(ws, raw) {
 
 // ── Attach ────────────────────────────────────────────────────────────────────
 
-function attach(httpServer, config) {
+function attach(httpServer, config, sessionMiddleware) {
   _config = config;
 
   _wss = new WebSocketServer({ noServer: true });
-
-  // The session middleware needs to be re-created here for WS auth.
-  // We reconstruct it from config for consistency with server.js.
-  const session      = require('express-session');
-  const cookieParser = require('cookie-parser');
-
-  const sessionMiddleware = session({
-    secret:            config.sessionSecret,
-    resave:            false,
-    saveUninitialized: false,
-  });
 
   httpServer.on('upgrade', async (req, socket, head) => {
     // Only handle /ws

@@ -742,7 +742,27 @@ function attachEventListeners() {
     }
   }, true);
 
-  // Keyboard shortcuts - detect hotkey and dispatch to appropriate handler
+  // Capture-phase handler for navigation hotkeys: intercept before Firefox browser shortcuts
+  // (Alt+Left/Right = browser back/forward in Firefox, Alt+Up = system shortcuts on some DEs)
+  document.addEventListener('keydown', function (event) {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'ArrowUp') return;
+    // Don't interfere when an input is focused
+    const tgt = event.target;
+    const inInput = tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+      tgt.contentEditable === 'true' ||
+      (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0));
+    if (inInput) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'ArrowUp') {
+      panels.navigateToParent(activePanelId);
+    } else if (event.key === 'ArrowLeft') {
+      panels.navigateBack();
+    } else if (event.key === 'ArrowRight') {
+      panels.navigateForward();
+    }
+  }, true);
   $(document).keydown(async function (event) {
     if (event.key === 'Escape' && panels.handleTransientEscape()) {
       return;
@@ -811,39 +831,7 @@ function attachEventListeners() {
         break;
       case 'navigate_up':
         event.preventDefault();
-        const state = panelState[activePanelId];
-        if (!state.currentPath || typeof state.currentPath !== 'string' || state.currentPath.trim() === '') {
-          console.warn('[navigate_up] Invalid current path');
-          break;
-        }
-
-        let path = state.currentPath.trim();
-
-        // Remove trailing backslash for consistent handling
-        if (path.endsWith('\\')) {
-          path = path.substring(0, path.length - 1);
-        }
-
-        // Check if at drive root (e.g., "E:", "C:")
-        if (path.length === 2 && path[1] === ':') {
-          console.info(`[navigate_up] Already at drive root: ${path}`);
-          break;
-        }
-
-        // Find last backslash
-        const lastSlash = path.lastIndexOf('\\');
-        if (lastSlash <= 2) {
-          console.warn(`[navigate_up] Cannot navigate up from: ${path}`);
-          break;
-        }
-
-        const parentPath = path.substring(0, lastSlash);
-        if (parentPath.length == 2 && parentPath[1] === ':') {
-          // Add backslash for drive root
-          parentPath += '\\';
-        }
-        console.info(`[navigate_up] Navigating from ${state.currentPath} to ${parentPath}`);
-        panels.navigateToDirectory(parentPath, activePanelId);
+        panels.navigateToParent(activePanelId);
         break;
       case 'edit_file':
         const $fileView = $(`#panel-${activePanelId} .panel-file-view`);
