@@ -89,33 +89,76 @@ console.log('[build] Copying public/assets ...');
 copyDir(path.join(PUBLIC, 'assets'), path.join(DIST, 'assets'));
 
 // ── Step 3: Copy vendor JS from node_modules ──────────────────────────────────
+// These packages live in the ROOT node_modules (not server/node_modules).
+// On a Raspberry Pi / headless server you still need to run:
+//   npm install --ignore-scripts
+// once from the repo root so the vendor files are available for the build.
+// (--ignore-scripts skips the Electron native-module rebuild.)
+
+if (!fs.existsSync(NMODS)) {
+  console.error(
+    '\n[build] ERROR: root node_modules/ not found.\n' +
+    '  Vendor JS/CSS (xterm, monaco, jquery) are copied from the root\n' +
+    '  node_modules during the build. Run this once from the repo root:\n\n' +
+    '    npm install --ignore-scripts\n\n' +
+    '  Then re-run:  node server/build.js\n'
+  );
+  process.exit(1);
+}
 
 console.log('[build] Copying vendor libs...');
 
 const VENDOR_JS = path.join(DIST, 'js', 'vendor');
 ensureDir(VENDOR_JS);
 
+// Helper: copy a vendor file only if the source exists; skip with a warning otherwise.
+function copyVendorFile(src, dest) {
+  if (!fs.existsSync(src)) {
+    console.warn(`  [warn] vendor file not found, skipping: ${src}`);
+    return;
+  }
+  copyFile(src, dest);
+}
+
 // xterm.js core
 const XTERM = path.join(NMODS, '@xterm', 'xterm');
-copyFile(path.join(XTERM, 'css', 'xterm.css'),   path.join(DIST, 'css', 'vendor', 'xterm.css'));
-copyFile(path.join(XTERM, 'lib', 'xterm.js'),    path.join(VENDOR_JS, 'xterm.js'));
+// The CSS may live at css/xterm.css or directly at xterm.css depending on package version.
+const xtermCssCandidates = [
+  path.join(XTERM, 'css', 'xterm.css'),
+  path.join(XTERM, 'xterm.css'),
+];
+const xtermCssSrc = xtermCssCandidates.find(p => fs.existsSync(p));
+if (xtermCssSrc) {
+  copyFile(xtermCssSrc, path.join(DIST, 'css', 'vendor', 'xterm.css'));
+} else {
+  console.warn(`  [warn] @xterm/xterm CSS not found (tried: ${xtermCssCandidates.join(', ')})`);
+}
+copyVendorFile(path.join(XTERM, 'lib', 'xterm.js'), path.join(VENDOR_JS, 'xterm.js'));
 
 // xterm addons
-const XTERM_FIT   = path.join(NMODS, '@xterm', 'addon-fit',       'lib', 'addon-fit.js');
-const XTERM_LINKS = path.join(NMODS, '@xterm', 'addon-web-links',  'lib', 'addon-web-links.js');
-copyFile(XTERM_FIT,   path.join(VENDOR_JS, 'addon-fit.js'));
-copyFile(XTERM_LINKS, path.join(VENDOR_JS, 'addon-web-links.js'));
+copyVendorFile(
+  path.join(NMODS, '@xterm', 'addon-fit',      'lib', 'addon-fit.js'),
+  path.join(VENDOR_JS, 'addon-fit.js')
+);
+copyVendorFile(
+  path.join(NMODS, '@xterm', 'addon-web-links', 'lib', 'addon-web-links.js'),
+  path.join(VENDOR_JS, 'addon-web-links.js')
+);
 
 // jQuery
-const JQUERY = path.join(NMODS, 'jquery', 'dist', 'jquery.min.js');
-copyFile(JQUERY, path.join(VENDOR_JS, 'jquery.min.js'));
+copyVendorFile(
+  path.join(NMODS, 'jquery', 'dist', 'jquery.min.js'),
+  path.join(VENDOR_JS, 'jquery.min.js')
+);
 
 // Monaco Editor — copy the whole min/ directory (it's large but self-referencing)
-console.log('[build] Copying monaco-editor (this may take a moment)...');
-copyDir(
-  path.join(NMODS, 'monaco-editor', 'min'),
-  path.join(VENDOR_JS, 'monaco', 'min')
-);
+const monacoSrc = path.join(NMODS, 'monaco-editor', 'min');
+if (!fs.existsSync(monacoSrc)) {
+  console.warn('  [warn] monaco-editor not found in root node_modules, skipping');
+} else {
+  console.log('[build] Copying monaco-editor (this may take a moment)...');
+  copyDir(monacoSrc, path.join(VENDOR_JS, 'monaco', 'min'));
+}
 
 // ── Step 4: Patch notes.js Monaco path ───────────────────────────────────────
 
