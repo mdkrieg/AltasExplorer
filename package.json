@@ -1,6 +1,6 @@
 {
   "name": "atlas-explorer",
-  "version": "1.0.0-alpha",
+  "version": "1.0.0",
   "description": "A powerful file explorer built with Electron, w2ui, and Node.js",
   "main": "main/main.js",
   "scripts": {
