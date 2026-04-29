@@ -7,4 +7,4 @@
 # latest published GitHub Release version.
 provider: github
 owner: mdkrieg
-repo: AltasExplorer
+repo: AtlasExplorer

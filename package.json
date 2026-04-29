@@ -49,7 +49,7 @@
     "publish": {
       "provider": "github",
       "owner": "mdkrieg",
-      "repo": "AltasExplorer",
+      "repo": "AtlasExplorer",
       "releaseType": "draft"
     },
     "files": [
