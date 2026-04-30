@@ -172,7 +172,7 @@ Manipulation phase:
 [x] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline
 * How deep to go on file editing and viewing stuff? A lot can be done with monaco for plaintext files. But do we want to read spreadsheets as well? Perhaps View only for those?
 
-* Configure %ile resize for all column types
+[x] Configure %ile resize for all column types
 * Fix pin-sort of . and .. folders so . is always less than ..
 ? What happens if I select remove favorites on a local favorite?
 * set category on .. dir not working (no effect)
