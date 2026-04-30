@@ -172,6 +172,16 @@ Manipulation phase:
 [x] CTRL+SHIFT+N for New Folder, user enters name in a modal popup, not inline
 * How deep to go on file editing and viewing stuff? A lot can be done with monaco for plaintext files. But do we want to read spreadsheets as well? Perhaps View only for those?
 
+* Configure %ile resize for all column types
+* Fix pin-sort of . and .. folders so . is always less than ..
+? What happens if I select remove favorites on a local favorite?
+* set category on .. dir not working (no effect)
+* If adding a tag from the item properties modal, pressing create summons second modal, need to close first or push the create inline
+* Create tag modal needs padding on the hex color inputs, currently overlappint with # char
+* Seems tags aren't getting a border, they should get the configured outline color as a border
+* Seeing a bit of lag after double click - IMPERATIVE that any action that changes the grid will IMMEDIATELY show a loading animation (w/ cancel button?) so the user understands something is going to happen
+* LOCAL FAVORITES starts hidden, shows badge of how many links contained
+
 ### Off-the-wall stuff for the future:
 I think these are decent ideas but should only be considered as add-ins once the app is mature
 [ ] Integrate GrapesJS for "dashboards" functionality

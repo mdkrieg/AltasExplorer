@@ -292,6 +292,16 @@ const HANDLERS = {
       return { success: false, error: err.message };
     }
   },
+  setCategoryDefaultGridLayout: async ([name, columns, sortData]) => null,
+  getCategoryDefaultGridLayout: async ([name]) => {
+    const cats = require('../../src/categories');
+    try {
+      const layout = cats.getCategoryDefaultGridLayout(name);
+      return { success: true, layout };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
 
   // ── Notes File I/O (fs, path-jailed) ─────────────────────────────────────
   readFileContent:  async ([filePath]) => null,

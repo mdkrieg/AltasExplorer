@@ -274,6 +274,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Dir grid layout (per-directory column/sort state)
   saveDirGridLayout: (dirname, columns, sortData) => ipcRenderer.invoke('save-dir-grid-layout', { dirname, columns, sortData }),
   getDirGridLayout: (dirname) => ipcRenderer.invoke('get-dir-grid-layout', dirname),
+  setCategoryDefaultGridLayout: (name, columns, sortData) => ipcRenderer.invoke('set-category-default-grid-layout', { name, columns, sortData }),
+  getCategoryDefaultGridLayout: (name) => ipcRenderer.invoke('get-category-default-grid-layout', name),
 
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),
@@ -291,6 +293,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   onDirectoryChanged: (callback) => ipcRenderer.on('directory-changed', (event, data) => callback(data)),
   onAlertCountUpdated: (callback) => ipcRenderer.on('alert-count-updated', (event, data) => callback(data)),
+
+  // Window focus state (DevTools-aware) — drives the blur vignette overlay
+  // and the drag-tray auto-close.
+  onMainWindowFocus: (callback) => ipcRenderer.on('main-window-focus', (event, focused) => callback(!!focused)),
+
+  // Drag tray secondary window
+  openDragTray: (items) => ipcRenderer.invoke('open-drag-tray', items),
+  closeDragTray: () => ipcRenderer.send('close-drag-tray'),
+  onDragTrayInit: (callback) => ipcRenderer.on('drag-tray-init', (event, payload) => callback(payload)),
 
   // Terminal (node-pty)
   terminalCreate: (cwd) => ipcRenderer.invoke('terminal-create', cwd),

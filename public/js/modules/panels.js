@@ -2737,6 +2737,13 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		}
 		if (panelId === 1) sidebar.updateSidebarSelection(normalizedPath);
 
+		// Immediate visual feedback: clear the grid and show a loading
+		// overlay BEFORE awaiting any IPC. This is critical — the directory
+		// scan in the main process can take 1–2s on slower machines, and
+		// without instant feedback users cannot tell whether their click
+		// registered.
+		showPanelLoading(panelId, normalizedPath);
+
 		if (isVirtualView) {
 			// ---- Virtual view branch ----
 			// We don't need isDirectory check — the dir must be in the DB
@@ -2764,6 +2771,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 			const entries = viewResult.entries || [];
 
+			hidePanelLoading(panelId);
 			const $panel = $(`#panel-${panelId}`);
 			$panel.find('.panel-landing-page').hide();
 			$panel.find('.panel-gallery').removeClass('active');
@@ -2802,6 +2810,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			state.currentCategory = null;
 			setPanelPathValidity(panelId, false);
 			// Show grid (not gallery) for missing directory placeholder
+			hidePanelLoading(panelId);
 			const $panelMissing = $(`#panel-${panelId}`);
 			$panelMissing.find('.panel-landing-page').hide();
 			$panelMissing.find('.panel-gallery').removeClass('active');
@@ -2881,6 +2890,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		const isGallery = category && category.displayMode === 'gallery';
 
 		// Show the appropriate view container
+		hidePanelLoading(panelId);
 		const $panel = $(`#panel-${panelId}`);
 		$panel.find('.panel-landing-page').hide();
 		if (isGallery) {
@@ -2920,6 +2930,12 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		if (gridToResize) {
 			requestAnimationFrame(() => {
 				gridToResize.resize();
+				// Recompute size configs after records and panel size are known.
+				const hasSizeCfg = gridToResize.columns.some(c => c.sizeConfig);
+				if (hasSizeCfg) {
+					applyColumnSizeConfigs(panelId);
+					gridToResize.refresh();
+				}
 			});
 		}
 
@@ -2947,6 +2963,8 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 	} catch (err) {
 		console.error('Error navigating to directory:', err);
 		alert('Error accessing directory: ' + err.message);
+	} finally {
+		hidePanelLoading(panelId);
 	}
 }
 
@@ -2958,6 +2976,79 @@ function setPanelPathValidity(panelId, isValid) {
 	} else {
 		$path.css('color', '#c62828');
 	}
+}
+
+/**
+ * Show an immediate loading overlay over a panel's content area.
+ * Called synchronously at the start of navigateToDirectory so the user gets
+ * instant feedback (cleared grid + animated bar) while the directory scan
+ * runs in the main process. Safe to call repeatedly — reuses existing DOM.
+ *
+ * The overlay is inserted as a flex sibling that grows to fill the area
+ * normally occupied by the grid/gallery/landing page, and the other view
+ * containers are hidden while it is visible. This avoids absolute-position
+ * z-index gymnastics and works uniformly across the panel-1 (no
+ * .panel-content wrapper) and panel-2..4 (with .panel-content) layouts.
+ *
+ * The bar is indeterminate (animated CSS gradient) because the directory
+ * scan IPC is synchronous on the main process and cannot report progress
+ * mid-flight without a substantial scanner refactor. The "Scanning…"
+ * label keeps the UI honest rather than showing a fake percentage.
+ *
+ * @param {number|string} panelId
+ * @param {string} dirPath  Full path being navigated to (shown to user)
+ */
+function showPanelLoading(panelId, dirPath) {
+	const panelEl = document.getElementById(`panel-${panelId}`);
+	if (!panelEl) return;
+
+	// Immediately blank the grid records so the user does not see stale
+	// content from the previous directory while the new scan runs.
+	const grid = panelState[panelId] && panelState[panelId].w2uiGrid;
+	if (grid) {
+		try {
+			grid.records = [];
+			grid.total = 0;
+			grid.refresh();
+		} catch (_) { /* ignore */ }
+	}
+
+	// The flex container that holds the view children differs between
+	// panel 1 (children of .panel-item) and panels 2..4 (children of
+	// .panel-content). Pick whichever exists.
+	const container = panelEl.querySelector(':scope > .panel-content') || panelEl;
+
+	// Find or create the overlay — always as a child of `container` so it
+	// participates in the same flex column.
+	let overlay = container.querySelector(':scope > .panel-loading-overlay');
+	if (!overlay) {
+		overlay = document.createElement('div');
+		overlay.className = 'panel-loading-overlay';
+		overlay.innerHTML = `
+			<div class="panel-loading-overlay__label">Scanning…</div>
+			<div class="panel-loading-overlay__path"></div>
+			<div class="panel-loading-overlay__bar" role="progressbar" aria-valuetext="Scanning"></div>
+		`;
+		container.appendChild(overlay);
+	}
+
+	const pathEl = overlay.querySelector('.panel-loading-overlay__path');
+	if (pathEl) pathEl.textContent = dirPath || '';
+
+	// Hide the other view containers so the overlay has the area to itself.
+	const $panel = $(`#panel-${panelId}`);
+	$panel.find('.panel-grid').hide();
+	$panel.find('.panel-gallery').removeClass('active');
+	$panel.find('.panel-landing-page').hide();
+	$panel.find('.panel-file-view').hide();
+	overlay.classList.add('is-visible');
+}
+
+function hidePanelLoading(panelId) {
+	const panelEl = document.getElementById(`panel-${panelId}`);
+	if (!panelEl) return;
+	const overlay = panelEl.querySelector('.panel-loading-overlay');
+	if (overlay) overlay.classList.remove('is-visible');
 }
 
 function showMissingDirectoryRecord(panelId) {
@@ -3307,7 +3398,37 @@ async function initializeGridForPanel(panelId) {
 				if (typeof previousOnComplete === 'function') {
 					previousOnComplete.call(grid, event);
 				}
+				// User manually resized this column — switch its mode to "fixed"
+				// so the new size persists (preserves user intent). Min/max are
+				// not applied here — user resize is unconstrained per spec.
+				const colIndex = event.detail?.column;
+				const col = (typeof colIndex === 'number') ? grid.columns[colIndex] : null;
+				if (col) {
+					const cfg = ensureColumnSizeConfig(col);
+					const { px, isPercent } = parseSizeString(col.size);
+					if (!isPercent && px > 0) {
+						cfg.mode = 'fixed';
+						cfg.fixedPx = Math.round(px);
+					}
+				}
 				snapshotSessionDirLayout(panelId);
+			};
+		},
+		onResize: function (event) {
+			const grid = this;
+			const previousOnComplete = event.onComplete;
+			event.onComplete = () => {
+				if (typeof previousOnComplete === 'function') {
+					previousOnComplete.call(grid, event);
+				}
+				// Re-distribute scale columns (and re-clamp by min/max) when the
+				// grid is resized. Skip for fixed/fit cols (their px is set).
+				const hasScale = grid.columns.some(c => !c.hidden && c.sizeConfig?.mode === 'scale');
+				const hasBounded = grid.columns.some(c => !c.hidden && c.sizeConfig && (c.sizeConfig.min || c.sizeConfig.max));
+				if (hasScale || hasBounded) {
+					applyColumnSizeConfigs(panelId);
+					grid.refresh();
+				}
 			};
 		},
 		onChange: function (event) {
@@ -3477,7 +3598,11 @@ function snapshotSessionDirLayout(panelId) {
 	if (!state.sessionDirLayouts) state.sessionDirLayouts = {};
 	state.sessionDirLayouts[state.currentPath] = {
 		sortData: grid.sortData ? grid.sortData.map(s => ({ ...s })) : [],
-		columns: grid.columns.map(c => ({ field: c.field, size: c.size, hidden: !!c.hidden }))
+		columns: grid.columns.map(c => {
+			const out = { field: c.field, size: c.size, hidden: !!c.hidden };
+			if (c.sizeConfig) out.sizeConfig = { ...c.sizeConfig };
+			return out;
+		})
 	};
 }
 
@@ -3564,6 +3689,20 @@ function showColumnContextMenuForPanel(panelId, field, mouseEvent) {
 				const anchorEl = filterBtn || headerEl;
 				if (anchorEl) {
 					openColumnFilterMenu(panelId, field, anchorEl);
+				}
+			}
+		});
+		items.push({ text: '--' });
+	}
+
+	// Size (column sizing config: fixed/scale/fit + min/max)
+	if (col.resizable !== false && field !== 'icon') {
+		items.push({
+			text: 'Size',
+			onClick: () => {
+				const headerEl = grid.box?.querySelector(`td.w2ui-head[col="${col_ind}"]`);
+				if (headerEl) {
+					openColumnSizeMenu(panelId, field, headerEl);
 				}
 			}
 		});
@@ -6434,6 +6573,321 @@ export async function reopenLastClosedPanel() {
 // Layout Save/Load (.aly files)
 // ============================================
 
+// ============================================
+// Column Sizing (per-column size config: fixed/scale/fit + min/max)
+// ============================================
+
+const SIZE_DEFAULT_FIT_PERCENT = 90;
+const SIZE_CELL_PADDING_PX = 24; // approximate horizontal cell padding for content fit
+
+/**
+ * Parse a column size string ("120px" / "50%") into { px, isPercent }.
+ */
+function parseSizeString(sz) {
+	if (sz == null) return { px: 100, isPercent: false };
+	const s = String(sz).trim();
+	if (s.endsWith('%')) return { px: parseFloat(s) || 0, isPercent: true };
+	return { px: parseFloat(s) || 0, isPercent: false };
+}
+
+/**
+ * Ensure a column has a sizeConfig object; lazily seed from current size if missing.
+ */
+function ensureColumnSizeConfig(col) {
+	if (col.sizeConfig) return col.sizeConfig;
+	const { px, isPercent } = parseSizeString(col.size);
+	col.sizeConfig = isPercent
+		? { mode: 'scale', fixedPx: 100, fitPercent: SIZE_DEFAULT_FIT_PERCENT, min: null, max: null }
+		: { mode: 'fixed', fixedPx: Math.max(20, Math.round(px) || 100), fitPercent: SIZE_DEFAULT_FIT_PERCENT, min: null, max: null };
+	return col.sizeConfig;
+}
+
+function clampSizeByCfg(px, cfg) {
+	let v = px;
+	if (typeof cfg.min === 'number' && cfg.min > 0) v = Math.max(v, cfg.min);
+	if (typeof cfg.max === 'number' && cfg.max > 0) v = Math.min(v, cfg.max);
+	return Math.max(1, Math.round(v));
+}
+
+/**
+ * Measure the smallest pixel width that fits `percent` % of the records' values
+ * for `field` without overflow. Uses canvas measureText with the grid font.
+ */
+function computeFitPxForColumn(panelId, col) {
+	const grid = panelState[panelId]?.w2uiGrid;
+	if (!grid || !grid.records || grid.records.length === 0) return null;
+	const records = grid.records;
+	// Use the grid's body font where possible
+	let font = '12px sans-serif';
+	try {
+		const sample = grid.box?.querySelector('.w2ui-grid-records td');
+		if (sample) {
+			const cs = getComputedStyle(sample);
+			font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+		}
+	} catch (_) {}
+	const canvas = computeFitPxForColumn._canvas || (computeFitPxForColumn._canvas = document.createElement('canvas'));
+	const ctx = canvas.getContext('2d');
+	ctx.font = font;
+	const widths = [];
+	const field = col.field;
+	for (const r of records) {
+		let val = r[field];
+		if (val == null) continue;
+		if (typeof val === 'object') continue;
+		const s = String(val).replace(/<[^>]*>/g, '');
+		if (!s) continue;
+		widths.push(ctx.measureText(s).width);
+	}
+	if (widths.length === 0) return null;
+	widths.sort((a, b) => a - b);
+	const pct = Math.max(0, Math.min(100, Number(col.sizeConfig.fitPercent) || SIZE_DEFAULT_FIT_PERCENT));
+	const idx = Math.max(0, Math.ceil((pct / 100) * widths.length) - 1);
+	return Math.ceil(widths[idx] + SIZE_CELL_PADDING_PX);
+}
+
+/**
+ * Compute and apply pixel sizes for all columns based on each column's
+ * sizeConfig. Resolves 'fixed' first, then 'fit' (measuring records), then
+ * distributes any remaining grid width among 'scale' columns (clamped by min/max).
+ */
+function applyColumnSizeConfigs(panelId) {
+	const grid = panelState[panelId]?.w2uiGrid;
+	if (!grid) return;
+
+	const visibleCols = grid.columns.filter(c => !c.hidden);
+	const scaleCols = [];
+
+	for (const col of visibleCols) {
+		const cfg = col.sizeConfig;
+		if (!cfg) continue;
+		if (cfg.mode === 'fixed') {
+			const px = clampSizeByCfg(cfg.fixedPx || 100, cfg);
+			col.size = `${px}px`;
+		} else if (cfg.mode === 'fit') {
+			const fitPx = computeFitPxForColumn(panelId, col);
+			if (fitPx != null) {
+				col.size = `${clampSizeByCfg(fitPx, cfg)}px`;
+			}
+		} else if (cfg.mode === 'scale') {
+			scaleCols.push(col);
+		}
+	}
+
+	if (scaleCols.length > 0) {
+		// Distribute remaining width among scale columns
+		let totalWidth = 0;
+		try {
+			const recordsEl = grid.box?.querySelector('.w2ui-grid-records');
+			totalWidth = recordsEl ? recordsEl.clientWidth : 0;
+			if (!totalWidth && grid.box) totalWidth = grid.box.clientWidth;
+		} catch (_) {}
+		if (totalWidth > 0) {
+			let usedWidth = 0;
+			for (const col of visibleCols) {
+				if (scaleCols.includes(col)) continue;
+				const { px } = parseSizeString(col.size);
+				usedWidth += px;
+			}
+			let remaining = Math.max(0, totalWidth - usedWidth - 2);
+			// Iteratively allocate, respecting min/max
+			let pending = scaleCols.slice();
+			while (pending.length > 0 && remaining > 0) {
+				const share = Math.floor(remaining / pending.length);
+				const next = [];
+				let consumed = 0;
+				for (const col of pending) {
+					const cfg = col.sizeConfig;
+					let px = share;
+					if (typeof cfg.max === 'number' && cfg.max > 0 && px > cfg.max) px = cfg.max;
+					if (typeof cfg.min === 'number' && cfg.min > 0 && px < cfg.min) px = cfg.min;
+					if (typeof cfg.max === 'number' && cfg.max > 0 && share >= cfg.max) {
+						col.size = `${cfg.max}px`;
+						consumed += cfg.max;
+					} else if (typeof cfg.min === 'number' && cfg.min > 0 && share <= cfg.min) {
+						col.size = `${cfg.min}px`;
+						consumed += cfg.min;
+					} else {
+						col.size = `${Math.max(1, share)}px`;
+						consumed += Math.max(1, share);
+						next.push(col);
+					}
+				}
+				if (next.length === pending.length) {
+					// All remaining fit cleanly within bounds — done
+					break;
+				}
+				pending = next;
+				remaining = Math.max(0, remaining - consumed);
+			}
+		} else {
+			// Fall back to w2ui's native % distribution
+			const pct = Math.max(1, Math.floor(100 / scaleCols.length));
+			for (const col of scaleCols) {
+				col.size = `${pct}%`;
+			}
+		}
+	}
+}
+
+function getPanelSizeMenuName(panelId) {
+	return `panel-${panelId}-size-menu`;
+}
+
+function buildColumnSizeMenuHtml(panelId, field, col) {
+	const cfg = ensureColumnSizeConfig(col);
+	const radioName = `size-mode-${panelId}-${field}`;
+	const minVal = cfg.min != null ? cfg.min : '';
+	const maxVal = cfg.max != null ? cfg.max : '';
+	const fixedVal = cfg.fixedPx != null ? cfg.fixedPx : '';
+	const fitVal = cfg.fitPercent != null ? cfg.fitPercent : SIZE_DEFAULT_FIT_PERCENT;
+	const label = utils.escapeHtml(col.headerLabel || col.field);
+	return `
+		<div class="grid-size-menu" data-panel-id="${panelId}" data-field="${utils.escapeHtml(field)}">
+			<div class="grid-size-menu-title">${label} — Size on Show</div>
+			<div class="grid-size-row">
+				<label class="grid-size-mode-label">
+					<input type="radio" name="${radioName}" data-size-mode-radio value="fixed" ${cfg.mode === 'fixed' ? 'checked' : ''}>
+					Fixed
+				</label>
+				<input type="number" min="1" step="1" data-size-fixed-px value="${utils.escapeHtml(String(fixedVal))}" placeholder="px">
+				<span>px</span>
+			</div>
+			<div class="grid-size-row">
+				<label class="grid-size-mode-label">
+					<input type="radio" name="${radioName}" data-size-mode-radio value="scale" ${cfg.mode === 'scale' ? 'checked' : ''}>
+					Scale
+				</label>
+				<span class="grid-size-hint">share extra space</span>
+			</div>
+			<div class="grid-size-row">
+				<label class="grid-size-mode-label">
+					<input type="radio" name="${radioName}" data-size-mode-radio value="fit" ${cfg.mode === 'fit' ? 'checked' : ''}>
+					Fit
+				</label>
+				<input type="number" min="0" max="100" step="1" data-size-fit-percent value="${utils.escapeHtml(String(fitVal))}" placeholder="%">
+				<span>% of items</span>
+			</div>
+			<hr style="margin:8px 0;border:none;border-top:1px solid #e5e5e5;">
+			<div class="grid-size-row">
+				<span class="grid-size-bound-label">Min</span>
+				<input type="number" min="0" step="1" data-size-min value="${utils.escapeHtml(String(minVal))}" placeholder="—">
+				<span>px</span>
+			</div>
+			<div class="grid-size-row">
+				<span class="grid-size-bound-label">Max</span>
+				<input type="number" min="0" step="1" data-size-max value="${utils.escapeHtml(String(maxVal))}" placeholder="—">
+				<span>px</span>
+			</div>
+		</div>
+	`;
+}
+
+function bindColumnSizeMenuControls(panelId, field) {
+	const overlayId = `#w2overlay-${getPanelSizeMenuName(panelId)}`;
+	const root = document.querySelector(overlayId);
+	if (!root) return;
+	const grid = panelState[panelId]?.w2uiGrid;
+	const col = grid?.columns.find(c => c.field === field);
+	if (!col) return;
+	const cfg = ensureColumnSizeConfig(col);
+
+	function commit(rerender = false) {
+		applyColumnSizeConfigs(panelId);
+		grid.refresh();
+		snapshotSessionDirLayout(panelId);
+		if (rerender) {
+			// Update menu values to reflect any computed/clamped state
+			// (No-op for now — UI shows entered values)
+		}
+	}
+
+	root.querySelectorAll('[data-size-mode-radio]').forEach(el => {
+		el.addEventListener('change', () => {
+			if (el.checked) {
+				cfg.mode = el.value;
+				commit();
+			}
+		});
+	});
+
+	const fixedInput = root.querySelector('[data-size-fixed-px]');
+	if (fixedInput) {
+		fixedInput.addEventListener('input', () => {
+			const v = parseInt(fixedInput.value, 10);
+			if (!isNaN(v) && v > 0) {
+				cfg.fixedPx = v;
+				if (cfg.mode === 'fixed') commit();
+			}
+		});
+		fixedInput.addEventListener('focus', () => {
+			const radio = root.querySelector('[data-size-mode-radio][value="fixed"]');
+			if (radio && !radio.checked) {
+				radio.checked = true;
+				cfg.mode = 'fixed';
+				commit();
+			}
+		});
+	}
+
+	const fitInput = root.querySelector('[data-size-fit-percent]');
+	if (fitInput) {
+		fitInput.addEventListener('input', () => {
+			let v = parseInt(fitInput.value, 10);
+			if (isNaN(v)) return;
+			v = Math.max(0, Math.min(100, v));
+			cfg.fitPercent = v;
+			if (cfg.mode === 'fit') commit();
+		});
+		fitInput.addEventListener('focus', () => {
+			const radio = root.querySelector('[data-size-mode-radio][value="fit"]');
+			if (radio && !radio.checked) {
+				radio.checked = true;
+				cfg.mode = 'fit';
+				commit();
+			}
+		});
+	}
+
+	const minInput = root.querySelector('[data-size-min]');
+	if (minInput) {
+		minInput.addEventListener('input', () => {
+			const v = parseInt(minInput.value, 10);
+			cfg.min = (!isNaN(v) && v > 0) ? v : null;
+			commit();
+		});
+	}
+	const maxInput = root.querySelector('[data-size-max]');
+	if (maxInput) {
+		maxInput.addEventListener('input', () => {
+			const v = parseInt(maxInput.value, 10);
+			cfg.max = (!isNaN(v) && v > 0) ? v : null;
+			commit();
+		});
+	}
+}
+
+function openColumnSizeMenu(panelId, field, anchorEl) {
+	const grid = panelState[panelId]?.w2uiGrid;
+	if (!grid || !anchorEl) return;
+	const col = grid.columns.find(c => c.field === field);
+	if (!col) return;
+	const overlayName = getPanelSizeMenuName(panelId);
+	w2tooltip.show({
+		name: overlayName,
+		anchor: anchorEl,
+		html: buildColumnSizeMenuHtml(panelId, field, col),
+		class: 'grid-size-overlay',
+		position: 'bottom|top',
+		align: 'left',
+		arrowSize: 10,
+		hideOn: ['doc-click'],
+		maxWidth: 320,
+		onShow: () => setTimeout(() => bindColumnSizeMenuControls(panelId, field), 0)
+	});
+	setTimeout(() => bindColumnSizeMenuControls(panelId, field), 0);
+}
+
 function applyColumnOverrides(panelId) {
 	const overrides = panelState[panelId].columnOverrides;
 	if (!overrides) return;
@@ -6441,12 +6895,15 @@ function applyColumnOverrides(panelId) {
 	const grid = panelState[panelId].w2uiGrid;
 	if (!grid) return;
 
-	// Apply sizes and hidden state
+	// Apply sizes, hidden state, and size configs
 	for (const override of overrides) {
 		const col = grid.columns.find(c => c.field === override.field);
 		if (col) {
 			col.size = override.size;
 			col.hidden = override.hidden;
+			if (override.sizeConfig) {
+				col.sizeConfig = { ...override.sizeConfig };
+			}
 		}
 	}
 
@@ -6461,6 +6918,7 @@ function applyColumnOverrides(panelId) {
 		return ia - ib;
 	});
 
+	applyColumnSizeConfigs(panelId);
 	grid.refresh();
 	delete panelState[panelId].columnOverrides;
 }
@@ -6481,11 +6939,11 @@ export function serializeLayoutState(description = null) {
 			viewType: getPanelViewType(panelId),
 			depth: state.depth || 0,
 			showDateCreated: state.showDateCreated || false,
-			columns: grid ? grid.columns.map(col => ({
-				field: col.field,
-				size: col.size,
-				hidden: !!col.hidden
-			})) : [],
+			columns: grid ? grid.columns.map(col => {
+				const out = { field: col.field, size: col.size, hidden: !!col.hidden };
+				if (col.sizeConfig) out.sizeConfig = { ...col.sizeConfig };
+				return out;
+			}) : [],
 			sortData: grid ? (grid.sortData || []).map(s => ({
 				field: s.field,
 				direction: s.direction
@@ -6613,13 +7071,22 @@ function showSaveButtonMenu(panelId, anchorEl) {
 	// Close any existing menu first
 	closeSaveMenu();
 
+	const state = panelState[panelId];
+	const categoryName = state?.currentCategory?.name || null;
+
 	const rect = anchorEl.getBoundingClientRect();
 	const menu = document.createElement('div');
 	menu.className = 'tb-save-menu';
+	const categoryItemHtml = categoryName
+		? `<button class="tb-save-menu-item" data-action="save-category-default">
+				<div class="tb-save-menu-label">Set as default for category (${utils.escapeHtml(categoryName)})</div>
+			</button>`
+		: '';
 	menu.innerHTML = `
 		<button class="tb-save-menu-item" data-action="remember-grid">
 			<div class="tb-save-menu-label">Remember grid layout</div>
 		</button>
+		${categoryItemHtml}
 		<button class="tb-save-menu-item" data-action="save-layout-here">
 			<div class="tb-save-menu-label">Save window layout here</div>
 		</button>
@@ -6638,6 +7105,14 @@ function showSaveButtonMenu(panelId, anchorEl) {
 		closeSaveMenu();
 		rememberGridLayout(panelId);
 	});
+
+	const catItemBtn = menu.querySelector('[data-action="save-category-default"]');
+	if (catItemBtn) {
+		catItemBtn.addEventListener('click', () => {
+			closeSaveMenu();
+			saveLayoutAsCategoryDefault(panelId);
+		});
+	}
 
 	menu.querySelector('[data-action="save-layout-here"]').addEventListener('click', () => {
 		closeSaveMenu();
@@ -6664,18 +7139,7 @@ async function rememberGridLayout(panelId) {
 	const grid = state.w2uiGrid;
 	if (!grid) return;
 
-	// Serialize only non-attribute columns or validate that attribute columns still exist
-	const validAttrNames = new Set((state.currentAttrColumns || []).map(n => `attr_${n}`));
-	const columns = grid.columns
-		.filter(col => {
-			// Keep standard columns; skip attr_ columns that aren't currently valid
-			if (col.field && col.field.startsWith('attr_')) {
-				return validAttrNames.has(col.field);
-			}
-			return true;
-		})
-		.map(col => ({ field: col.field, size: col.size, hidden: !!col.hidden }));
-
+	const columns = serializeGridColumns(grid, state);
 	const sortData = (grid.sortData || []).map(s => ({ field: s.field, direction: s.direction }));
 
 	const result = await window.electronAPI.saveDirGridLayout(state.currentPath, columns, sortData);
@@ -6684,6 +7148,48 @@ async function rememberGridLayout(panelId) {
 	} else {
 		w2alert('Failed to save grid layout: ' + (result.error || 'Unknown error'));
 	}
+}
+
+async function saveLayoutAsCategoryDefault(panelId) {
+	const state = panelState[panelId];
+	if (!state || !state.currentCategory) {
+		w2alert('No category is assigned to this panel.');
+		return;
+	}
+	const grid = state.w2uiGrid;
+	if (!grid) return;
+
+	const categoryName = state.currentCategory.name;
+	const columns = serializeGridColumns(grid, state);
+	const sortData = (grid.sortData || []).map(s => ({ field: s.field, direction: s.direction }));
+
+	const result = await window.electronAPI.setCategoryDefaultGridLayout(categoryName, columns, sortData);
+	if (result && result.success) {
+		w2alert(`Default grid layout saved for category "${categoryName}".`);
+	} else {
+		w2alert('Failed to save category default: ' + ((result && result.error) || 'Unknown error'));
+	}
+}
+
+/**
+ * Serialize the current grid columns into the layout-storage shape, including
+ * size, hidden state, and the per-column sizing configuration (sizeConfig).
+ * Skips attr_ columns that aren't currently valid for this panel.
+ */
+function serializeGridColumns(grid, state) {
+	const validAttrNames = new Set((state.currentAttrColumns || []).map(n => `attr_${n}`));
+	return grid.columns
+		.filter(col => {
+			if (col.field && col.field.startsWith('attr_')) {
+				return validAttrNames.has(col.field);
+			}
+			return true;
+		})
+		.map(col => {
+			const out = { field: col.field, size: col.size, hidden: !!col.hidden };
+			if (col.sizeConfig) out.sizeConfig = { ...col.sizeConfig };
+			return out;
+		});
 }
 
 async function saveLayoutToCurrentDir(panelId) {
@@ -6832,15 +7338,33 @@ function applySessionDirLayout(panelId, layout) {
 
 export async function applyDirGridLayoutIfExists(panelId, dirPath) {
 	const result = await window.electronAPI.getDirGridLayout(dirPath);
-	if (!result || !result.success || !result.layout) return;
+	let layout = (result && result.success) ? result.layout : null;
 
-	const { columns, sortData } = result.layout;
+	// Fall back to category default if no per-directory layout exists
+	if (!layout) {
+		const state = panelState[panelId];
+		const categoryName = state?.currentCategory?.name;
+		if (categoryName) {
+			try {
+				const catRes = await window.electronAPI.getCategoryDefaultGridLayout(categoryName);
+				if (catRes && catRes.success && catRes.layout) {
+					layout = catRes.layout;
+				}
+			} catch (err) {
+				console.warn('[grid-layout] failed to load category default:', err);
+			}
+		}
+	}
+
+	if (!layout) return;
+
+	const { columns, sortData } = layout;
 	const grid = panelState[panelId]?.w2uiGrid;
 	if (!grid) return;
 
 	// Validate attribute columns — remove any that no longer exist in the current grid
 	const currentFields = new Set(grid.columns.map(c => c.field));
-	const validColumns = columns.filter(col => currentFields.has(col.field));
+	const validColumns = (columns || []).filter(col => currentFields.has(col.field));
 
 	if (validColumns.length > 0) {
 		panelState[panelId].columnOverrides = validColumns;

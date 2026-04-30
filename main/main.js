@@ -29,6 +29,23 @@ const { autoUpdater } = require('electron-updater');
 let mainWindow;
 let pendingLayoutFile = null; // File to load on startup (from command line or file association)
 
+// Drag-tray secondary window. Created on demand by Ctrl+D in the renderer; at
+// most one tray exists at a time. The tray is `focusable: false` (sets Win32
+// WS_EX_NOACTIVATE) so clicking its tiles to start a drag does NOT bring the
+// main window to the foreground — that's the whole point.
+let dragTrayWindow = null;
+
+// DevTools-aware focus state. The renderer treats the window as focused when
+// either the main webContents OR DevTools holds focus, so opening DevTools
+// doesn't trigger the blur vignette.
+let mainWindowFocused = false;
+let devtoolsFocused = false;
+function emitMainWindowFocus() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const focused = mainWindowFocused || devtoolsFocused;
+  try { mainWindow.webContents.send('main-window-focus', focused); } catch (_) { /* ignore */ }
+}
+
 let checksumInFlight = 0;
 const checksumWaiters = [];
 let monitoringTimer = null;
@@ -312,6 +329,30 @@ function createWindow() {
         mainWindow.webContents.send('load-layout-from-file', pendingLayoutFile);
         pendingLayoutFile = null; // Clear after sending
       }
+    });
+
+    // Focus / blur bridging for the renderer's vignette overlay and the
+    // drag tray's auto-close. We treat DevTools focus as still-focused to
+    // avoid flashing the overlay when the user opens DevTools.
+    mainWindow.on('focus', () => {
+      mainWindowFocused = true;
+      emitMainWindowFocus();
+      // Main window regaining focus is the dismiss trigger for the tray.
+      if (dragTrayWindow && !dragTrayWindow.isDestroyed()) {
+        try { dragTrayWindow.close(); } catch (_) { /* ignore */ }
+      }
+    });
+    mainWindow.on('blur', () => {
+      mainWindowFocused = false;
+      emitMainWindowFocus();
+    });
+    mainWindow.webContents.on('devtools-focused', () => {
+      devtoolsFocused = true;
+      emitMainWindowFocus();
+    });
+    mainWindow.webContents.on('devtools-blurred', () => {
+      devtoolsFocused = false;
+      emitMainWindowFocus();
     });
   } catch (err) {
     logger.error('Error creating window:', err.message);
@@ -2774,8 +2815,7 @@ ipcMain.handle('copy-items', async (event, { items, targetDirPath, onCollision }
  * Finder, etc.). Must be invoked from a `dragstart` event handler in the
  * renderer (Electron requires the call to happen during the drag-start tick).
  */
-ipcMain.on('start-external-drag', (event, { filePaths } = {}) => {
-  // Synchronous IPC: the renderer is blocked in sendSync until we call
+ipcMain.on('start-external-drag', (event, { filePaths } = {}) => {  // Synchronous IPC: the renderer is blocked in sendSync until we call
   // event.returnValue, so webContents.startDrag runs inside the dragstart
   // tick. Any failure path still must set returnValue to unblock.
   const reply = (payload) => { try { event.returnValue = payload; } catch (_) { /* ignore */ } };
@@ -2808,6 +2848,103 @@ ipcMain.on('start-external-drag', (event, { filePaths } = {}) => {
   } catch (err) {
     logger.error(`start-external-drag failed: ${err && err.message}`);
     reply({ ok: false, reason: err && err.message });
+  }
+});
+
+/**
+ * Drag tray: a small frameless secondary window that lists currently-selected
+ * items as wide draggable tiles. Created with `focusable: false` so clicking
+ * tiles to start a drag does NOT bring the main window to the foreground —
+ * the whole UX point of the feature.
+ *
+ * Lifecycle:
+ *   - Opens via Ctrl+D from renderer with the active panel's selection.
+ *   - At most one tray exists at a time; subsequent open requests are no-ops.
+ *   - Closes when the main window regains focus, when the user clicks the X
+ *     close button or the tray's empty background, or when the renderer
+ *     explicitly requests close.
+ */
+function createDragTrayWindow(items) {
+  if (dragTrayWindow && !dragTrayWindow.isDestroyed()) {
+    return { ok: false, reason: 'already-open' };
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return { ok: false, reason: 'no-items' };
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false, reason: 'no-main-window' };
+  }
+
+  // Size the tray to comfortably show up to ~6 tiles before scrolling.
+  const TITLEBAR_H = 28;
+  const TILE_H = 44;
+  const PADDING = 12;
+  const visibleTiles = Math.min(items.length, 6);
+  const height = TITLEBAR_H + PADDING * 2 + visibleTiles * TILE_H + 4;
+  const width = 360;
+
+  // Anchor to the top-right of the main window's content area on first open.
+  const mainBounds = mainWindow.getBounds();
+  const x = Math.max(0, mainBounds.x + mainBounds.width - width - 24);
+  const y = Math.max(0, mainBounds.y + 80);
+
+  try {
+    dragTrayWindow = new BrowserWindow({
+      width,
+      height,
+      x,
+      y,
+      minWidth: 240,
+      minHeight: TITLEBAR_H + PADDING * 2 + TILE_H,
+      maxWidth: 600,
+      maxHeight: 800,
+      frame: false,
+      transparent: true,
+      focusable: false,        // Win32 WS_EX_NOACTIVATE — do not steal activation
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: true,
+      movable: true,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      parent: mainWindow,
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, '..', 'src', 'preload.js'),
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+  } catch (err) {
+    logger.error('Failed to create drag tray window:', err && err.message);
+    dragTrayWindow = null;
+    return { ok: false, reason: err && err.message };
+  }
+
+  dragTrayWindow.setMenuBarVisibility(false);
+  dragTrayWindow.loadFile(path.join(__dirname, '..', 'public', 'drag-tray.html'));
+
+  dragTrayWindow.once('ready-to-show', () => {
+    if (!dragTrayWindow || dragTrayWindow.isDestroyed()) return;
+    try { dragTrayWindow.webContents.send('drag-tray-init', { items }); } catch (_) { /* ignore */ }
+    dragTrayWindow.showInactive(); // never steal focus from main window
+  });
+
+  dragTrayWindow.on('closed', () => {
+    dragTrayWindow = null;
+  });
+
+  return { ok: true };
+}
+
+ipcMain.handle('open-drag-tray', (event, items) => {
+  return createDragTrayWindow(items);
+});
+
+ipcMain.on('close-drag-tray', () => {
+  if (dragTrayWindow && !dragTrayWindow.isDestroyed()) {
+    try { dragTrayWindow.close(); } catch (_) { /* ignore */ }
   }
 });
 
@@ -3010,6 +3147,26 @@ ipcMain.handle('get-dir-grid-layout', (event, dirname) => {
     return { success: true, layout };
   } catch (err) {
     logger.error('Error getting dir grid layout:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('set-category-default-grid-layout', (event, { name, columns, sortData }) => {
+  try {
+    const layout = categories.setCategoryDefaultGridLayout(name, columns, sortData);
+    return { success: true, layout };
+  } catch (err) {
+    logger.error('Error setting category default grid layout:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-category-default-grid-layout', (event, name) => {
+  try {
+    const layout = categories.getCategoryDefaultGridLayout(name);
+    return { success: true, layout };
+  } catch (err) {
+    logger.error('Error getting category default grid layout:', err.message);
     return { success: false, error: err.message };
   }
 });

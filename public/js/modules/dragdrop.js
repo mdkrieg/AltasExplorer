@@ -16,6 +16,7 @@
  */
 
 import { w2ui, w2alert, w2confirm } from './vendor/w2ui.es6.min.js';
+import { w2utils } from './vendor/w2ui.es6.min.js';
 
 const PAYLOAD_MIME = 'application/x-atlasexplorer-items';
 
@@ -1000,4 +1001,62 @@ function injectExtraCollisionButtons(resolve) {
 		popup.appendChild(renameBtn);
 		popup.appendChild(skipBtn);
 	}
+}
+
+
+/**
+ * Open the drag tray (Ctrl+D) for the active panel's current selection.
+ *
+ * Reads the active panel's grid (or gallery) selection, filters out meta rows
+ * (".", ".."), and asks the main process to spawn the secondary tray window.
+ * The tray is `focusable: false` so dragging tiles out of it does NOT bring
+ * the main app to the foreground � the whole UX point of the feature.
+ *
+ * Behaviors:
+ *   - Empty selection ? passive "No items selected" notification.
+ *   - Tray already open ? silent no-op (handled by main).
+ *
+ * @param {object} ctx
+ * @param {object} ctx.panelState  module-scoped panel state map
+ * @param {number} ctx.activePanelId
+ */
+export async function openDragTrayForActivePanel({ panelState, activePanelId }) {
+if (!window.electronAPI || typeof window.electronAPI.openDragTray !== 'function') return;
+
+const state = panelState && panelState[activePanelId];
+if (!state) return;
+
+let records = [];
+
+// Grid view: w2ui grid selection.
+const grid = state.w2uiGrid;
+if (grid && jQuery(`#panel-${activePanelId} .panel-grid`).is(':visible')) {
+const selection = grid.getSelection() || [];
+records = selection
+.map(recid => grid.records.find(r => String(r.recid) === String(recid)))
+.filter(Boolean)
+.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..')
+.filter(r => r.path);
+} else if (state.gallerySelectedRecids && state.galleryRecords) {
+// Gallery view: stash on panel state.
+const sel = state.gallerySelectedRecids;
+records = (state.galleryRecords || [])
+.filter(r => sel.has(r.recid))
+.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..')
+.filter(r => r.path);
+}
+
+if (records.length === 0) {
+try { w2utils.notify('No items selected', { timeout: 2000 }); } catch (_) { /* ignore */ }
+return;
+}
+
+const items = records.map(r => ({
+path: r.path,
+name: r.filenameRaw || r.filename || '',
+isFolder: !!r.isFolder
+}));
+
+try { await window.electronAPI.openDragTray(items); }
+catch (err) { console.error('openDragTray failed:', err); }
 }

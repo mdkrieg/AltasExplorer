@@ -21,6 +21,7 @@
 
   <!-- Custom styles -->
   <link rel="stylesheet" type="text/css" href="css/styles.css">
+  <link rel="stylesheet" type="text/css" href="css/focus-overlay.css">
 </head>
 
 <body>
@@ -2184,6 +2185,11 @@
   </div>
 
   <script src="../node_modules/jquery/dist/jquery.min.js"></script>
+
+  <!-- Blur vignette overlay (shown when main window loses OS focus). Captures
+       the first click while blurred so background-clicks-to-focus don't hit
+       inputs underneath. -->
+  <div id="focus-vignette-overlay" aria-hidden="true"></div>
 
   <!-- Renderer logic (ES6 modules enabled) -->
   <script type="module" src="js/renderer.js"></script>

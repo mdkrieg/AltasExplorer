@@ -30,6 +30,7 @@ import * as todos from './modules/todos.js';
 import * as sidebarTodos from './modules/sidebarTodos.js';
 import * as sidebarReminders from './modules/sidebarReminders.js';
 import * as terminal from './modules/terminal.js';
+import { openDragTrayForActivePanel } from './modules/dragdrop.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, hideFileView, toggleFileEditMode } from './modules/notes.js';
@@ -236,6 +237,45 @@ async function initialize() {
       panels.handleCloseRequest();
     });
 
+    // Blur vignette: toggle 'window-blurred' on <body> in response to
+    // main-process focus state (DevTools-aware, so opening DevTools does NOT
+    // flash the overlay). The overlay itself swallows the first click while
+    // blurred so the click that re-focuses the window doesn't accidentally
+    // activate an input underneath.
+    if (typeof window.electronAPI.onMainWindowFocus === 'function') {
+      window.electronAPI.onMainWindowFocus((focused) => {
+        document.body.classList.toggle('window-blurred', !focused);
+      });
+    }
+    const focusOverlay = document.getElementById('focus-vignette-overlay');
+    if (focusOverlay) {
+      focusOverlay.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        document.body.classList.remove('window-blurred');
+      }, true);
+
+      // Forward wheel events through the overlay so panels remain scrollable
+      // while the window is blurred. We temporarily turn off pointer-events on
+      // the overlay, find the topmost scrollable element under the cursor,
+      // and scroll it directly. (Synthetic wheel events don't trigger native
+      // scrolling, so we have to call scrollBy manually.)
+      focusOverlay.addEventListener('wheel', (e) => {
+        const ov = focusOverlay;
+        const prevPE = ov.style.pointerEvents;
+        ov.style.pointerEvents = 'none';
+        let target;
+        try { target = document.elementFromPoint(e.clientX, e.clientY); }
+        finally { ov.style.pointerEvents = prevPE; }
+        if (!target) return;
+        const scrollable = findScrollableAncestor(target, e.deltaX, e.deltaY);
+        if (!scrollable) return;
+        e.preventDefault();
+        e.stopPropagation();
+        scrollable.scrollBy({ left: e.deltaX, top: e.deltaY, behavior: 'auto' });
+      }, { passive: false, capture: true });
+    }
+
     window.electronAPI.onDirectoryChanged(({ panelId, dirPath }) => {
       const state = panelState[panelId];
       if (state && state.currentPath === dirPath) {
@@ -357,6 +397,32 @@ export async function loadHotkeysFromStorage() {
       save_file: normalizeHotkeyCombo('Ctrl+S')
     };
   }
+}
+
+/**
+ * Walk up the ancestor chain looking for the nearest element that can
+ * actually scroll in the requested direction. Used to forward wheel events
+ * through the blur vignette overlay so panels remain scrollable while the
+ * main window is in the background.
+ */
+function findScrollableAncestor(el, deltaX, deltaY) {
+  let cur = el;
+  while (cur && cur !== document.body && cur !== document.documentElement) {
+    const style = window.getComputedStyle(cur);
+    const overflowY = style.overflowY;
+    const overflowX = style.overflowX;
+    const canScrollY =
+      (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') &&
+      cur.scrollHeight > cur.clientHeight;
+    const canScrollX =
+      (overflowX === 'auto' || overflowX === 'scroll' || overflowX === 'overlay') &&
+      cur.scrollWidth > cur.clientWidth;
+    if ((Math.abs(deltaY) > 0 && canScrollY) || (Math.abs(deltaX) > 0 && canScrollX)) {
+      return cur;
+    }
+    cur = cur.parentElement;
+  }
+  return document.scrollingElement || document.documentElement || null;
 }
 
 function normalizeHotkeyCombo(combo) {
@@ -763,6 +829,21 @@ function attachEventListeners() {
       panels.navigateForward();
     }
   }, true);
+
+  // Capture-phase handler for Ctrl+D (Open Drag Tray). Registered separately
+  // from the general bubble-phase dispatcher because (a) Chromium's default
+  // for Ctrl+D is "bookmark this page" and (b) w2ui grids install their own
+  // keydown handlers that can stop propagation before the bubble dispatcher
+  // sees the event. Capture-phase + preventDefault here avoids both issues.
+  document.addEventListener('keydown', function (event) {
+    if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+    if (event.key !== 'd' && event.key !== 'D') return;
+    const combo = getHotKeyCombo(event);
+    if (getActionForHotkey(combo) !== 'open_drag_tray') return;
+    event.preventDefault();
+    event.stopPropagation();
+    openDragTrayForActivePanel({ panelState, activePanelId });
+  }, true);
   $(document).keydown(async function (event) {
     if (event.key === 'Escape' && panels.handleTransientEscape()) {
       return;
@@ -850,6 +931,10 @@ function attachEventListeners() {
       case 'add_panel':
         event.preventDefault();
         panels.addPanel();
+        break;
+      case 'open_drag_tray':
+        event.preventDefault();
+        openDragTrayForActivePanel({ panelState, activePanelId });
         break;
       case 'open_terminal': {
         event.preventDefault();

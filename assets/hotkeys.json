@@ -78,6 +78,13 @@
       "default": "Ctrl+Shift+n"
     }
   },
+  "Drag": {
+    "open_drag_tray": {
+      "label": "Open Drag Tray",
+      "key": "Ctrl+d",
+      "default": "Ctrl+d"
+    }
+  },
   "Layouts": {
     "save_layout": {
       "label": "Save Layout",

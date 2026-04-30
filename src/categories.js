@@ -235,10 +235,46 @@ class CategoryService {
       displayMode: displayModeSetting
     };
 
+    // Preserve extra fields that aren't part of the standard update schema
+    if (existingCategory && existingCategory.defaultGridLayout) {
+      category.defaultGridLayout = existingCategory.defaultGridLayout;
+    }
+
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(category, null, 2));
 
     return category;
+  }
+
+  /**
+   * Set or clear the default grid layout for a category. Stored on the category
+   * JSON file so directories using this category can fall back to it when no
+   * per-directory layout exists.
+   */
+  setCategoryDefaultGridLayout(name, columns, sortData) {
+    const existing = this.getCategory(name);
+    if (!existing) {
+      throw new Error(`Category "${name}" not found`);
+    }
+    if (columns == null) {
+      delete existing.defaultGridLayout;
+    } else {
+      existing.defaultGridLayout = {
+        columns: Array.isArray(columns) ? columns : [],
+        sortData: Array.isArray(sortData) ? sortData : []
+      };
+    }
+    const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
+    return existing.defaultGridLayout || null;
+  }
+
+  /**
+   * Get the default grid layout previously saved for a category, or null.
+   */
+  getCategoryDefaultGridLayout(name) {
+    const existing = this.getCategory(name);
+    return existing?.defaultGridLayout || null;
   }
 
   /**

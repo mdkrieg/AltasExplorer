@@ -829,6 +829,21 @@
       saveState();
       return p({ success: true });
     },
+    getCategoryDefaultGridLayout(name) {
+      const cat = demoState.categories[name];
+      return p({ success: true, layout: cat?.defaultGridLayout || null });
+    },
+    setCategoryDefaultGridLayout(name, columns, sortData) {
+      const cat = demoState.categories[name];
+      if (!cat) return p({ success: false, error: `Category "${name}" not found` });
+      if (columns == null) {
+        delete cat.defaultGridLayout;
+      } else {
+        cat.defaultGridLayout = { columns, sortData: sortData || [] };
+      }
+      saveState();
+      return p({ success: true, layout: cat.defaultGridLayout || null });
+    },
 
     // ── Directory labels / initials ───────────────────────────────────────────
 

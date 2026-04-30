@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Drag Tray</title>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <link rel="stylesheet" href="css/drag-tray.css">
+</head>
+<body>
+  <div id="tray-root">
+    <header id="tray-titlebar">
+      <span id="tray-title">Drag Tray</span>
+      <button id="tray-close" type="button" title="Close" aria-label="Close">&#10005;</button>
+    </header>
+    <div id="tray-list" tabindex="-1"></div>
+  </div>
+  <script src="js/drag-tray-renderer.js"></script>
+</body>
+</html>

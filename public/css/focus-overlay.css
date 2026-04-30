@@ -1,0 +1,32 @@
+/*
+ * Blur vignette overlay
+ *
+ * Shown when the main BrowserWindow loses OS focus. Renders a subtle dark
+ * tint plus a feathered edge (vignette) so the user sees at a glance that
+ * the app is in the background. While blurred, the overlay also intercepts
+ * pointer events so the first click that re-focuses the window does NOT hit
+ * an input underneath. The 'window-blurred' body class is toggled by the
+ * renderer in response to 'main-window-focus' IPC from main.
+ */
+#focus-vignette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  /* Outer 16-18px ring darkens; rest is a flat ~6% tint. */
+  background:
+    radial-gradient(
+      ellipse 110% 110% at 50% 50%,
+      rgba(0, 0, 0, 0) calc(100% - 18px),
+      rgba(0, 0, 0, 0.32) 100%
+    ),
+    rgba(0, 0, 0, 0.06);
+}
+
+body.window-blurred #focus-vignette-overlay {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: default;
+}

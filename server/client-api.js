@@ -205,6 +205,8 @@
     // ── Dir Grid Layout ───────────────────────────────────────────────────────
     saveDirGridLayout: (dirname, columns, sortData) => call('saveDirGridLayout', [dirname, columns, sortData]),
     getDirGridLayout:  (dirname)                    => call('getDirGridLayout', [dirname]),
+    setCategoryDefaultGridLayout: (name, columns, sortData) => call('setCategoryDefaultGridLayout', [name, columns, sortData]),
+    getCategoryDefaultGridLayout: (name)                    => call('getCategoryDefaultGridLayout', [name]),
 
     // ── Notes File I/O ────────────────────────────────────────────────────────
     readFileContent:  (filePath)          => call('readFileContent', [filePath]),
