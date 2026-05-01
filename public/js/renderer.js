@@ -33,7 +33,7 @@ import * as terminal from './modules/terminal.js';
 import { openDragTrayForActivePanel } from './modules/dragdrop.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
-export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal } from './modules/notes.js';
+export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, initFvPathInput, openNotesViewerForPath, cancelFileViewerEdit } from './modules/notes.js';
 export { generateW2UIContextMenu, showCustomContextMenu } from './modules/contexts.js';
 export { openHistoryModal, formatHistoryData, buildCompleteFileState } from './modules/history.js';
 export { updateAlertBadge } from './modules/alerts.js';
@@ -313,6 +313,18 @@ async function initialize() {
     });
 
     await notes.initializeMonacoLoader();
+    notes.initFvPathInput();
+    panels.setFileNavHandler(async (filePath, navParams, navFragment, panelId) => {
+      if (navParams.has('notes')) {
+        await notes.openNotesViewerForPath(filePath, panelId, navFragment === 'edit');
+      } else {
+        const viewMode = navParams.has('hexview') ? 'hex' : 'auto';
+        await notes.openFileViewerModal(filePath, viewMode);
+        if (navFragment === 'edit' && viewMode !== 'hex') {
+          await notes.toggleFileViewerEditMode();
+        }
+      }
+    });
     todos.initTodoModal();
 
     const bgSettings = await window.electronAPI.getSettings();
@@ -936,7 +948,7 @@ function attachEventListeners() {
         break;
       case 'add_panel':
         event.preventDefault();
-        panels.addPanel();
+        panels.addPanel().catch(console.error);
         break;
       case 'open_drag_tray':
         event.preventDefault();
@@ -1078,7 +1090,7 @@ function attachEventListeners() {
   });
 
   $('#btn-sidebar-add-panel').click(function () {
-    panels.addPanel();
+    panels.addPanel().catch(console.error);
   });
 
   // Layout option buttons
@@ -1276,7 +1288,7 @@ function attachEventListeners() {
     if (panels.visiblePanels < 4) {
       const newPanelId = panels.visiblePanels + 1;
       addRow(`Open in new Panel ${newPanelId}`, async () => {
-        const created = panels.addPanel();
+      const created = await panels.addPanel();
         const targetId = created ?? newPanelId;
         await terminal.createTerminalPanel(targetId, cwd);
         panels.setActivePanelId(targetId);
@@ -1512,6 +1524,9 @@ function attachEventListeners() {
   });
   $('#btn-fv-save').click(async function () {
     await notes.toggleFileViewerEditMode();
+  });
+  $('#btn-fv-cancel').click(async function () {
+    await notes.cancelFileViewerEdit();
   });
   $('#btn-fv-switch-view').click(async function () {
     await notes.switchFileViewerView();

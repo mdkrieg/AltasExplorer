@@ -5,6 +5,7 @@
 
 import * as utils from './utils.js';
 import * as panels from './panels.js';
+import { w2confirm } from './vendor/w2ui.es6.min.js';
 import { panelState, setFileEditMode, setSelectedItemState } from '../renderer.js';
 
 let monacoLoaded = false;
@@ -691,8 +692,87 @@ export function hideNotesModal() {
 let fvModalEditor = null;
 let fvModalEditMode = false;
 let fvModalContext = null; // { filePath, viewMode }
+let fvModalHost = null; // 'modal' | 1 | 2 | 3 | 4
+let fvModalOriginalContent = ''; // content as loaded from disk; used for cancel dirty-check
+
+async function moveFileViewerToPanel(targetPanelId) {
+  if (targetPanelId > panels.visiblePanels) {
+    const $newPanel = $(`#panel-${targetPanelId}`);
+    panels.setVisiblePanels(targetPanelId);
+    $newPanel.show();
+    panels.attachPanelEventListeners(targetPanelId);
+    panels.updatePanelLayout();
+  }
+  // Hide modal overlay, leaving widget intact
+  $('#file-viewer-modal').css('display', 'none');
+
+  // Adopt widget into target panel
+  const $content = $(`#panel-${targetPanelId} .panel-content`);
+  $content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view').hide();
+  $content.append($('#fv-widget'));
+
+  // Apply panel-fill styles
+  $('#fv-widget').css({
+    width: '100%',
+    height: '100%',
+    borderRadius: '0',
+    maxWidth: 'none',
+    boxShadow: 'none',
+    flex: '1'
+  });
+
+  // Panel-embedded: hide modal-only controls, make path label static
+  $('#btn-fv-close').hide();
+  $('#fv-panel-section').hide();
+  $('#fv-path-display').css('cursor', 'default');
+
+  // Adopt the category of the file's parent directory so the panel header uses its colour
+  const filePath = fvModalContext.filePath;
+  const parentDir = filePath.includes('\\')
+    ? filePath.substring(0, filePath.lastIndexOf('\\'))
+    : filePath;
+  const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
+  if (panelState[targetPanelId]) panelState[targetPanelId].currentCategory = parentCategory;
+
+  // Update the panel's own path bar to show the hosted file path
+  panels.updatePanelHeader(targetPanelId, filePath);
+
+  // Re-layout Monaco after DOM move
+  setTimeout(() => fvModalEditor && fvModalEditor.layout(), 50);
+
+  fvModalHost = targetPanelId;
+  panels.setActivePanelId(targetPanelId);
+}
 
 export async function openFileViewerModal(filePath, viewMode) {
+  // If widget is currently embedded in a panel, return it to the modal first
+  if (typeof fvModalHost === 'number') {
+    const prevHost = fvModalHost;
+    const $prevContent = $(`#panel-${prevHost} .panel-content`);
+    $('#file-viewer-modal').append($('#fv-widget'));
+    if (panelState[prevHost]?.currentPath) {
+      $prevContent.find('.panel-grid').show();
+      panels.updatePanelHeader(prevHost); // restore header to previous directory path
+    } else {
+      $prevContent.find('.panel-landing-page').css('display', 'flex');
+      panels.updatePanelHeader(prevHost, '');
+    }
+  }
+  fvModalHost = 'modal';
+  // Restore modal card styles in case widget came from panel mode
+  $('#fv-widget').css({
+    width: '80%',
+    height: '80%',
+    maxWidth: '1100px',
+    borderRadius: '8px',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+    flex: ''
+  });
+  // Restore modal-only controls
+  $('#btn-fv-close').show();
+  $('#fv-panel-section').css('display', 'flex');
+  $('#fv-path-display').css('cursor', 'pointer');
+
   fvModalContext = { filePath, viewMode };
   fvModalEditMode = false;
 
@@ -700,10 +780,11 @@ export async function openFileViewerModal(filePath, viewMode) {
   const $editorContainer = $('#fv-editor-container');
   const $contentView = $('#fv-content-view');
 
-  // Title: just the filename
+  // Title: filename in display span, full path in input
   const filename = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
-  $('#file-viewer-modal-title').text(filePath);
-  $('#file-viewer-modal-title').attr('title', filePath);
+  $('#fv-path-display').text(filename).attr('title', filePath);
+  $('#fv-path-input').val(filePath);
+  panelState[0].currentPath = filePath;
 
   $editorContainer.empty();
   if (fvModalEditor) { fvModalEditor.dispose(); fvModalEditor = null; }
@@ -728,15 +809,7 @@ export async function openFileViewerModal(filePath, viewMode) {
     const title = isNew ? `Open new panel ${p} and show file` : `Open in panel ${p} file view`;
     const $btn = $(`<button style="padding: 2px 8px; background: #fff; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 600;" title="${title}">${label}</button>`);
     $btn.click(async () => {
-      if (isNew) {
-        const $panel = $(`#panel-${p}`);
-        panels.setVisiblePanels(p);
-        $panel.show();
-        panels.attachPanelEventListeners(p);
-        panels.updatePanelLayout();
-      }
-      if (isHex) { await showHexView(p, filePath); }
-      else { await showFileView(p, filePath, viewMode); }
+      await moveFileViewerToPanel(p);
     });
     $panelBtns.append($btn);
   }
@@ -782,8 +855,10 @@ export async function openFileViewerModal(filePath, viewMode) {
     let readError = false;
     try {
       content = await window.electronAPI.readFileContent(filePath);
+      fvModalOriginalContent = content;
     } catch (_) {
       readError = true;
+      fvModalOriginalContent = '';
     }
 
     // Build Monaco editor (hidden initially unless file is empty / unreadable)
@@ -807,8 +882,8 @@ export async function openFileViewerModal(filePath, viewMode) {
       $contentView.hide();
       $('#btn-fv-edit').hide();
       $('#btn-fv-save').show();
+      $('#btn-fv-cancel').show();
       fvModalEditMode = true;
-      setTimeout(() => fvModalEditor && fvModalEditor.focus(), 100);
     } else {
       // Render content view
       if (fileFormat === 'Markdown') {
@@ -827,6 +902,48 @@ export async function openFileViewerModal(filePath, viewMode) {
   $modal.css('display', 'flex');
 }
 
+export async function cancelFileViewerEdit() {
+  if (!fvModalContext || !fvModalEditMode) return;
+  const { filePath, viewMode } = fvModalContext;
+  const currentContent = fvModalEditor ? fvModalEditor.getValue() : '';
+  const isDirty = currentContent !== fvModalOriginalContent;
+
+  function doCancel() {
+    const $editorContainer = $('#fv-editor-container');
+    const $contentView = $('#fv-content-view');
+    const settings = window.electronAPI.getSettings();
+    settings.then(async (s) => {
+      const fileFormat = resolveViewFormat(filePath, viewMode, s.file_format);
+      if (fileFormat === 'Markdown') {
+        const htmlContent = await window.electronAPI.renderMarkdown(fvModalOriginalContent, filePath);
+        $contentView.html(htmlContent);
+      } else {
+        $contentView.html(formatFileContent(fvModalOriginalContent, fileFormat));
+      }
+      if (fvModalEditor) fvModalEditor.setValue(fvModalOriginalContent);
+      $editorContainer.hide();
+      $contentView.show();
+      $('#btn-fv-save').hide();
+      $('#btn-fv-cancel').hide();
+      $('#btn-fv-edit').show();
+      fvModalEditMode = false;
+    });
+  }
+
+  if (isDirty) {
+    w2confirm({
+      msg: 'You have unsaved changes.<br><br>Click "Abandon" to discard them, or "Keep Editing" to go back.',
+      title: 'Abandon Changes?',
+      width: 420,
+      height: 190,
+      btn_yes: { text: 'Abandon', class: '', style: '' },
+      btn_no: { text: 'Keep Editing', class: '', style: '' }
+    }).yes(() => doCancel());
+  } else {
+    doCancel();
+  }
+}
+
 export async function toggleFileViewerEditMode() {
   if (!fvModalContext) return;
   const { filePath, viewMode } = fvModalContext;
@@ -839,6 +956,7 @@ export async function toggleFileViewerEditMode() {
     $editorContainer.show();
     $('#btn-fv-edit').hide();
     $('#btn-fv-save').show();
+    $('#btn-fv-cancel').show();
     fvModalEditMode = true;
     setTimeout(() => fvModalEditor && fvModalEditor.focus(), 50);
     return;
@@ -848,6 +966,7 @@ export async function toggleFileViewerEditMode() {
   const newContent = fvModalEditor ? fvModalEditor.getValue() : '';
   try {
     await window.electronAPI.writeFileContent(filePath, newContent);
+    fvModalOriginalContent = newContent; // baseline updated after successful save
   } catch (err) {
     alert('Error saving file: ' + err.message);
     return;
@@ -865,6 +984,7 @@ export async function toggleFileViewerEditMode() {
   $editorContainer.hide();
   $contentView.show();
   $('#btn-fv-save').hide();
+  $('#btn-fv-cancel').hide();
   $('#btn-fv-edit').show();
   fvModalEditMode = false;
 }
@@ -877,15 +997,212 @@ export async function switchFileViewerView() {
 }
 
 export function hideFileViewerModal() {
-  $('#file-viewer-modal').hide();
-  $('#fv-info-bar').hide();
-  $('#fv-panel-btns').empty();
+  const host = fvModalHost;
+  const $widget = $('#fv-widget');
+  if (typeof host === 'number') {
+    // Panel mode: restore the panel and return widget to modal for cleanup
+    const $content = $(`#panel-${host} .panel-content`);
+    if (panelState[host]?.currentPath) {
+      $content.find('.panel-grid').show();
+    } else {
+      $content.find('.panel-landing-page').css('display', 'flex');
+    }
+    $('#file-viewer-modal').append($widget);
+    // Modal stays hidden
+  } else {
+    $('#file-viewer-modal').hide();
+  }
+  // Restore modal card styles
+  $widget.css({
+    width: '80%',
+    height: '80%',
+    maxWidth: '1100px',
+    borderRadius: '8px',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+    flex: ''
+  });
   if (fvModalEditor) { fvModalEditor.dispose(); fvModalEditor = null; }
   fvModalEditMode = false;
   fvModalContext = null;
+  fvModalHost = null;
   $('#fv-content-view').empty().hide();
   $('#fv-editor-container').empty().hide();
   $('#btn-fv-edit').show();
   $('#btn-fv-save').hide();
+  $('#fv-info-bar').hide();
+  $('#fv-panel-btns').empty();
+}
+
+/**
+ * Wire up click-to-edit behaviour for the file viewer modal path bar.
+ * Call once from renderer.js initialize().
+ */
+export function initFvPathInput() {
+  const $display = $('#fv-path-display');
+  const $input = $('#fv-path-input');
+
+  $display.on('click', function () {
+    // In panel-embedded mode the panel title bar handles navigation; don't open inline editor
+    if (typeof fvModalHost === 'number') return;
+    $display.hide();
+    $input.show().select().focus();
+  });
+
+  async function submitPathInput() {
+    const raw = $input.val().trim();
+    $input.hide();
+    $display.show();
+    if (!raw || raw === fvModalContext?.filePath) return;
+
+    // Parse #fragment then ?params (mirrors parseNavUri in panels.js)
+    let fragment = null;
+    let withoutHash = raw;
+    const hashIdx = raw.indexOf('#');
+    if (hashIdx !== -1) {
+      fragment = raw.slice(hashIdx + 1).trim().toLowerCase() || null;
+      withoutHash = raw.slice(0, hashIdx);
+    }
+    const qIdx = withoutHash.indexOf('?');
+    const basePath = qIdx === -1 ? withoutHash : withoutHash.slice(0, qIdx);
+    const viewMode = (qIdx !== -1 && withoutHash.slice(qIdx + 1).split('&').includes('hexview'))
+      ? 'hex' : 'auto';
+
+    await openFileViewerModal(basePath, viewMode);
+    if (fragment === 'edit' && viewMode !== 'hex') {
+      await toggleFileViewerEditMode();
+    }
+  }
+
+  $input.on('keydown', async function (e) {
+    if (e.key === 'Escape') {
+      $input.val(fvModalContext?.filePath || '').hide();
+      $display.show();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      await submitPathInput();
+    }
+  });
+
+  $input.on('blur', async function () {
+    await submitPathInput();
+  });
+}
+
+/**
+ * Open the notes viewer for a file path in a panel.
+ * Reads the directory's notes.txt and shows the section for the given file.
+ * @param {string} filePath  - Absolute path to the file
+ * @param {number} panelId   - Panel to show the notes viewer in
+ * @param {boolean} editMode - Whether to open in edit mode immediately
+ */
+export async function openNotesViewerForPath(filePath, panelId, editMode = false) {
+  await initializeMonacoLoader();
+
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  const lastSlash = Math.max(normalizedPath.lastIndexOf('/'), normalizedPath.lastIndexOf('\\'));
+  const parentDir = lastSlash > 0 ? filePath.slice(0, lastSlash) : filePath;
+  const fname = lastSlash > 0 ? filePath.slice(lastSlash + 1) : filePath;
+  const sep = filePath.includes('\\') || (filePath[1] === ':') ? '\\' : '/';
+  const notesPath = parentDir + sep + 'notes.txt';
+
+  // Read notes.txt content
+  let existingContent = '';
+  try {
+    existingContent = await window.electronAPI.readFileContent(notesPath);
+  } catch (_) {
+    // notes.txt may not exist yet — treat as empty
+  }
+
+  // Parse sections and extract the one for this file
+  let sectionContent = '';
+  try {
+    const sections = await window.electronAPI.invoke('parse-notes-file', existingContent);
+    sectionContent = (sections && sections[fname]) ? sections[fname] : '';
+  } catch (_) {
+    sectionContent = '';
+  }
+
+  const $panel = $(`#panel-${panelId}`);
+  const $fileView = $panel.find('.panel-file-view');
+  const $fileEditorContainer = $fileView.find('.file-editor-container');
+  const $fileContentView = $fileView.find('.file-content-view');
+  const $fileToolbar = $fileView.find('.w2ui-panel-title');
+
+  // Hide other views, show file view
+  $panel.find('.panel-landing-page').hide();
+  $panel.find('.panel-grid').hide();
+  $panel.find('.panel-gallery').removeClass('active');
+  panels.hidePanelToolbar(panelId);
+  $fileView.css('display', 'flex');
+
+  // Set up path label
+  $fileToolbar.find('.file-path').text('Notes: ' + fname);
+  $fileToolbar.show();
+
+  // Create a Monaco editor instance for this panel's file view
+  if (!$fileEditorContainer.data('monaco-editor')) {
+    const editor = monaco.editor.create($fileEditorContainer[0], {
+      value: sectionContent,
+      language: 'markdown',
+      theme: 'vs',
+      wordWrap: 'on',
+      lineNumbers: 'on',
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      automaticLayout: true,
+      fontSize: 13,
+      fontFamily: 'Consolas, "Courier New", monospace'
+    });
+    $fileEditorContainer.data('monaco-editor', editor);
+  } else {
+    const editor = $fileEditorContainer.data('monaco-editor');
+    editor.setValue(sectionContent);
+  }
+
+  // Wire Save button (re-attach each time to capture current fname/notesPath)
+  const $saveBtn = $fileToolbar.find('.btn-file-save');
+  const $editBtn = $fileToolbar.find('.btn-file-edit');
+  $saveBtn.off('click.notesViewer').on('click.notesViewer', async function () {
+    const editor = $fileEditorContainer.data('monaco-editor');
+    const newContent = editor ? editor.getValue() : '';
+    let latestContent = '';
+    try { latestContent = await window.electronAPI.readFileContent(notesPath); } catch (_) {}
+    const updated = await window.electronAPI.invoke('write-notes-section',
+      { existingContent: latestContent, sectionKey: fname, newContent });
+    try { await window.electronAPI.writeFileContent(notesPath, updated); } catch (err) {
+      alert('Error saving notes: ' + err.message);
+    }
+    // Switch back to view mode
+    $fileEditorContainer.hide();
+    $fileContentView.html(utils.escapeHtml(newContent).replace(/\n/g, '<br>')).show();
+    $editBtn.show();
+    $saveBtn.hide();
+  });
+  $editBtn.off('click.notesViewer').on('click.notesViewer', function () {
+    $fileContentView.hide();
+    $fileEditorContainer.show();
+    $editBtn.hide();
+    $saveBtn.show();
+    const editor = $fileEditorContainer.data('monaco-editor');
+    if (editor) editor.focus();
+  });
+
+  if (editMode || sectionContent.trim() === '') {
+    $fileContentView.hide();
+    $fileEditorContainer.show();
+    $editBtn.hide();
+    $saveBtn.show();
+    const editor = $fileEditorContainer.data('monaco-editor');
+    if (editor) setTimeout(() => editor.focus(), 100);
+  } else {
+    $fileContentView.html(utils.escapeHtml(sectionContent).replace(/\n/g, '<br>')).show();
+    $fileEditorContainer.hide();
+    $editBtn.show();
+    $saveBtn.hide();
+  }
+
+  panels.setActivePanelId(panelId);
 }
 

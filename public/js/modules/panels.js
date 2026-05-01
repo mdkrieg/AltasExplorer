@@ -43,6 +43,11 @@ export let allTags = [];
 export let allFileTypes = [];
 export let currentLayout = 1;
 export let visiblePanels = 1;
+
+// Callback registered from renderer.js to handle file-path navigation
+// (avoids a circular panels ↔ notes/renderer import dependency).
+let _fileNavHandler = null;
+export function setFileNavHandler(fn) { _fileNavHandler = fn; }
 export let unacknowledgedAlertCount = 0;
 export let panel1SelectedDirectoryPath = null;
 export let panel1SelectedDirectoryName = null;
@@ -769,8 +774,6 @@ function updateSelectedItemFromRecord(record, panelId) {
 		hideCreateTagModal();
 		hideTagConfigModal();
 	}
-
-	refreshItemPropertiesInAllPanels();
 }
 
 export function setVisiblePanels(value) {
@@ -1058,9 +1061,13 @@ function attachGridHeaderEventListeners(panelId) {
 	}
 }
 
-function updatePanelHeader(panelId, path = panelState[panelId]?.currentPath || '') {
+export function updatePanelHeader(panelId, path = panelState[panelId]?.currentPath || '') {
 	const headerEl = getPanelHeaderElement(panelId);
 	if (!headerEl) return;
+	// Don't rebuild the header while the path input has keyboard focus — rebuilding
+	// destroys the focused element and causes an immediate blur (twitchy behaviour).
+	const activeInput = headerEl.querySelector('.panel-path-input');
+	if (activeInput && document.activeElement === activeInput) return;
 	const category = panelState[panelId]?.currentCategory;
 	const headerHtml = buildGridHeaderHtml(panelId, path, category);
 	headerEl.innerHTML = headerHtml;
@@ -1106,23 +1113,30 @@ function attachPanelHeaderEventListeners(panelId) {
 // On Windows, `?` is not a legal character in filesystem paths, so we use it
 // as a separator between the real basePath and virtual query params.
 //
-// Format:  C:\Some\Path?orphans&trash
-// Parsing: split on the FIRST `?` only.
+// Format:  C:\Some\Path?orphans&trash#fragment
+// Parsing: strip #fragment first, then split on the FIRST `?` only.
 
 /**
- * Parse a nav URI into `{ basePath, params }`.
+ * Parse a nav URI into `{ basePath, params, fragment }`.
  * `params` is a Set<string> (e.g. Set(['orphans', 'trash'])).
+ * `fragment` is a lowercase string or null (e.g. 'edit').
  * @param {string} input
- * @returns {{ basePath: string, params: Set<string> }}
+ * @returns {{ basePath: string, params: Set<string>, fragment: string|null }}
  */
 function parseNavUri(input) {
+	let fragment = null;
+	const hashIdx = input.indexOf('#');
+	if (hashIdx !== -1) {
+		fragment = input.slice(hashIdx + 1).trim().toLowerCase() || null;
+		input = input.slice(0, hashIdx);
+	}
 	const idx = input.indexOf('?');
-	if (idx === -1) return { basePath: input, params: new Set() };
+	if (idx === -1) return { basePath: input, params: new Set(), fragment };
 	const basePath = input.slice(0, idx);
 	const params = new Set(
 		input.slice(idx + 1).split('&').map(p => p.trim().toLowerCase()).filter(Boolean)
 	);
-	return { basePath, params };
+	return { basePath, params, fragment };
 }
 
 /**
@@ -2814,6 +2828,60 @@ async function showItemPropertiesForPath(filePath, panelId, fileStats) {
 	await updateItemPropertiesPage(panelId);
 }
 
+// ============================================================
+// Atlas URI handlers (atlas://landing, etc.)
+// ============================================================
+
+async function showAtlasLandingPage(panelId) {
+	const $content = $(`#panel-${panelId} .panel-content`);
+	$content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view').hide();
+	const $welcome = $content.find('.panel-welcome-view');
+	const $favList = $welcome.find('.panel-welcome-favorites').empty();
+
+	try {
+		const settings = await window.electronAPI.getSettings();
+		const favorites = (settings && settings.favorites) ? settings.favorites : [];
+		for (const fav of favorites) {
+			const label = fav.label || fav.path || '';
+			const path = fav.path || '';
+			if (!path) continue;
+			const $item = $(`<div style="padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; color: #1a73e8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${utils.escapeHtml(path)}">${utils.escapeHtml(label)}</div>`);
+			$item.on('mouseenter', function () { $(this).css('background', '#f0f4ff'); });
+			$item.on('mouseleave', function () { $(this).css('background', ''); });
+			$item.on('click', function () { navigateToDirectory(path, panelId); });
+			$favList.append($item);
+		}
+		if (favorites.length === 0) {
+			$favList.html('<div style="color: #aaa; font-size: 12px; font-style: italic;">No favorites yet. Add favorites in the sidebar.</div>');
+		}
+	} catch (err) {
+		$favList.html(`<div style="color: #c00; font-size: 12px;">Error loading favorites: ${utils.escapeHtml(err.message)}</div>`);
+	}
+
+	$welcome.css('display', 'flex');
+	hidePanelToolbar(panelId);
+}
+
+async function handleAtlasUri(uri, panelId, addToHistory) {
+	const state = panelState[panelId];
+	ensureFilterState(panelId);
+
+	if (addToHistory) {
+		state.navigationHistory = state.navigationHistory.slice(0, state.navigationIndex + 1);
+		state.navigationHistory.push(uri);
+		state.navigationIndex = state.navigationHistory.length - 1;
+	}
+	state.currentPath = uri;
+	state.currentBasePath = uri;
+	state.currentNavParams = new Set();
+
+	updatePanelHeader(panelId, uri);
+
+	if (uri === 'atlas://landing') {
+		await showAtlasLandingPage(panelId);
+	}
+}
+
 export async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
 	try {
 		if (!dirPath || typeof dirPath !== 'string') {
@@ -2824,8 +2892,14 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			throw new Error('Path cannot be empty');
 		}
 
-		// Parse virtual-view URI params (e.g. "C:\Foo?orphans&trash")
-		const { basePath: parsedBase, params: navParams } = parseNavUri(rawInput);
+		// atlas:// virtual views (landing page, etc.)
+		if (rawInput.startsWith('atlas://')) {
+			await handleAtlasUri(rawInput, panelId, addToHistory);
+			return;
+		}
+
+		// Parse virtual-view URI params (e.g. "C:\Foo?orphans&trash", "C:\file.txt?notes#edit")
+		const { basePath: parsedBase, params: navParams, fragment: navFragment } = parseNavUri(rawInput);
 		const isVirtualView = navParams.size > 0;
 
 		let normalizedPath = parsedBase;
@@ -2923,12 +2997,19 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		const directoryExists = await window.electronAPI.isDirectory(normalizedPath);
 		if (!directoryExists) {
-			// Check if the path is a file — if so, show item properties (panels 2-4 only)
-			const hasItemPropsView = $(`#panel-${panelId} .panel-landing-page`).length > 0;
-			if (hasItemPropsView) {
-				const fileStats = await window.electronAPI.getItemStats(normalizedPath);
-				if (fileStats && fileStats.success && !fileStats.isDirectory) {
-					await showItemPropertiesForPath(normalizedPath, panelId, fileStats);
+			// Check if the path is a file — route based on URI params
+			const fileStats = await window.electronAPI.getItemStats(normalizedPath);
+			if (fileStats && fileStats.success && !fileStats.isDirectory) {
+				if (navParams.has('properties')) {
+					// ?properties → show item properties panel (existing behaviour)
+					const hasItemPropsView = $(`#panel-${panelId} .panel-landing-page`).length > 0;
+					if (hasItemPropsView) {
+						await showItemPropertiesForPath(normalizedPath, panelId, fileStats);
+						return;
+					}
+				} else if (_fileNavHandler) {
+					// bare path / ?hexview / ?notes / ?notes#edit → delegate to renderer
+					await _fileNavHandler(normalizedPath, navParams, navFragment, panelId);
 					return;
 				}
 			}
@@ -4948,7 +5029,6 @@ export function setActivePanelId(panelId) {
 		}
 		$(`#panel-${panelId} .panel-number`).addClass('panel-number-selected');
 		$(`#panel-${panelId}`).addClass('panel-active');
-		refreshItemPropertiesInAllPanels();
 	}
 }
 
@@ -4970,6 +5050,8 @@ export function setGridFocusedPanelId(panelId) {
 
 export function getPanelViewType(panelId) {
 	const $panel = $(`#panel-${panelId}`);
+	// fv-widget hosted inside this panel counts as a file view
+	if ($panel.find('#fv-widget').length > 0) return 'file';
 	if ($panel.find('.panel-file-view').is(':visible')) return 'file';
 	if ($panel.find('.panel-gallery').hasClass('active')) return 'gallery';
 	if ($panel.find('.panel-grid').is(':visible')) return 'grid';
@@ -5400,7 +5482,7 @@ export function updatePanelLayout() {
 	}, 100);
 }
 
-export function addPanel() {
+export async function addPanel() {
 	if (visiblePanels >= 4) {
 		return null;
 	}
@@ -5410,6 +5492,7 @@ export function addPanel() {
 	$(`#panel-${newPanelId}`).show();
 	attachPanelEventListeners(newPanelId);
 	updatePanelLayout();
+	await navigateToDirectory('atlas://landing', newPanelId, false);
 	return newPanelId;
 }
 
@@ -5592,7 +5675,9 @@ export function attachPanelEventListeners(panelId) {
 	const $panel = $(`#panel-${panelId}`);
 
 	$panel.off('click.panelActive').on('click.panelActive', function (e) {
-		const interactiveSel = 'button, input, select, textarea, label, a';
+		// Clicks inside the hosted fv-widget are handled by the widget itself
+		if ($(e.target).closest('#fv-widget').length > 0) return;
+		const interactiveSel = 'button, input, select, textarea, label, a, [contenteditable]';
 		if (!$(e.target).is(interactiveSel) && !$(e.target).closest(interactiveSel).length) {
 			setActivePanelId(panelId);
 		}
