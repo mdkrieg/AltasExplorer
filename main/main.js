@@ -2079,6 +2079,108 @@ ipcMain.handle('read-file-content', async (event, filePath) => {
 });
 
 /**
+ * Check whether a file is binary by scanning the first 8 KB for null bytes.
+ * Returns { isBinary: bool }.
+ */
+ipcMain.handle('check-file-binary', async (event, filePath) => {
+  try {
+    const fsSync = require('fs');
+    if (!fsSync.existsSync(filePath)) return { isBinary: false };
+    const SAMPLE = 8192;
+    const stat = fsSync.statSync(filePath);
+    const readSize = Math.min(stat.size, SAMPLE);
+    if (readSize === 0) return { isBinary: false };
+    const buf = Buffer.alloc(readSize);
+    const fd = fsSync.openSync(filePath, 'r');
+    try { fsSync.readSync(fd, buf, 0, readSize, 0); }
+    finally { fsSync.closeSync(fd); }
+    // BOM: UTF-8 or UTF-16 → treat as text
+    if (buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) return { isBinary: false };
+    if ((buf[0] === 0xFF && buf[1] === 0xFE) || (buf[0] === 0xFE && buf[1] === 0xFF)) return { isBinary: false };
+    for (let i = 0; i < buf.length; i++) {
+      if (buf[i] === 0) return { isBinary: true };
+    }
+    return { isBinary: false };
+  } catch (err) {
+    return { isBinary: false };
+  }
+});
+
+/**
+ * Read up to 64 KB of a file as a plain byte array for hex viewing.
+ * Returns { bytes: number[], totalSize: number, truncated: bool }.
+ */
+ipcMain.handle('read-file-as-buffer', async (event, filePath) => {
+  try {
+    const fsSync = require('fs');
+    if (!fsSync.existsSync(filePath)) throw new Error('File does not exist');
+    const MAX_BYTES = 65536;
+    const stat = fsSync.statSync(filePath);
+    const totalSize = stat.size;
+    const readSize = Math.min(totalSize, MAX_BYTES);
+    const buf = Buffer.alloc(readSize);
+    const fd = fsSync.openSync(filePath, 'r');
+    try { fsSync.readSync(fd, buf, 0, readSize, 0); }
+    finally { fsSync.closeSync(fd); }
+    return { bytes: Array.from(buf), totalSize, truncated: totalSize > MAX_BYTES };
+  } catch (err) {
+    logger.error('Error reading file as buffer:', err.message);
+    throw err;
+  }
+});
+
+ipcMain.handle('detect-file-encoding', async (event, filePath) => {
+  const fsSync = require('fs');
+  let fd = null;
+  try {
+    fd = fsSync.openSync(filePath, 'r');
+    const buf = Buffer.alloc(8192);
+    const bytesRead = fsSync.readSync(fd, buf, 0, 8192, 0);
+    const slice = buf.slice(0, bytesRead);
+
+    let encoding = 'UTF-8';
+    let bomLength = 0;
+    if (slice.length >= 4 && slice[0] === 0xFF && slice[1] === 0xFE && slice[2] === 0x00 && slice[3] === 0x00) {
+      encoding = 'UTF-32 LE'; bomLength = 4;
+    } else if (slice.length >= 4 && slice[0] === 0x00 && slice[1] === 0x00 && slice[2] === 0xFE && slice[3] === 0xFF) {
+      encoding = 'UTF-32 BE'; bomLength = 4;
+    } else if (slice.length >= 3 && slice[0] === 0xEF && slice[1] === 0xBB && slice[2] === 0xBF) {
+      encoding = 'UTF-8 BOM'; bomLength = 3;
+    } else if (slice.length >= 2 && slice[0] === 0xFF && slice[1] === 0xFE) {
+      encoding = 'UTF-16 LE'; bomLength = 2;
+    } else if (slice.length >= 2 && slice[0] === 0xFE && slice[1] === 0xFF) {
+      encoding = 'UTF-16 BE'; bomLength = 2;
+    } else {
+      let isAscii = true;
+      for (let i = 0; i < Math.min(bytesRead, 512); i++) {
+        if (slice[i] > 0x7F) { isAscii = false; break; }
+      }
+      encoding = isAscii ? 'ASCII' : 'UTF-8';
+    }
+
+    // Count newline styles from the decoded text after any BOM
+    const text = slice.slice(bomLength).toString('utf8');
+    const crlfCount = (text.match(/\r\n/g) || []).length;
+    const stripped = text.replace(/\r\n/g, '');
+    const lfCount = (stripped.match(/\n/g) || []).length;
+    const crCount = (stripped.match(/\r/g) || []).length;
+
+    let newline = null;
+    if (crlfCount > 0 && lfCount === 0 && crCount === 0) newline = 'CRLF';
+    else if (lfCount > 0 && crlfCount === 0 && crCount === 0) newline = 'LF';
+    else if (crCount > 0 && crlfCount === 0 && lfCount === 0) newline = 'CR';
+    else if (crlfCount > 0 || lfCount > 0 || crCount > 0) newline = 'Mixed';
+
+    return { encoding, newline };
+  } catch (err) {
+    logger.error('Error detecting file encoding:', err.message);
+    return { encoding: 'Unknown', newline: null };
+  } finally {
+    if (fd !== null) try { fsSync.closeSync(fd); } catch (_) {}
+  }
+});
+
+/**
  * Notes: Save a pasted image into the notes_files directory sibling to notes.txt.
  * Returns { relativePath } — the markdown-ready relative path (e.g. "notes_files/img-xxxx.png").
  */

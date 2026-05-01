@@ -811,13 +811,14 @@
                   </div>
                 </div>
                 <div style="display: flex; flex-direction: column;">
-                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Open With</label>
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">View With</label>
                   <select id="form-ft-open-with"
                     style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
-                    <option value="os-default">OS Default</option>
-                    <option value="item-properties">Item Properties</option>
-                    <option value="builtin-editor">Built-in Editor</option>
+                    <option value="auto-detect">Auto Detect</option>
+                    <option value="text-editor-plain">Text Editor (plain)</option>
+                    <option value="text-editor-markdown">Text Editor (markdown)</option>
                     <option value="image-viewer">Image Viewer</option>
+                    <option value="hex-viewer">Hex Viewer</option>
                   </select>
                   <span style="font-size: 10px; color: #888; margin-top: 2px;">Determines what opens when this file type
                     is activated.</span>
@@ -2150,6 +2151,40 @@
       <button id="btn-terminal-drawer-close" title="Close">&#x2715;</button>
     </div>
     <div id="terminal-drawer-container"></div>
+  </div>
+
+  <!-- File Viewer Modal (text / markdown / hex) -->
+  <div id="file-viewer-modal"
+    style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div
+      style="background: white; border-radius: 8px; width: 80%; height: 80%; max-width: 1100px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15); overflow: hidden;">
+      <div
+        style="display: flex; align-items: center; padding: 12px 18px; border-bottom: 1px solid #ddd; flex-shrink: 0; gap: 8px;">
+        <h2 id="file-viewer-modal-title" style="margin: 0; flex: 1; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #333;"></h2>
+        <button id="btn-fv-edit"
+          style="padding: 5px 13px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Edit</button>
+        <button id="btn-fv-save"
+          style="display: none; padding: 5px 13px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Save</button>
+        <button id="btn-fv-switch-view"
+          style="padding: 5px 13px; background: #f5f5f5; color: #444; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 12px;">View Hex</button>
+        <button id="btn-fv-close"
+          style="padding: 5px 11px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 12px;">&#x2715;</button>
+      </div>
+      <div id="fv-info-bar"
+        style="display: none; padding: 5px 18px; border-bottom: 1px solid #e8e8e8; flex-shrink: 0; align-items: center; gap: 8px; background: #f9f9f9; font-size: 11px; color: #555;">
+        <span id="fv-encoding-badge"
+          style="padding: 2px 7px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 3px; font-family: monospace; letter-spacing: 0.03em;"></span>
+        <span id="fv-newline-badge"
+          style="padding: 2px 7px; background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 3px; font-family: monospace; letter-spacing: 0.03em;"></span>
+        <span style="flex: 1;"></span>
+        <span style="color: #999; font-size: 10px; margin-right: 2px;">Open in:</span>
+        <span id="fv-panel-btns" style="display: flex; gap: 4px;"></span>
+      </div>
+      <div style="flex: 1; overflow: hidden; display: flex; flex-direction: column;">
+        <div id="fv-editor-container" style="flex: 1; display: none;"></div>
+        <div id="fv-content-view" style="flex: 1; overflow: auto; padding: 12px 18px; display: none;"></div>
+      </div>
+    </div>
   </div>
 
   <!-- jQuery -->

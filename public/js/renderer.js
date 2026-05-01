@@ -33,7 +33,7 @@ import * as terminal from './modules/terminal.js';
 import { openDragTrayForActivePanel } from './modules/dragdrop.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
-export { monacoEditor, formatFileContent, openNotesModal, showFileView, hideFileView, toggleFileEditMode } from './modules/notes.js';
+export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal } from './modules/notes.js';
 export { generateW2UIContextMenu, showCustomContextMenu } from './modules/contexts.js';
 export { openHistoryModal, formatHistoryData, buildCompleteFileState } from './modules/history.js';
 export { updateAlertBadge } from './modules/alerts.js';
@@ -883,6 +883,12 @@ function attachEventListeners() {
       return;
     }
 
+    // Escape key: close file viewer modal if open
+    if (event.key === 'Escape' && $('#file-viewer-modal').is(':visible')) {
+      notes.hideFileViewerModal();
+      return;
+    }
+
     // Escape key: close notes modal if open
     if (event.key === 'Escape' && $('#notes-modal').is(':visible')) {
       notes.hideNotesModal();
@@ -1494,6 +1500,25 @@ function attachEventListeners() {
   $('#notes-modal').click(function (e) {
     if (e.target === this) {
       notes.hideNotesModal();
+    }
+  });
+
+  // File Viewer modal close / edit / save buttons
+  $('#btn-fv-close').click(function () {
+    notes.hideFileViewerModal();
+  });
+  $('#btn-fv-edit').click(async function () {
+    await notes.toggleFileViewerEditMode();
+  });
+  $('#btn-fv-save').click(async function () {
+    await notes.toggleFileViewerEditMode();
+  });
+  $('#btn-fv-switch-view').click(async function () {
+    await notes.switchFileViewerView();
+  });
+  $('#file-viewer-modal').click(function (e) {
+    if (e.target === this) {
+      notes.hideFileViewerModal();
     }
   });
 

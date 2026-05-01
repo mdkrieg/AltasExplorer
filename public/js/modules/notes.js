@@ -115,6 +115,54 @@ export function getLanguageForFormat(format) {
   }
 }
 
+/**
+ * Resolve the display format ('Markdown' | 'PlainText') for a file.
+ * viewMode values: 'text-plain', 'text-markdown', 'auto-detect', or null (use settings).
+ */
+function resolveViewFormat(filePath, viewMode, settingsFileFormat) {
+  if (viewMode === 'text-plain') return 'PlainText';
+  if (viewMode === 'text-markdown') return 'Markdown';
+  if (viewMode === 'auto-detect') {
+    const basename = (filePath || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
+    if (basename === 'notes.txt' || basename.endsWith('.md')) {
+      return settingsFileFormat || 'Markdown';
+    }
+    return 'PlainText';
+  }
+  // null / undefined → honour the global setting (existing behaviour)
+  return settingsFileFormat || 'Markdown';
+}
+
+/**
+ * Build a hex-dump HTML string from a byte array.
+ * Standard "offset  | hex groups | ASCII" layout, 16 bytes per row.
+ */
+function formatHexDump(bytes, totalSize, truncated) {
+  const lines = [];
+  for (let i = 0; i < bytes.length; i += 16) {
+    const chunk = Array.isArray(bytes) ? bytes.slice(i, i + 16) : Array.from(bytes.slice(i, i + 16));
+    const offset = i.toString(16).toUpperCase().padStart(8, '0');
+    const hex1 = [], hex2 = [], ascii = [];
+    for (let j = 0; j < 16; j++) {
+      if (j < chunk.length) {
+        const b = chunk[j];
+        const h = b.toString(16).toUpperCase().padStart(2, '0');
+        (j < 8 ? hex1 : hex2).push(h);
+        ascii.push(b >= 0x20 && b < 0x7F ? String.fromCharCode(b) : '.');
+      } else {
+        (j < 8 ? hex1 : hex2).push('  ');
+        ascii.push(' ');
+      }
+    }
+    lines.push(`${offset}  ${hex1.join(' ')}  ${hex2.join(' ')}  |${ascii.join('')}|`);
+  }
+  const body = utils.escapeHtml(lines.join('\n'));
+  const note = truncated
+    ? `\n<span style="color:#888;font-style:italic;">[First ${bytes.length.toLocaleString()} of ${totalSize.toLocaleString()} bytes shown]</span>`
+    : '';
+  return `<pre style="font-family:'Courier New',Consolas,monospace;font-size:12px;white-space:pre;line-height:1.5;padding:8px;margin:0;overflow:auto;">${body}${note}</pre>`;
+}
+
 export function formatFileContent(content, format) {
   switch (format) {
     case 'PlainText':
@@ -275,7 +323,7 @@ function createMonacoEditorInstance(containerElement) {
   return monacoEditor;
 }
 
-export async function showFileView(panelId, filePathOverride) {
+export async function showFileView(panelId, filePathOverride, viewMode) {
   const filePath = filePathOverride || (panelState[1].currentPath + '\\notes.txt');
   panelState[panelId].fileViewPath = filePath;
 
@@ -299,7 +347,7 @@ export async function showFileView(panelId, filePathOverride) {
 
   try {
     const settings = await window.electronAPI.getSettings();
-    const fileFormat = settings.file_format || 'Markdown';
+    const fileFormat = resolveViewFormat(filePath, viewMode, settings.file_format);
 
     createMonacoEditorInstance($fileEditorContainer[0]);
     attachImagePasteHandler(monacoEditor, filePath);
@@ -349,7 +397,7 @@ export async function showFileView(panelId, filePathOverride) {
     if (monacoEditor) {
       monacoEditor.setValue('');
       const settings = await window.electronAPI.getSettings();
-      const fileFormat = settings.file_format || 'Markdown';
+      const fileFormat = resolveViewFormat(filePath, viewMode, settings.file_format);
       const language = getLanguageForFormat(fileFormat);
       monaco.editor.setModelLanguage(monacoEditor.getModel(), language);
     }
@@ -389,6 +437,44 @@ export function hideFileView(panelId) {
   $(`#panel-${panelId} .panel-landing-page`).show();
 
   setFileEditMode(false);
+}
+
+/**
+ * Show a read-only hex dump of a file in the panel file-view area.
+ */
+export async function showHexView(panelId, filePath) {
+  panelState[panelId].fileViewPath = filePath;
+
+  const $fileView = $(`#panel-${panelId} .panel-file-view`);
+  const $fileEditorContainer = $fileView.find('.file-editor-container');
+  const $fileContentView = $fileView.find('.file-content-view');
+  const $fileToolbar = $fileView.find('.w2ui-panel-title');
+
+  try {
+    const result = await window.electronAPI.readFileAsBuffer(filePath);
+    const bytes = result && result.bytes ? result.bytes : [];
+    const totalSize = result && result.totalSize != null ? result.totalSize : bytes.length;
+    const truncated = !!(result && result.truncated);
+    $fileContentView.html(formatHexDump(bytes, totalSize, truncated));
+  } catch (err) {
+    $fileContentView.html(`<pre style="padding:8px;color:#c00;">Error reading file: ${utils.escapeHtml(err.message)}</pre>`);
+  }
+
+  $(`#panel-${panelId} .panel-landing-page`).hide();
+  $(`#panel-${panelId} .panel-grid`).hide();
+  $(`#panel-${panelId} .panel-gallery`).removeClass('active');
+  panels.hidePanelToolbar(panelId);
+  $fileView.css('display', 'flex');
+
+  $fileContentView.show();
+  $fileEditorContainer.hide();
+
+  $fileToolbar.find('.file-path').text(filePath);
+  $fileToolbar.show();
+  $fileToolbar.find('.btn-file-edit').hide();
+  $fileToolbar.find('.btn-file-save').hide();
+
+  panels.setActivePanelId(panelId);
 }
 
 export async function toggleFileEditMode(panelId) {
@@ -597,3 +683,209 @@ export function hideNotesModal() {
   $('#btn-notes-edit').show();
   $('#btn-notes-save').hide();
 }
+
+// ============================================================
+// File Viewer Modal (View/Edit for arbitrary text/hex files)
+// ============================================================
+
+let fvModalEditor = null;
+let fvModalEditMode = false;
+let fvModalContext = null; // { filePath, viewMode }
+
+export async function openFileViewerModal(filePath, viewMode) {
+  fvModalContext = { filePath, viewMode };
+  fvModalEditMode = false;
+
+  const $modal = $('#file-viewer-modal');
+  const $editorContainer = $('#fv-editor-container');
+  const $contentView = $('#fv-content-view');
+
+  // Title: just the filename
+  const filename = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
+  $('#file-viewer-modal-title').text(filePath);
+  $('#file-viewer-modal-title').attr('title', filePath);
+
+  $editorContainer.empty();
+  if (fvModalEditor) { fvModalEditor.dispose(); fvModalEditor = null; }
+
+  const isHex = viewMode === 'hex';
+  const isText = !isHex;
+
+  // Hex: no edit buttons
+  $('#btn-fv-edit').toggle(isText);
+  $('#btn-fv-save').hide();
+  $('#btn-fv-switch-view').text(isHex ? 'View Text' : 'View Hex');
+
+  $editorContainer.hide();
+  $contentView.empty().hide();
+
+  // Info bar: panel push buttons + encoding/newline badges
+  const $panelBtns = $('#fv-panel-btns').empty();
+  const maxPanel = Math.min(panels.visiblePanels + 1, 4);
+  for (let p = 1; p <= maxPanel; p++) {
+    const isNew = p > panels.visiblePanels;
+    const label = isNew ? `P${p} (+)` : `P${p}`;
+    const title = isNew ? `Open new panel ${p} and show file` : `Open in panel ${p} file view`;
+    const $btn = $(`<button style="padding: 2px 8px; background: #fff; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 600;" title="${title}">${label}</button>`);
+    $btn.click(async () => {
+      if (isNew) {
+        const $panel = $(`#panel-${p}`);
+        panels.setVisiblePanels(p);
+        $panel.show();
+        panels.attachPanelEventListeners(p);
+        panels.updatePanelLayout();
+      }
+      if (isHex) { await showHexView(p, filePath); }
+      else { await showFileView(p, filePath, viewMode); }
+    });
+    $panelBtns.append($btn);
+  }
+
+  if (!isHex) {
+    try {
+      const encInfo = await window.electronAPI.detectFileEncoding(filePath);
+      $('#fv-encoding-badge').text(encInfo.encoding || 'UTF-8').show();
+      if (encInfo.newline) {
+        $('#fv-newline-badge').text(encInfo.newline).show();
+      } else {
+        $('#fv-newline-badge').hide();
+      }
+    } catch (_) {
+      $('#fv-encoding-badge').text('?').show();
+      $('#fv-newline-badge').hide();
+    }
+  } else {
+    $('#fv-encoding-badge').hide();
+    $('#fv-newline-badge').hide();
+  }
+  $('#fv-info-bar').css('display', 'flex');
+
+  await initializeMonacoLoader();
+
+  if (isHex) {
+    try {
+      const result = await window.electronAPI.readFileAsBuffer(filePath);
+      const bytes = (result && result.bytes) ? result.bytes : [];
+      const totalSize = result && result.totalSize != null ? result.totalSize : bytes.length;
+      const truncated = !!(result && result.truncated);
+      $contentView.html(formatHexDump(bytes, totalSize, truncated));
+    } catch (err) {
+      $contentView.html(`<pre style="padding:8px;color:#c00;">Error reading file: ${utils.escapeHtml(err.message)}</pre>`);
+    }
+    $contentView.show();
+  } else {
+    // Text / Markdown
+    const settings = await window.electronAPI.getSettings();
+    const fileFormat = resolveViewFormat(filePath, viewMode, settings.file_format);
+
+    let content = '';
+    let readError = false;
+    try {
+      content = await window.electronAPI.readFileContent(filePath);
+    } catch (_) {
+      readError = true;
+    }
+
+    // Build Monaco editor (hidden initially unless file is empty / unreadable)
+    fvModalEditor = monaco.editor.create($editorContainer[0], {
+      value: content,
+      language: getLanguageForFormat(fileFormat),
+      theme: 'vs',
+      wordWrap: 'on',
+      lineNumbers: 'on',
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      automaticLayout: true,
+      fontSize: 13,
+      fontFamily: 'Consolas, "Courier New", monospace'
+    });
+    attachImagePasteHandler(fvModalEditor, filePath);
+
+    if (readError || content.trim() === '') {
+      // Start in edit mode
+      $editorContainer.show();
+      $contentView.hide();
+      $('#btn-fv-edit').hide();
+      $('#btn-fv-save').show();
+      fvModalEditMode = true;
+      setTimeout(() => fvModalEditor && fvModalEditor.focus(), 100);
+    } else {
+      // Render content view
+      if (fileFormat === 'Markdown') {
+        const htmlContent = await window.electronAPI.renderMarkdown(content, filePath);
+        $contentView.html(htmlContent);
+      } else {
+        $contentView.html(formatFileContent(content, fileFormat));
+      }
+      $editorContainer.hide();
+      $contentView.show();
+      $('#btn-fv-edit').show();
+      $('#btn-fv-save').hide();
+    }
+  }
+
+  $modal.css('display', 'flex');
+}
+
+export async function toggleFileViewerEditMode() {
+  if (!fvModalContext) return;
+  const { filePath, viewMode } = fvModalContext;
+  const $editorContainer = $('#fv-editor-container');
+  const $contentView = $('#fv-content-view');
+
+  if (!fvModalEditMode) {
+    // Switch to edit
+    $contentView.hide();
+    $editorContainer.show();
+    $('#btn-fv-edit').hide();
+    $('#btn-fv-save').show();
+    fvModalEditMode = true;
+    setTimeout(() => fvModalEditor && fvModalEditor.focus(), 50);
+    return;
+  }
+
+  // Save
+  const newContent = fvModalEditor ? fvModalEditor.getValue() : '';
+  try {
+    await window.electronAPI.writeFileContent(filePath, newContent);
+  } catch (err) {
+    alert('Error saving file: ' + err.message);
+    return;
+  }
+
+  const settings = await window.electronAPI.getSettings();
+  const fileFormat = resolveViewFormat(filePath, viewMode, settings.file_format);
+  if (fileFormat === 'Markdown') {
+    const htmlContent = await window.electronAPI.renderMarkdown(newContent, filePath);
+    $contentView.html(htmlContent);
+  } else {
+    $contentView.html(formatFileContent(newContent, fileFormat));
+  }
+
+  $editorContainer.hide();
+  $contentView.show();
+  $('#btn-fv-save').hide();
+  $('#btn-fv-edit').show();
+  fvModalEditMode = false;
+}
+
+export async function switchFileViewerView() {
+  if (!fvModalContext) return;
+  const { filePath, viewMode } = fvModalContext;
+  const isHex = viewMode === 'hex';
+  await openFileViewerModal(filePath, isHex ? 'text-plain' : 'hex');
+}
+
+export function hideFileViewerModal() {
+  $('#file-viewer-modal').hide();
+  $('#fv-info-bar').hide();
+  $('#fv-panel-btns').empty();
+  if (fvModalEditor) { fvModalEditor.dispose(); fvModalEditor = null; }
+  fvModalEditMode = false;
+  fvModalContext = null;
+  $('#fv-content-view').empty().hide();
+  $('#fv-editor-container').empty().hide();
+  $('#btn-fv-edit').show();
+  $('#btn-fv-save').hide();
+}
+

@@ -14,7 +14,11 @@ import {
 	openNotesModal,
 	openTodoModal,
 	getAllCategories,
-	getAllTags
+	getAllTags,
+	showFileView,
+	showHexView,
+	openImageViewerModal,
+	openFileViewerModal
 } from '../renderer.js';
 
 let panelContextMenuState = {};
@@ -199,6 +203,58 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 				? `Open with ${defaultAppResult.appName}`
 				: 'Open';
 			contextMenu.push({ id: 'open-in-default-app', text: openText, icon: 'fa fa-external-link' });
+
+			// Determine built-in viewer for this file
+			const viewRecord = selectedRecords[0];
+			const viewFilename = viewRecord.filenameRaw || viewRecord.filename || '';
+			const viewFt = panels.matchFileType(viewFilename);
+			const rawViewWith = viewFt ? (viewFt.openWith || 'auto-detect') : 'auto-detect';
+			let viewMode = null;       // resolved: 'text-plain'|'text-markdown'|'image'|'hex'
+			let pendingViewMode = null; // Promise<string> for unknown files
+
+			if (rawViewWith === 'text-editor-plain' || rawViewWith === 'builtin-editor') {
+				viewMode = 'text-plain';
+			} else if (rawViewWith === 'text-editor-markdown') {
+				viewMode = 'text-markdown';
+			} else if (rawViewWith === 'image-viewer') {
+				viewMode = 'image';
+			} else if (rawViewWith === 'hex-viewer') {
+				viewMode = 'hex';
+			} else if (rawViewWith !== 'aly-layout' && rawViewWith !== 'none') {
+				// auto-detect
+				if (viewFt) {
+					const ftType = viewFt.type || '';
+					if (ftType === 'Image') {
+						viewMode = 'image';
+					} else if (ftType === 'Video') {
+						viewMode = null; // no built-in viewer
+					} else {
+						const lowerName = viewFilename.toLowerCase();
+						viewMode = (lowerName.endsWith('.md') || lowerName === 'notes.txt') ? 'text-markdown' : 'text-plain';
+					}
+				} else {
+					// Completely unknown extension — probe binary asynchronously
+					pendingViewMode = window.electronAPI.checkFileBinary(viewRecord.path)
+						.then(res => (res && res.isBinary) ? 'hex' : 'text-plain')
+						.catch(() => 'text-plain');
+				}
+			}
+
+			const viewLabel = viewMode === 'image' ? 'View Image'
+				: viewMode === 'hex' ? 'View Hex'
+				: (viewMode === 'text-plain' || viewMode === 'text-markdown') ? 'View/Edit'
+				: pendingViewMode ? 'View...'
+				: null;
+			const viewIcon = viewMode === 'image' ? 'fa fa-picture-o'
+				: viewMode === 'hex' ? 'fa fa-code'
+				: 'fa fa-pencil';
+
+			if (viewLabel !== null) {
+				contextMenu.push({ id: 'view-file', text: viewLabel, icon: viewIcon });
+			}
+			panelContextMenuState.viewFileMode = viewMode;
+			panelContextMenuState.pendingViewFileMode = pendingViewMode;
+
 			const filePanels = availablePanels.filter(panelNumber => panelNumber > 1);
 			if (filePanels.length > 0) {
 				addSeparator(contextMenu);
@@ -353,7 +409,7 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		}
 	} catch (_) { /* custom actions are non-critical */ }
 
-	return { items: contextMenu, pendingDefaultApp };
+	return { items: contextMenu, pendingDefaultApp, pendingViewMode: panelContextMenuState.pendingViewFileMode || null };
 }
 
 async function handleContextMenuClick(event, panelId) {
@@ -725,6 +781,22 @@ async function handleContextMenuClick(event, panelId) {
 		}
 	}
 
+	if (menuItemId === 'view-file') {
+		const record = selectedRecords[0];
+		if (!record) return;
+		let mode = panelContextMenuState.viewFileMode;
+		if (!mode && panelContextMenuState.pendingViewFileMode) {
+			mode = await panelContextMenuState.pendingViewFileMode;
+		}
+		mode = mode || 'text-plain';
+		if (mode === 'image') {
+			openImageViewerModal(record.path);
+		} else {
+			// hex, text-plain, text-markdown all open in the file viewer modal
+			await openFileViewerModal(record.path, mode);
+		}
+	}
+
 	if (menuItemId.startsWith('run-custom-action-')) {
 		const actionId = menuItemId.replace('run-custom-action-', '');
 		const record = selectedRecords[0];
@@ -901,7 +973,7 @@ function buildMenuEl(items, panelId) {
 	return menu;
 }
 
-export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp) {
+export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp, pendingViewMode) {
 	hideCustomContextMenu();
 
 	const menu = buildMenuEl(items, panelId);
@@ -919,6 +991,17 @@ export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp) {
 			const openRow = menuEl.querySelector('.custom-ctx-item[data-id="open-in-default-app"]');
 			const openLabel = openRow && openRow.querySelector('.custom-ctx-label');
 			if (openLabel) openLabel.textContent = `Open with ${result.appName}`;
+		});
+	}
+
+	// Patch the view-file label once the binary probe resolves (unknown file types)
+	if (pendingViewMode) {
+		pendingViewMode.then(mode => {
+			const menuEl = document.getElementById('custom-ctx-menu');
+			if (!menuEl) return;
+			const viewRow = menuEl.querySelector('.custom-ctx-item[data-id="view-file"]');
+			const viewLabel = viewRow && viewRow.querySelector('.custom-ctx-label');
+			if (viewLabel) viewLabel.textContent = mode === 'hex' ? 'View Hex' : 'View/Edit';
 		});
 	}
 

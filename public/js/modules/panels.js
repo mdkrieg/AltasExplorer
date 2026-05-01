@@ -29,6 +29,7 @@ import {
 	hideFileView,
 	toggleFileEditMode,
 	openImageViewerModal,
+	showHexView,
 	buildCompleteFileState,
 	formatHistoryData,
 	formatFileContent,
@@ -3450,9 +3451,9 @@ async function initializeGridForPanel(panelId) {
 				const selectedRecIds = this.getSelection();
 				const selectedRecords = selectedRecIds.map(recid => this.records.find(r => r.recid === recid));
 				if (selectedRecords.length === 0) return;
-				const { items: menuItems, pendingDefaultApp } = await generateW2UIContextMenu(selectedRecords, visiblePanels);
+				const { items: menuItems, pendingDefaultApp, pendingViewMode } = await generateW2UIContextMenu(selectedRecords, visiblePanels);
 				const origEvent = event.detail.originalEvent;
-				showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId, pendingDefaultApp);
+				showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId, pendingDefaultApp, pendingViewMode);
 			}
 		},
 		onColumnContextMenu: function (event) {
@@ -4487,8 +4488,8 @@ function renderGallery(panelId, tagDefs) {
 			(state.galleryRecords || []).find(r => r.recid === id)
 		).filter(Boolean);
 		if (selectedRecords.length === 0) return;
-		const { items: menuItems, pendingDefaultApp } = await generateW2UIContextMenu(selectedRecords, visiblePanels);
-		showCustomContextMenu(menuItems, e.clientX, e.clientY, panelId, pendingDefaultApp);
+		const { items: menuItems, pendingDefaultApp, pendingViewMode } = await generateW2UIContextMenu(selectedRecords, visiblePanels);
+		showCustomContextMenu(menuItems, e.clientX, e.clientY, panelId, pendingDefaultApp, pendingViewMode);
 	});
 }
 
@@ -5639,16 +5640,38 @@ export function attachPanelEventListeners(panelId) {
 
 		$panel.find('.item-props-icon').off('click').on('click', async function () {
 			if (!$(this).hasClass('clickable')) return;
-			const openWith = panelState[panelId].currentItemOpenWith;
-			if (!openWith || openWith === 'none') return;
-			if (openWith === 'os-default') {
-				await window.electronAPI.openInDefaultApp(selectedItemState.path);
-			} else if (openWith === 'item-properties') {
-				if (selectedItemState.record) await showItemPropsModal(selectedItemState.record, panelId);
-			} else if (openWith === 'image-viewer') {
-				openImageViewerModal(selectedItemState.path);
-			} else if (openWith === 'builtin-editor') {
-				showFileView(panelId, selectedItemState.path);
+			const viewWith = panelState[panelId].currentItemOpenWith;
+			if (!viewWith || viewWith === 'none') return;
+			const filePath = selectedItemState.path;
+			if (viewWith === 'image-viewer') {
+				openImageViewerModal(filePath);
+			} else if (viewWith === 'hex-viewer') {
+				await showHexView(panelId, filePath);
+			} else if (viewWith === 'text-editor-plain' || viewWith === 'builtin-editor') {
+				showFileView(panelId, filePath, 'text-plain');
+			} else if (viewWith === 'text-editor-markdown') {
+				showFileView(panelId, filePath, 'text-markdown');
+			} else if (viewWith === 'auto-detect' || viewWith === 'os-default') {
+				// auto-detect: determine viewer from filename / binary probe
+				const filename = selectedItemState.filename || '';
+				const ft = matchFileType(filename);
+				if (ft && ft.type === 'Image') {
+					openImageViewerModal(filePath);
+				} else if (ft && ft.type === 'Video') {
+					await window.electronAPI.openInDefaultApp(filePath);
+				} else {
+					const lowerName = filename.toLowerCase();
+					let mode = (lowerName.endsWith('.md') || lowerName === 'notes.txt') ? 'text-markdown' : 'text-plain';
+					if (!ft) {
+						const probe = await window.electronAPI.checkFileBinary(filePath).catch(() => ({ isBinary: false }));
+						if (probe.isBinary) mode = 'hex';
+					}
+					if (mode === 'hex') {
+						await showHexView(panelId, filePath);
+					} else {
+						showFileView(panelId, filePath, mode);
+					}
+				}
 			}
 		});
 
@@ -6136,7 +6159,9 @@ export async function updateItemPropertiesPage(panelId) {
 			? `<img src="assets/icons/folder.png" style="width:24px;height:24px;object-fit:contain;" onerror="this.src='assets/icons/user-file.png'">`
 			: `<img src="assets/icons/${stats.ftIcon || 'user-file.png'}" style="width:24px;height:24px;object-fit:contain;">`;
 		const $icon = $panel.find('.item-props-icon').html(iconHtml);
-		if (!stats.isDirectory && openWith && openWith !== 'none') {
+		const hasViewer = !stats.isDirectory && openWith && openWith !== 'none'
+			&& openWith !== 'os-default' && openWith !== 'item-properties' && openWith !== 'aly-layout';
+		if (hasViewer) {
 			$icon.addClass('clickable');
 		} else {
 			$icon.removeClass('clickable');

@@ -202,6 +202,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Notes file operations
   readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
+  checkFileBinary: (filePath) => ipcRenderer.invoke('check-file-binary', filePath),
+  readFileAsBuffer: (filePath) => ipcRenderer.invoke('read-file-as-buffer', filePath),
+  detectFileEncoding: (filePath) => ipcRenderer.invoke('detect-file-encoding', filePath),
   writeFileContent: (filePath, content) => ipcRenderer.invoke('write-file-content', { filePath, content }),
   saveNotesImage: (opts) => ipcRenderer.invoke('save-notes-image', opts),
 

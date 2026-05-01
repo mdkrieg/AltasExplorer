@@ -199,6 +199,21 @@ class FileTypeService {
           changed = true;
         }
       }
+      // Migrate obsolete openWith values to new viewWith semantics
+      const OBSOLETE_VALUES = {
+        'os-default': 'auto-detect',
+        'item-properties': 'auto-detect',
+        'none': 'auto-detect',
+        'builtin-editor': 'text-editor-markdown'
+      };
+      for (const entry of types) {
+        if (entry.locked) continue;
+        const old = entry.openWith;
+        if (old && OBSOLETE_VALUES[old]) {
+          entry.openWith = OBSOLETE_VALUES[old];
+          changed = true;
+        }
+      }
       if (changed) {
         this._save(types);
       }
