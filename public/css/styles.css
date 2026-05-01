@@ -2335,6 +2335,49 @@ hr {
   cursor: not-allowed !important;
 }
 
+/* Path Bar Autocomplete Dropdown */
+#path-autocomplete-dropdown {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0;
+  background: #fff;
+  border: 1px solid #bdbdbd;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  overflow-y: auto;
+  max-height: 260px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+#path-autocomplete-dropdown .ac-item {
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #333;
+}
+
+#path-autocomplete-dropdown .ac-item:hover,
+#path-autocomplete-dropdown .ac-item.ac-active {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+/* Subtle left border to indicate match tier */
+#path-autocomplete-dropdown .ac-tier-prefix {
+  border-left: 3px solid #2196F3;
+}
+
+#path-autocomplete-dropdown .ac-tier-fuzzy {
+  border-left: 3px solid #ff9800;
+}
+
+#path-autocomplete-dropdown .ac-tier-contains {
+  border-left: 3px solid #9e9e9e;
+}
+
 /* When path input is in edit mode, span full width and hide all buttons */
 .w2ui-panel-title.path-input-editing .panel-path-input {
   max-width: 100%;
@@ -2899,6 +2942,30 @@ hr {
   font-size: 11px;
   font-style: italic;
   text-align: center;
+}
+
+.sidebar-todos-loading {
+  padding: 10px 12px;
+}
+
+.sidebar-todos-loading-label {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 5px;
+}
+
+.sidebar-todos-loading-bar-track {
+  height: 4px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.sidebar-todos-loading-bar-fill {
+  height: 100%;
+  background: #4a9eff;
+  border-radius: 2px;
+  transition: width 0.15s ease;
 }
 
 .sidebar-todo-group {

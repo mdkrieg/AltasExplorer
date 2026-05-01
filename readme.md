@@ -173,9 +173,9 @@ Manipulation phase:
 * How deep to go on file editing and viewing stuff? A lot can be done with monaco for plaintext files. But do we want to read spreadsheets as well? Perhaps View only for those?
 
 [x] Configure %ile resize for all column types
-* Fix pin-sort of . and .. folders so . is always less than ..
+[x] Fix pin-sort of . and .. folders so . is always less than ..
 ? What happens if I select remove favorites on a local favorite?
-* set category on .. dir not working (no effect)
+* set category on .. dir not working (no effect) - COULD NOT REPRODUCE
 * If adding a tag from the item properties modal, pressing create summons second modal, need to close first or push the create inline
 * Create tag modal needs padding on the hex color inputs, currently overlappint with # char
 * Seems tags aren't getting a border, they should get the configured outline color as a border

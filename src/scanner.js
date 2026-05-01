@@ -211,6 +211,22 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       return { success: false, error: 'Directory path cannot be empty' };
     }
 
+    // UNC server root (\\hostname) — can't be stat'd; enumerate shares and return early
+    if (fs.isUncServerRoot(normalizedPath)) {
+      const shareEntries = fs.readUncShares(normalizedPath);
+      return {
+        success: true,
+        count: 0,
+        entries: shareEntries.map(e => ({ ...e, changeState: 'unchanged' })),
+        category: null,
+        categoryData: null,
+        hasChanges: false,
+        alertsCreated: 0,
+        orphanCount: 0,
+        trashCount: 0,
+      };
+    }
+
     const dirStats = fs.getStats(normalizedPath);
     if (!dirStats) {
       return { success: false, error: 'Unable to read directory stats' };

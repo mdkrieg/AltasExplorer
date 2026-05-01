@@ -9,6 +9,7 @@ import * as terminal from './terminal.js';
 import { attachDragDropForPanel, attachDragDropForGallery } from './dragdrop.js';
 import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip } from './vendor/w2ui.es6.min.js';
 import * as autoLabels from './auto-labels.js';
+import { getPathSuggestions } from './path-autocomplete.js';
 import {
 	panelState,
 	selectedItemState,
@@ -819,6 +820,182 @@ function darkenRgb(rgbStr, amount = 30) {
 	return `rgb(${r}, ${g}, ${b})`;
 }
 
+// ─── Path Bar Autocomplete ────────────────────────────────────────────────────
+
+const pathAutocomplete = {
+	suggestions: [],
+	activeIndex: -1,
+	inputEl: null,
+	panelId: null,
+	preventBlur: false,
+};
+
+function hidePathAutocomplete() {
+	pathAutocomplete.suggestions = [];
+	pathAutocomplete.activeIndex = -1;
+	const dropdown = document.getElementById('path-autocomplete-dropdown');
+	if (dropdown) dropdown.style.display = 'none';
+}
+
+function createOrUpdatePathDropdown(inputEl, suggestions, activeIndex) {
+	let dropdown = document.getElementById('path-autocomplete-dropdown');
+	if (!dropdown) {
+		dropdown = document.createElement('ul');
+		dropdown.id = 'path-autocomplete-dropdown';
+		document.body.appendChild(dropdown);
+
+		// mousedown fires before blur, preventing the input from hiding
+		// before the click on a suggestion is processed
+		dropdown.addEventListener('mousedown', function (e) {
+			const li = e.target.closest('li[data-index]');
+			if (!li) return;
+			e.preventDefault();
+			pathAutocomplete.preventBlur = true;
+			const idx = parseInt(li.dataset.index, 10);
+			const chosen = pathAutocomplete.suggestions[idx];
+			if (!chosen) return;
+			const pid = pathAutocomplete.panelId;
+			const inputEl2 = pathAutocomplete.inputEl;
+			const $inp = inputEl2 ? $(inputEl2) : null;
+			const $hdr = $inp ? $inp.closest('.panel-header, [id$="_header"]') : null;
+			hidePathAutocomplete();
+			if ($inp) {
+				$inp.hide();
+				if ($hdr) $hdr.find('.panel-path').show();
+			}
+			navigateToDirectory(chosen.fullPath, pid);
+			setTimeout(() => { pathAutocomplete.preventBlur = false; }, 0);
+		});
+	}
+
+	if (suggestions.length === 0) {
+		dropdown.style.display = 'none';
+		return;
+	}
+
+	const rect = inputEl.getBoundingClientRect();
+	dropdown.style.cssText = `
+		display: block;
+		position: fixed;
+		top: ${rect.bottom + 2}px;
+		left: ${rect.left}px;
+		width: ${rect.width}px;
+		z-index: 99999;
+	`;
+
+	dropdown.innerHTML = suggestions.map((s, i) => {
+		const tierClass = s.score <= 0 ? 'ac-tier-prefix' : s.score < 1.5 ? 'ac-tier-fuzzy' : 'ac-tier-contains';
+		const activeClass = i === activeIndex ? ' ac-active' : '';
+		return `<li class="ac-item ${tierClass}${activeClass}" data-index="${i}">${utils.escapeHtml(s.name)}</li>`;
+	}).join('');
+}
+
+/**
+ * Attach path input listeners with autocomplete to a header element.
+ * Called by both attachGridHeaderEventListeners and attachPanelHeaderEventListeners.
+ * @param {jQuery} $header   jQuery wrapper of the header element.
+ * @param {number} panelId
+ */
+function attachPathInputListeners($header, panelId) {
+	const $pathDisplay = $header.find('.panel-path');
+	const $input = $header.find('.panel-path-input');
+
+	const dismissInput = () => {
+		hidePathAutocomplete();
+		$input.hide();
+		$pathDisplay.show();
+	};
+
+	$pathDisplay.off('click').on('click', function () {
+		$pathDisplay.hide();
+		$input.show().select().focus();
+	});
+
+	$input.off('keydown blur input');
+
+	$input.on('input', async function () {
+		const typedValue = $(this).val();
+		const inputEl = this;
+		let suggestions;
+		try {
+			suggestions = await getPathSuggestions(typedValue, panelId, panelState);
+		} catch {
+			suggestions = [];
+		}
+		if (document.activeElement !== inputEl) return;
+		pathAutocomplete.suggestions = suggestions;
+		pathAutocomplete.activeIndex = -1;
+		pathAutocomplete.inputEl = inputEl;
+		pathAutocomplete.panelId = panelId;
+		createOrUpdatePathDropdown(inputEl, suggestions, -1);
+	});
+
+	$input.on('keydown', function (e) {
+		const { suggestions, activeIndex } = pathAutocomplete;
+		const dropdownOpen = suggestions.length > 0;
+
+		if (e.key === 'ArrowDown') {
+			if (!dropdownOpen) return;
+			e.preventDefault();
+			pathAutocomplete.activeIndex = Math.min(activeIndex + 1, suggestions.length - 1);
+			createOrUpdatePathDropdown(this, suggestions, pathAutocomplete.activeIndex);
+			return;
+		}
+
+		if (e.key === 'ArrowUp') {
+			if (!dropdownOpen) return;
+			e.preventDefault();
+			pathAutocomplete.activeIndex = Math.max(activeIndex - 1, -1);
+			createOrUpdatePathDropdown(this, suggestions, pathAutocomplete.activeIndex);
+			return;
+		}
+
+		if (e.key === 'Tab') {
+			if (dropdownOpen && pathAutocomplete.activeIndex >= 0) {
+				e.preventDefault();
+				const chosen = suggestions[pathAutocomplete.activeIndex];
+				const sep = chosen.fullPath.includes('/') ? '/' : '\\';
+				$(this).val(chosen.fullPath + sep);
+				hidePathAutocomplete();
+				// Re-trigger suggestions for the newly completed segment
+				$(this).trigger('input');
+			}
+			return;
+		}
+
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			let newPath;
+			if (pathAutocomplete.activeIndex >= 0 && suggestions[pathAutocomplete.activeIndex]) {
+				newPath = suggestions[pathAutocomplete.activeIndex].fullPath;
+			} else {
+				newPath = $(this).val().trim();
+			}
+			dismissInput();
+			if (newPath && newPath !== panelState[panelId].currentPath) {
+				navigateToDirectory(newPath, panelId);
+			}
+			return;
+		}
+
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			if (dropdownOpen) {
+				hidePathAutocomplete();
+			} else {
+				dismissInput();
+			}
+		}
+	});
+
+	$input.on('blur', function () {
+		if (pathAutocomplete.preventBlur) return;
+		dismissInput();
+	});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function buildGridHeaderHtml(panelId, path, category) {
 	const safePath = utils.escapeHtml(path || '');
 	const buttonsHtml = panelId === 1
@@ -859,33 +1036,7 @@ function attachGridHeaderEventListeners(panelId) {
 	if (!headerEl) return;
 	const $header = $(headerEl);
 
-	$header.find('.panel-path').off('click').on('click', function () {
-		const $path = $(this);
-		const $input = $header.find('.panel-path-input');
-		$path.hide();
-		$input.show().select().focus();
-	});
-
-	$header.find('.panel-path-input').off('keydown blur').on('keydown', function (e) {
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			const newPath = $(this).val().trim();
-			const $path = $header.find('.panel-path');
-			const $input = $(this);
-			$input.hide();
-			$path.show();
-			if (newPath && newPath !== panelState[panelId].currentPath) {
-				navigateToDirectory(newPath, panelId);
-			}
-		} else if (e.key === 'Escape') {
-			e.preventDefault();
-			$(this).hide();
-			$header.find('.panel-path').show();
-		}
-	}).on('blur', function () {
-		$(this).hide();
-		$header.find('.panel-path').show();
-	});
+	attachPathInputListeners($header, panelId);
 
 	$header.find('.btn-panel-refresh').off('click').on('click', async function () {
 		setActivePanelId(panelId);
@@ -928,33 +1079,7 @@ function attachPanelHeaderEventListeners(panelId) {
 	if (!headerEl) return;
 	const $header = $(headerEl);
 
-	$header.find('.panel-path').off('click').on('click', function () {
-		const $path = $(this);
-		const $input = $header.find('.panel-path-input');
-		$path.hide();
-		$input.show().select().focus();
-	});
-
-	$header.find('.panel-path-input').off('keydown blur').on('keydown', function (e) {
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			const newPath = $(this).val().trim();
-			const $path = $header.find('.panel-path');
-			const $input = $(this);
-			$input.hide();
-			$path.show();
-			if (newPath && newPath !== panelState[panelId].currentPath) {
-				navigateToDirectory(newPath, panelId);
-			}
-		} else if (e.key === 'Escape') {
-			e.preventDefault();
-			$(this).hide();
-			$header.find('.panel-path').show();
-		}
-	}).on('blur', function () {
-		$(this).hide();
-		$header.find('.panel-path').show();
-	});
+	attachPathInputListeners($header, panelId);
 
 	$header.find('.btn-panel-refresh').off('click').on('click', async function () {
 		setActivePanelId(panelId);
@@ -3306,21 +3431,16 @@ async function initializeGridForPanel(panelId) {
 					return;
 				}
 
-				let hasPropertiesPanel = false;
-				for (let i = 2; i <= visiblePanels; i++) {
-					if (getPanelViewType(i) === 'properties') {
-						hasPropertiesPanel = true;
-						break;
-					}
+				// .lnk shortcuts navigate like directories
+				if (record.path && record.path.toLowerCase().endsWith('.lnk')) {
+					window.electronAPI.resolveShortcut(record.path).then(res => {
+						if (res && res.success) navigateToDirectory(res.targetPath, panelId);
+					});
+					return;
 				}
-				if (!hasPropertiesPanel && visiblePanels < 4) {
-					visiblePanels++;
-					const newPanelId = visiblePanels;
-					$(`#panel-${newPanelId}`).show();
-					attachPanelEventListeners(newPanelId);
-					updatePanelLayout();
-					setTimeout(() => updateItemPropertiesPage(newPanelId), 150);
-				}
+
+				// All other files: open with default OS application
+				window.electronAPI.openInDefaultApp(record.path);
 			}
 		},
 		onContextMenu: async function (event) {
@@ -3330,9 +3450,9 @@ async function initializeGridForPanel(panelId) {
 				const selectedRecIds = this.getSelection();
 				const selectedRecords = selectedRecIds.map(recid => this.records.find(r => r.recid === recid));
 				if (selectedRecords.length === 0) return;
-				const menuItems = await generateW2UIContextMenu(selectedRecords, visiblePanels);
+				const { items: menuItems, pendingDefaultApp } = await generateW2UIContextMenu(selectedRecords, visiblePanels);
 				const origEvent = event.detail.originalEvent;
-				showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId);
+				showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId, pendingDefaultApp);
 			}
 		},
 		onColumnContextMenu: function (event) {
@@ -3584,7 +3704,18 @@ function repositionMetaDirs(grid, panelId) {
 	if (metaRecs.length === 0) return;
 	const otherRecs = grid.records.filter(r => !r.isMetaDir);
 	const direction = grid.sortData[0].direction;
-	grid.records = direction === 'asc' ? [...metaRecs, ...otherRecs] : [...otherRecs, ...metaRecs];
+	// Always order meta dirs as ['.', '..'] regardless of sort field, then place
+	// them at the top (asc) or bottom (desc) in that stable order.
+	const sortedMeta = metaRecs.slice().sort((a, b) => {
+		const aName = a.filenameRaw ?? a.filename;
+		const bName = b.filenameRaw ?? b.filename;
+		if (aName === '.') return -1;
+		if (bName === '.') return 1;
+		return 0;
+	});
+	grid.records = direction === 'asc'
+		? [...sortedMeta, ...otherRecs]
+		: [...otherRecs, ...sortedMeta.slice().reverse()];
 }
 
 /**
@@ -4330,6 +4461,16 @@ function renderGallery(panelId, tagDefs) {
 		if (!record) return;
 		if (record.isFolder && record.changeState !== 'moved') {
 			navigateToDirectory(record.path, panelId);
+			return;
+		}
+		if (record.path && record.path.toLowerCase().endsWith('.lnk')) {
+			window.electronAPI.resolveShortcut(record.path).then(res => {
+				if (res && res.success) navigateToDirectory(res.targetPath, panelId);
+			});
+			return;
+		}
+		if (!record.isFolder) {
+			window.electronAPI.openInDefaultApp(record.path);
 		}
 	});
 
@@ -4346,8 +4487,8 @@ function renderGallery(panelId, tagDefs) {
 			(state.galleryRecords || []).find(r => r.recid === id)
 		).filter(Boolean);
 		if (selectedRecords.length === 0) return;
-		const menuItems = await generateW2UIContextMenu(selectedRecords, visiblePanels);
-		showCustomContextMenu(menuItems, e.clientX, e.clientY, panelId);
+		const { items: menuItems, pendingDefaultApp } = await generateW2UIContextMenu(selectedRecords, visiblePanels);
+		showCustomContextMenu(menuItems, e.clientX, e.clientY, panelId, pendingDefaultApp);
 	});
 }
 
@@ -4855,10 +4996,12 @@ export function navigateToParent(panelId) {
 	setActivePanelId(panelId);
 	const state = panelState[panelId];
 	if (state.currentPath) {
+		const isUnc = state.currentPath.startsWith('\\\\');
 		const sep = state.currentPath.includes('/') ? '/' : '\\';
 		const parts = state.currentPath.split(/[\/\\]/).filter(p => p.length > 0);
 		if (parts.length > 1) {
-			const parentPath = (state.currentPath.startsWith('/') ? '/' : '') + parts.slice(0, -1).join(sep);
+			const prefix = isUnc ? '\\\\' : (state.currentPath.startsWith('/') ? '/' : '');
+			const parentPath = prefix + parts.slice(0, -1).join(sep);
 			navigateToDirectory(parentPath, panelId);
 		}
 	}

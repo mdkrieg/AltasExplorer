@@ -268,6 +268,8 @@
     runCustomAction:           (actionId, filePath)        => call('runCustomAction', [actionId, filePath]),
     runCustomActionInTerminal: (actionId, filePath, terminalId) => call('runCustomActionInTerminal', [actionId, filePath, terminalId]),
     openInDefaultApp:          (filePath)                  => call('openInDefaultApp', [filePath]),
+    getDefaultApp:             (filePath)                  => Promise.resolve({ success: false }),
+    resolveShortcut:           (lnkPath)                   => Promise.resolve({ success: false }),
     openExternalLink:          (url)                       => { window.open(url, '_blank', 'noopener'); return Promise.resolve({ ok: true }); },
     pickFile:                  (options)                   => call('pickFile', [options]),
 

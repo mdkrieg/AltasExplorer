@@ -21,6 +21,7 @@ let showCompleted = false;
 let lastRenderedBodyId = null;
 let isRendering = false;
 let collapsedGroups = new Set();
+let startupRefreshState = null; // { done, total } while deferred refresh is running, null otherwise
 
 function escapeHtml(str) {
   return String(str ?? '')
@@ -36,6 +37,16 @@ function getBody() {
 
 function renderEmpty(body, message) {
   body.innerHTML = `<div class="sidebar-todos-empty">${escapeHtml(message)}</div>`;
+}
+
+function renderLoading(body, done, total) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  body.innerHTML = `<div class="sidebar-todos-loading">
+    <div class="sidebar-todos-loading-label">Indexing TODOs… ${done}/${total}</div>
+    <div class="sidebar-todos-loading-bar-track">
+      <div class="sidebar-todos-loading-bar-fill" style="width:${pct}%"></div>
+    </div>
+  </div>`;
 }
 
 function renderGroups(body, groups) {
@@ -86,6 +97,10 @@ function renderGroups(body, groups) {
 async function refreshRender() {
   const body = getBody();
   if (!body) return;
+  if (startupRefreshState) {
+    renderLoading(body, startupRefreshState.done, startupRefreshState.total);
+    return;
+  }
   if (isRendering) return;
   isRendering = true;
   try {
@@ -276,6 +291,25 @@ function wireEvents() {
 
 export function initSidebarTodos() {
   wireEvents();
+
+  // Track the deferred startup refresh and show a progress bar while it runs.
+  if (window.electronAPI.onTodoRefreshStart) {
+    window.electronAPI.onTodoRefreshStart(({ total }) => {
+      startupRefreshState = { done: 0, total };
+      const body = getBody();
+      if (body) renderLoading(body, 0, total);
+    });
+    window.electronAPI.onTodoRefreshProgress(({ done, total }) => {
+      if (!startupRefreshState) return;
+      startupRefreshState = { done, total };
+      const body = getBody();
+      if (body) renderLoading(body, done, total);
+    });
+    window.electronAPI.onTodoRefreshDone(() => {
+      startupRefreshState = null;
+      void refreshRender();
+    });
+  }
 
   // Re-render on any aggregate change (other source of truth like a scan).
   if (window.electronAPI.onTodoAggregatesChanged) {

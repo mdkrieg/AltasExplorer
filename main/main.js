@@ -323,12 +323,23 @@ function createWindow() {
       }
     });
 
-    // Send pending layout file to renderer after window loads
+    // Send pending layout file to renderer after window loads, and kick off
+    // the deferred TODO aggregator refresh.
     mainWindow.webContents.on('did-finish-load', () => {
       if (pendingLayoutFile) {
         mainWindow.webContents.send('load-layout-from-file', pendingLayoutFile);
         pendingLayoutFile = null; // Clear after sending
       }
+      deferredTodoRefresh().catch(err => {
+        logger.error('deferredTodoRefresh failed:', err.message);
+      });
+      // Defer the first monitoring pass by 3 s to let the renderer finish
+      // its own startup IPC calls before the main process starts file I/O.
+      setTimeout(() => {
+        runMonitoringPass().catch(err => {
+          logger.error('Initial monitoring pass failed:', err.message);
+        });
+      }, 3000);
     });
 
     // Focus / blur bridging for the renderer's vignette overlay and the
@@ -367,17 +378,9 @@ function createWindow() {
 function syncIconAssets() {
   const srcDir = path.join(os.homedir(), '.atlasexplorer', 'icons');
   const destDir = path.join(__dirname, '..', 'public', 'assets', 'icons');
-  const assetsDir = path.join(__dirname, '..', 'public', 'assets');
 
   try {
-    // Delete public/assets entirely, then recreate icons destination
-    if (fsSync.existsSync(assetsDir)) {
-      fsSync.rmSync(assetsDir, { recursive: true, force: true });
-      logger.info('Deleted public/assets');
-    }
-    fsSync.mkdirSync(destDir, { recursive: true });
-
-    // Check if user directory has any icon files
+    // Determine effective source directory
     let effectiveSrcDir = srcDir;
     const userDirHasIcons = fsSync.existsSync(srcDir) &&
       fsSync.readdirSync(srcDir).some(f => /\.(png|svg)$/i.test(f));
@@ -392,15 +395,47 @@ function syncIconAssets() {
       logger.warn('User icons directory empty or missing; falling back to bundled assets');
     }
 
-    const files = fsSync.readdirSync(effectiveSrcDir);
+    fsSync.mkdirSync(destDir, { recursive: true });
+
+    // Copy only files that are missing or have a different size/mtime — avoids
+    // the expensive delete-all + recopy on every startup when nothing changed.
+    const srcFiles = fsSync.readdirSync(effectiveSrcDir);
     let copied = 0;
-    for (const file of files) {
-      if (/\.(png|svg)$/i.test(file)) {
-        fsSync.copyFileSync(path.join(effectiveSrcDir, file), path.join(destDir, file));
+    let skipped = 0;
+    for (const file of srcFiles) {
+      if (!/\.(png|svg)$/i.test(file)) continue;
+      const srcPath = path.join(effectiveSrcDir, file);
+      const destPath = path.join(destDir, file);
+      let needsCopy = true;
+      if (fsSync.existsSync(destPath)) {
+        const srcStat = fsSync.statSync(srcPath);
+        const destStat = fsSync.statSync(destPath);
+        if (srcStat.size === destStat.size && srcStat.mtimeMs <= destStat.mtimeMs) {
+          needsCopy = false;
+        }
+      }
+      if (needsCopy) {
+        fsSync.copyFileSync(srcPath, destPath);
         copied++;
+      } else {
+        skipped++;
       }
     }
-    logger.info(`Synced ${copied} icon(s) to public/assets/icons`);
+
+    // Remove dest files that no longer exist in the source
+    let removed = 0;
+    if (fsSync.existsSync(destDir)) {
+      const destFiles = fsSync.readdirSync(destDir);
+      const srcSet = new Set(srcFiles.filter(f => /\.(png|svg)$/i.test(f)));
+      for (const file of destFiles) {
+        if (/\.(png|svg)$/i.test(file) && !srcSet.has(file)) {
+          fsSync.unlinkSync(path.join(destDir, file));
+          removed++;
+        }
+      }
+    }
+
+    logger.info(`Synced icons: ${copied} copied, ${skipped} unchanged, ${removed} removed`);
   } catch (err) {
     logger.error('Error syncing icon assets:', err.message);
   }
@@ -449,6 +484,56 @@ function reconcilePendingDeletions() {
 }
 
 /**
+ * Run todoAggregator.refreshAll() after the renderer has loaded, yielding
+ * between files so the main-process event loop stays responsive. Sends three
+ * IPC events to the renderer:
+ *   todo-refresh-start    { total }
+ *   todo-refresh-progress { done, total }   (after every file)
+ *   todo-refresh-done     { changed, total }
+ */
+async function deferredTodoRefresh() {
+  let rows;
+  try {
+    rows = db.getAllTodoNotesFiles();
+  } catch (err) {
+    logger.error('deferredTodoRefresh: could not load notes files:', err.message);
+    return;
+  }
+
+  const total = rows.length;
+  if (total === 0) return;
+
+  function send(channel, data) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send(channel, data); } catch (_) { /* window closed */ }
+    }
+  }
+
+  send('todo-refresh-start', { total });
+
+  let changed = 0;
+  let done = 0;
+  for (const row of rows) {
+    // Yield to the event loop between each file so IPC and UI remain responsive
+    await new Promise(resolve => setImmediate(resolve));
+
+    try {
+      const res = todoAggregator.ensureAndRefresh(row.notes_path, row.dir_id);
+      if (res.changed) changed++;
+    } catch (err) {
+      logger.warn(`deferredTodoRefresh: failed for ${row.notes_path}: ${err.message}`);
+    }
+
+    done++;
+    send('todo-refresh-progress', { done, total });
+  }
+
+  logger.info(`TODO aggregator (deferred): refreshed ${changed}/${total} notes.txt files`);
+  send('todo-refresh-done', { changed, total });
+  send('todo-aggregates-changed', {});
+}
+
+/**
  * Initialize the application
  */
 function initialize() {
@@ -456,17 +541,11 @@ function initialize() {
   syncIconAssets();
   db.initialize();
   reconcilePendingDeletions();
-  try {
-    const result = todoAggregator.refreshAll();
-    logger.info(`TODO aggregator: refreshed ${result.changed}/${result.total} notes.txt files at startup`);
-  } catch (err) {
-    logger.error('TODO aggregator startup refresh failed:', err.message);
-  }
+  // todoAggregator.refreshAll() and the initial monitoring pass are both
+  // deferred until after did-finish-load so they don't compete with window
+  // creation. See deferredTodoRefresh() and the did-finish-load hook.
   reconfigureActiveMonitoring();
-  runMonitoringPass().catch(err => {
-    logger.error('Initial active monitoring pass failed:', err.message);
-  });
-  
+
   // Load default window icon
   const defaultCategory = categories.getCategory('Default');
   if (defaultCategory) {
@@ -590,6 +669,36 @@ ipcMain.handle('get-shortcuts-in-directory', (event, dirPath) => {
   } catch (err) {
     logger.error('Error getting shortcuts in directory:', err.message);
     return { success: false, error: err.message, shortcuts: [] };
+  }
+});
+
+/**
+ * Resolve a single .lnk shortcut (or symlink) to its target path.
+ * Returns { success, targetPath, isDirectory }.
+ */
+ipcMain.handle('resolve-shortcut', (event, lnkPath) => {
+  try {
+    const resolved = path.resolve(String(lnkPath));
+    if (!fsSync.existsSync(resolved)) return { success: false, error: 'File not found' };
+    if (process.platform === 'win32' && resolved.toLowerCase().endsWith('.lnk')) {
+      const linkInfo = shell.readShortcutLink(resolved);
+      const rawTarget = linkInfo.target || '';
+      if (!rawTarget) return { success: false, error: 'No target in shortcut' };
+      const targetPath = path.isAbsolute(rawTarget)
+        ? rawTarget
+        : path.resolve(path.dirname(resolved), rawTarget);
+      let isDirectory = false;
+      try { isDirectory = fsSync.statSync(targetPath).isDirectory(); } catch (_) {}
+      return { success: true, targetPath, isDirectory };
+    }
+    // Symlink fallback
+    const targetPath = fsSync.realpathSync(resolved);
+    let isDirectory = false;
+    try { isDirectory = fsSync.statSync(targetPath).isDirectory(); } catch (_) {}
+    return { success: true, targetPath, isDirectory };
+  } catch (err) {
+    logger.error('Error resolving shortcut:', err.message);
+    return { success: false, error: err.message };
   }
 });
 
@@ -3090,6 +3199,94 @@ ipcMain.handle('open-external-link', async (event, url) => {
   } catch (err) {
     logger.error('Error opening external link:', err.message);
     return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Query the OS for the friendly name of the default application for a file.
+ * Returns { success: true, appName: 'Acrobat Reader' } or { success: false }.
+ */
+ipcMain.handle('get-default-app', async (event, filePath) => {
+  try {
+    const resolved = path.resolve(String(filePath));
+    const ext = path.extname(resolved).toLowerCase();
+    if (!ext) return { success: false };
+
+    const platform = os.platform();
+
+    if (platform === 'win32') {
+      // Use Base64-encoded command to safely pass complex PowerShell with nested blocks.
+      // Lookup priority:
+      //   AppX/MSIX packaged apps (Store/MSIX installs) → AppxManifest DisplayName → package name parse
+      //   Standard apps → FriendlyAppName registry value → exe filename (title-cased)
+      const psScript = `
+$ext = '${ext.replace(/'/g, "''")}';
+$progId = (Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\$ext\\UserChoice" -ErrorAction SilentlyContinue).ProgId;
+if (-not $progId) { $progId = (Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\\$ext" -ErrorAction SilentlyContinue).'(default)' }
+if (-not $progId) { exit 1 }
+$openKey = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\\$progId\\shell\\open" -ErrorAction SilentlyContinue;
+if ($progId -like 'AppX*') {
+  $pkgFullName = $openKey.PackageId;
+  if (-not $pkgFullName) { exit 1 }
+  try {
+    $pkg = Get-AppxPackage -PackageFullName $pkgFullName -ErrorAction Stop;
+    $manifestPath = Join-Path $pkg.InstallLocation 'AppxManifest.xml';
+    $dn = ([xml](Get-Content $manifestPath)).Package.Properties.DisplayName;
+    if ($dn -and -not $dn.StartsWith('ms-resource:')) { $dn; exit 0 }
+  } catch {}
+  $appName = ($pkgFullName -split '_')[0] -replace '^[^.]+\\.', '';
+  if ($appName) { $appName } else { exit 1 }
+  exit 0
+}
+$friendly = $openKey.FriendlyAppName;
+if ($friendly) { $friendly; exit 0 }
+$cmd = (Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\\$progId\\shell\\open\\command" -ErrorAction SilentlyContinue).'(default)';
+if (-not $cmd) { exit 1 }
+$exe = if ($cmd -match '"([^"]+)"') { $Matches[1] } elseif ($cmd -match '^(\\S+)') { $Matches[1] } else { $null }
+if (-not $exe) { exit 1 }
+(Get-Culture).TextInfo.ToTitleCase([System.IO.Path]::GetFileNameWithoutExtension($exe).ToLower())`;
+
+      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+      const appName = await new Promise((resolve) => {
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 8000 }, (err, stdout) => {
+          const name = stdout && stdout.trim();
+          resolve(name || null);
+        });
+      });
+      return appName ? { success: true, appName } : { success: false };
+    }
+
+    if (platform === 'darwin') {
+      const script = `tell application "Finder" to name of (application file id (default application id of POSIX file "${resolved.replace(/"/g, '\\"')}"))`;
+      const appName = await new Promise((resolve) => {
+        execFile('osascript', ['-e', script], { timeout: 5000 }, (err, stdout) => {
+          const name = stdout && stdout.trim();
+          resolve(name || null);
+        });
+      });
+      return appName ? { success: true, appName } : { success: false };
+    }
+
+    if (platform === 'linux') {
+      const appName = await new Promise((resolve) => {
+        execFile('xdg-mime', ['query', 'filetype', resolved], { timeout: 5000 }, (err, mimeOut) => {
+          if (err || !mimeOut) return resolve(null);
+          const mimeType = mimeOut.trim();
+          execFile('xdg-mime', ['query', 'default', mimeType], { timeout: 5000 }, (err2, desktopOut) => {
+            if (err2 || !desktopOut) return resolve(null);
+            // e.g. 'evince.desktop' → 'evince'
+            const name = path.basename(desktopOut.trim(), '.desktop');
+            resolve(name || null);
+          });
+        });
+      });
+      return appName ? { success: true, appName } : { success: false };
+    }
+
+    return { success: false };
+  } catch (err) {
+    logger.error('Error getting default app:', err.message);
+    return { success: false };
   }
 });
 

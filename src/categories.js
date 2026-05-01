@@ -13,7 +13,6 @@ class CategoryService {
   constructor() {
     this.ensureDirectories();
     this.ensureHotkeysFile();
-    this.migrateSettingsToDatabase();
   }
 
   /**
@@ -96,38 +95,6 @@ class CategoryService {
     }
 
     return normalizedTarget;
-  }
-
-  /**
-   * Migrate directory assignments from settings.json to database
-   */
-  migrateSettingsToDatabase() {
-    try {
-      const settings = this.getSettings();
-      
-      // Check if there are any directoryPaths to migrate
-      if (settings.directoryPaths && Object.keys(settings.directoryPaths).length > 0) {
-        logger.info('Migrating directory assignments from settings.json to database...');
-        
-        // Migrate each path
-        for (const [dirPath, categoryName] of Object.entries(settings.directoryPaths)) {
-          try {
-            db.setCategoryForDirectory(dirPath, categoryName);
-            logger.info(`Migrated assignment: ${dirPath} => ${categoryName}`);
-          } catch (err) {
-            logger.warn(`Failed to migrate assignment for ${dirPath}:`, err.message);
-          }
-        }
-        
-        // Remove directoryPaths from settings.json
-        delete settings.directoryPaths;
-        this.saveSettings(settings);
-        
-        logger.info('Migration completed: directoryPaths removed from settings.json');
-      }
-    } catch (err) {
-      logger.warn('Error during settings migration:', err.message);
-    }
   }
 
   /**

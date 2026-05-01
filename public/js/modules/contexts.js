@@ -19,6 +19,8 @@ import {
 
 let panelContextMenuState = {};
 let globalHandlersInitialized = false;
+// Cache default app name per extension. Sentinel value null = lookup failed/unknown.
+const defaultAppCache = new Map();
 
 async function openActionTerminalPanel(filePath, actionLabel) {
 	let targetPanelId = terminal.getFallbackTerminalPanelId(panels.visiblePanels);
@@ -81,8 +83,34 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 
 	const contextMenu = [];
 
-	// Pre-generate category folder icons and tag icons in parallel
+	// Pre-generate category folder icons and tag icons in parallel.
+	// Default app lookup is handled separately so it never blocks menu display.
 	const categoryNames = Object.keys(allCategories);
+	const singleFilePath = (!isMultiSelect && fileCount > 0 && selectedRecords[0]) ? selectedRecords[0].path : null;
+	const singleFileExt = singleFilePath && singleFilePath.includes('.')
+		? singleFilePath.split('.').pop().toLowerCase() : null;
+
+	// Resolve default app from cache or start a background fetch.
+	let defaultAppResult = null;
+	let pendingDefaultApp = null; // resolves to { appName } or null after menu is shown
+	if (singleFileExt) {
+		if (defaultAppCache.has(singleFileExt)) {
+			defaultAppResult = defaultAppCache.get(singleFileExt);
+		} else {
+			// Not cached yet — will patch the menu label after it resolves
+			pendingDefaultApp = window.electronAPI.getDefaultApp(singleFilePath)
+				.then(result => {
+					const val = (result && result.success && result.appName) ? result : null;
+					defaultAppCache.set(singleFileExt, val);
+					return val;
+				})
+				.catch(() => {
+					defaultAppCache.set(singleFileExt, null);
+					return null;
+				});
+		}
+	}
+
 	const [categoryIconUrls, tagIconUrls] = await Promise.all([
 		Promise.all(categoryNames.map(name => {
 			const cat = allCategories[name];
@@ -111,6 +139,7 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		contextMenu.push({
 			id: 'open-in',
 			text: 'Open In',
+			clickable: true,
 			items: availablePanels.map(panelNumber => ({
 				id: `open-in-${panelNumber}`,
 				text: `Panel ${panelNumber}`
@@ -153,18 +182,35 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 	}
 
 	if (!isMultiSelect && fileCount > 0) {
-		contextMenu.push({ id: 'open-in-default-app', text: 'Open', icon: 'fa fa-external-link' });
-		const filePanels = availablePanels.filter(panelNumber => panelNumber > 1);
-		if (filePanels.length > 0) {
-			addSeparator(contextMenu);
+		const isLnk = selectedRecords[0]?.path?.toLowerCase().endsWith('.lnk');
+		if (isLnk) {
+			// .lnk shortcuts are treated like directories — show Open In instead of Open
 			contextMenu.push({
 				id: 'open-in',
 				text: 'Open In',
-				items: filePanels.map(panelNumber => ({
+				clickable: true,
+				items: availablePanels.map(panelNumber => ({
 					id: `open-in-${panelNumber}`,
 					text: `Panel ${panelNumber}`
 				}))
 			});
+		} else {
+			const openText = (defaultAppResult && defaultAppResult.appName)
+				? `Open with ${defaultAppResult.appName}`
+				: 'Open';
+			contextMenu.push({ id: 'open-in-default-app', text: openText, icon: 'fa fa-external-link' });
+			const filePanels = availablePanels.filter(panelNumber => panelNumber > 1);
+			if (filePanels.length > 0) {
+				addSeparator(contextMenu);
+				contextMenu.push({
+					id: 'open-in',
+					text: 'Open In',
+					items: filePanels.map(panelNumber => ({
+						id: `open-in-${panelNumber}`,
+						text: `Panel ${panelNumber}`
+					}))
+				});
+			}
 		}
 	}
 
@@ -307,7 +353,7 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		}
 	} catch (_) { /* custom actions are non-critical */ }
 
-	return contextMenu;
+	return { items: contextMenu, pendingDefaultApp };
 }
 
 async function handleContextMenuClick(event, panelId) {
@@ -330,8 +376,15 @@ async function handleContextMenuClick(event, panelId) {
 				panels.updatePanelLayout();
 			}
 
-			if (firstRecord && firstRecord.isFolder) {
-				await panels.navigateToDirectory(firstRecord.path, targetPanel);
+			const isLnk = firstRecord?.path?.toLowerCase().endsWith('.lnk');
+			if (firstRecord && (firstRecord.isFolder || isLnk)) {
+				let navPath = firstRecord.path;
+				if (isLnk) {
+					const res = await window.electronAPI.resolveShortcut(firstRecord.path);
+					if (!res || !res.success) { alert('Could not resolve shortcut target'); return; }
+					navPath = res.targetPath;
+				}
+				await panels.navigateToDirectory(navPath, targetPanel);
 				$panel.find('.panel-landing-page').hide();
 				// Only force grid visible when not in gallery mode
 				const viewType = panels.getPanelViewType(targetPanel);
@@ -358,6 +411,24 @@ async function handleContextMenuClick(event, panelId) {
 			panels.setActivePanelId(targetPanel);
 		} catch (err) {
 			alert('Error opening in panel: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'open-in') {
+		// Root "Open In" item clicked → navigate in the currently active panel
+		const firstRecord = selectedRecords[0];
+		if (!firstRecord) return;
+		try {
+			const isLnk = firstRecord.path?.toLowerCase().endsWith('.lnk');
+			let navPath = firstRecord.path;
+			if (isLnk) {
+				const res = await window.electronAPI.resolveShortcut(firstRecord.path);
+				if (!res || !res.success) { alert('Could not resolve shortcut target'); return; }
+				navPath = res.targetPath;
+			}
+			await panels.navigateToDirectory(navPath, activePanelId);
+		} catch (err) {
+			alert('Error navigating: ' + err.message);
 		}
 	}
 
@@ -738,6 +809,7 @@ function buildMenuEl(items, panelId) {
 
 		const row = document.createElement('div');
 		row.className = 'custom-ctx-item';
+		if (item.id) row.dataset.id = item.id;
 
 		if (item.iconHtml) {
 			const iconWrap = document.createElement('span');
@@ -813,13 +885,23 @@ function buildMenuEl(items, panelId) {
 			});
 		}
 
+		// Items marked clickable (e.g. "Open In") fire the handler even when they have a submenu.
+		// Submenu appears on hover; clicking the root label navigates the current panel.
+		if (hasSub && item.clickable) {
+			row.addEventListener('click', (event) => {
+				event.stopPropagation();
+				hideCustomContextMenu();
+				handleContextMenuClick({ detail: { menuItem: item } }, panelId);
+			});
+		}
+
 		menu.appendChild(row);
 	}
 
 	return menu;
 }
 
-export function showCustomContextMenu(items, x, y, panelId) {
+export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp) {
 	hideCustomContextMenu();
 
 	const menu = buildMenuEl(items, panelId);
@@ -827,6 +909,18 @@ export function showCustomContextMenu(items, x, y, panelId) {
 	menu.style.left = x + 'px';
 	menu.style.top = y + 'px';
 	document.body.appendChild(menu);
+
+	// If the default app name wasn't cached yet, patch the label once it resolves
+	if (pendingDefaultApp) {
+		pendingDefaultApp.then(result => {
+			if (!result || !result.appName) return;
+			const menuEl = document.getElementById('custom-ctx-menu');
+			if (!menuEl) return; // menu already closed
+			const openRow = menuEl.querySelector('.custom-ctx-item[data-id="open-in-default-app"]');
+			const openLabel = openRow && openRow.querySelector('.custom-ctx-label');
+			if (openLabel) openLabel.textContent = `Open with ${result.appName}`;
+		});
+	}
 
 	requestAnimationFrame(() => {
 		const rect = menu.getBoundingClientRect();

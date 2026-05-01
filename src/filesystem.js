@@ -1,7 +1,17 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const { execSync } = require('child_process');
 const logger = require('./logger');
+
+/**
+ * Returns true if the path is a UNC server root (e.g. \\hostname with no share component).
+ */
+function isUncServerRoot(p) {
+  if (!p || !p.startsWith('\\\\')) return false;
+  const rest = p.slice(2).replace(/\\+$/, '');
+  return rest.length > 0 && !rest.includes('\\');
+}
 
 /**
  * Probe read and write access for a path without throwing.
@@ -129,6 +139,22 @@ class FilesystemService {
         return null;
       }
 
+      // UNC server root (\\hostname) can't be stat'd normally — return synthetic entry
+      if (isUncServerRoot(parentPath)) {
+        return {
+          inode: `unc-root:${parentPath}`,
+          filename: '..',
+          isDirectory: true,
+          size: 0,
+          dateModified: Date.now(),
+          dateCreated: Date.now(),
+          path: parentPath,
+          mode: null,
+          perms: { read: true, write: false },
+          permError: false
+        };
+      }
+
       const stats = fs.statSync(parentPath);
       const perms = checkAccess(parentPath);
 
@@ -155,12 +181,56 @@ class FilesystemService {
   /**
    * Check if path exists and is a directory
    */
+  isUncServerRoot(p) {
+    return isUncServerRoot(p);
+  }
+
   isDirectory(filePath) {
+    if (isUncServerRoot(filePath)) return true;
     try {
       const stats = fs.statSync(filePath);
       return stats.isDirectory();
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Enumerate SMB shares on a UNC server root (e.g. \\hostname) using `net view`.
+   * Returns an array of entries in the same shape as readDirectory().
+   */
+  readUncShares(uncServerPath) {
+    try {
+      const output = execSync(`net view "${uncServerPath}"`, { encoding: 'utf8', timeout: 10000, windowsHide: true });
+      const lines = output.split(/\r?\n/);
+      let pastSeparator = false;
+      const shares = [];
+      for (const line of lines) {
+        if (!pastSeparator) {
+          if (/^-+/.test(line.trim())) pastSeparator = true;
+          continue;
+        }
+        const trimmed = line.trim();
+        if (!trimmed || /^the command/i.test(trimmed)) continue;
+        const shareName = trimmed.split(/\s+/)[0];
+        if (shareName) shares.push(shareName);
+      }
+      const now = Date.now();
+      return shares.map(name => ({
+        inode: `unc-share:${name}`,
+        filename: name,
+        isDirectory: true,
+        size: 0,
+        dateModified: now,
+        dateCreated: now,
+        path: `${uncServerPath}\\${name}`,
+        mode: null,
+        perms: { read: true, write: false },
+        permError: false,
+      }));
+    } catch (err) {
+      logger.warn(`Could not enumerate UNC shares for ${uncServerPath}: ${err.message}`);
+      return [];
     }
   }
 

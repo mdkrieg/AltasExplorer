@@ -215,6 +215,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   refreshTodoAggregate: (notesPath, dirId) => ipcRenderer.invoke('refresh-todo-aggregate', { notesPath, dirId }),
   refreshTodoAggregates: () => ipcRenderer.invoke('refresh-todo-aggregates'),
   onTodoAggregatesChanged: (callback) => ipcRenderer.on('todo-aggregates-changed', () => callback()),
+  onTodoRefreshStart: (callback) => ipcRenderer.on('todo-refresh-start', (_, data) => callback(data)),
+  onTodoRefreshProgress: (callback) => ipcRenderer.on('todo-refresh-progress', (_, data) => callback(data)),
+  onTodoRefreshDone: (callback) => ipcRenderer.on('todo-refresh-done', (_, data) => callback(data)),
 
   // Reminder parsing + aggregation (sidebar REMINDERS section)
   getReminderAggregates: () => ipcRenderer.invoke('get-reminder-aggregates'),
@@ -258,6 +261,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runCustomAction: (actionId, filePath) => ipcRenderer.invoke('run-custom-action', { actionId, filePath }),
   runCustomActionInTerminal: (actionId, filePath, terminalId) => ipcRenderer.invoke('run-custom-action-in-terminal', { actionId, filePath, terminalId }),
   openInDefaultApp: (filePath) => ipcRenderer.invoke('open-in-default-app', filePath),
+  getDefaultApp: (filePath) => ipcRenderer.invoke('get-default-app', filePath),
+  resolveShortcut: (lnkPath) => ipcRenderer.invoke('resolve-shortcut', lnkPath),
   openExternalLink: (url) => ipcRenderer.invoke('open-external-link', url),
   pickFile: (options) => ipcRenderer.invoke('pick-file', options || {}),
 
