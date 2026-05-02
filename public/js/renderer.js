@@ -33,7 +33,7 @@ import * as terminal from './modules/terminal.js';
 import { openDragTrayForActivePanel } from './modules/dragdrop.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
-export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, initFvPathInput, openNotesViewerForPath, cancelFileViewerEdit } from './modules/notes.js';
+export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, initFvPathInput, openNotesViewerForPath, cancelFileViewerEdit, getFileViewerHost } from './modules/notes.js';
 export { generateW2UIContextMenu, showCustomContextMenu } from './modules/contexts.js';
 export { openHistoryModal, formatHistoryData, buildCompleteFileState } from './modules/history.js';
 export { updateAlertBadge } from './modules/alerts.js';
@@ -896,7 +896,7 @@ function attachEventListeners() {
     }
 
     // Escape key: close file viewer modal if open
-    if (event.key === 'Escape' && $('#file-viewer-modal').is(':visible')) {
+    if (event.key === 'Escape' && $('#w2ui-popup').length > 0 && notes.getFileViewerHost() === 'modal') {
       notes.hideFileViewerModal();
       return;
     }
@@ -1530,11 +1530,6 @@ function attachEventListeners() {
   });
   $('#btn-fv-switch-view').click(async function () {
     await notes.switchFileViewerView();
-  });
-  $('#file-viewer-modal').click(function (e) {
-    if (e.target === this) {
-      notes.hideFileViewerModal();
-    }
   });
 
   // Image viewer modal close button and overlay click

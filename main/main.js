@@ -3317,44 +3317,79 @@ ipcMain.handle('get-default-app', async (event, filePath) => {
     const platform = os.platform();
 
     if (platform === 'win32') {
-      // Use Base64-encoded command to safely pass complex PowerShell with nested blocks.
-      // Lookup priority:
-      //   AppX/MSIX packaged apps (Store/MSIX installs) → AppxManifest DisplayName → package name parse
-      //   Standard apps → FriendlyAppName registry value → exe filename (title-cased)
-      const psScript = `
-$ext = '${ext.replace(/'/g, "''")}';
-$progId = (Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\$ext\\UserChoice" -ErrorAction SilentlyContinue).ProgId;
-if (-not $progId) { $progId = (Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\\$ext" -ErrorAction SilentlyContinue).'(default)' }
-if (-not $progId) { exit 1 }
-$openKey = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\\$progId\\shell\\open" -ErrorAction SilentlyContinue;
-if ($progId -like 'AppX*') {
-  $pkgFullName = $openKey.PackageId;
-  if (-not $pkgFullName) { exit 1 }
-  try {
-    $pkg = Get-AppxPackage -PackageFullName $pkgFullName -ErrorAction Stop;
-    $manifestPath = Join-Path $pkg.InstallLocation 'AppxManifest.xml';
-    $dn = ([xml](Get-Content $manifestPath)).Package.Properties.DisplayName;
-    if ($dn -and -not $dn.StartsWith('ms-resource:')) { $dn; exit 0 }
-  } catch {}
-  $appName = ($pkgFullName -split '_')[0] -replace '^[^.]+\\.', '';
-  if ($appName) { $appName } else { exit 1 }
-  exit 0
-}
-$friendly = $openKey.FriendlyAppName;
-if ($friendly) { $friendly; exit 0 }
-$cmd = (Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\\$progId\\shell\\open\\command" -ErrorAction SilentlyContinue).'(default)';
-if (-not $cmd) { exit 1 }
-$exe = if ($cmd -match '"([^"]+)"') { $Matches[1] } elseif ($cmd -match '^(\\S+)') { $Matches[1] } else { $null }
-if (-not $exe) { exit 1 }
-(Get-Culture).TextInfo.ToTitleCase([System.IO.Path]::GetFileNameWithoutExtension($exe).ToLower())`;
-
-      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      const appName = await new Promise((resolve) => {
-        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 8000 }, (err, stdout) => {
-          const name = stdout && stdout.trim();
-          resolve(name || null);
+      // Helper: run reg.exe and return trimmed stdout, or null on failure.
+      // reg.exe lives in System32, starts in ~10-20ms — no PowerShell cold-start jank.
+      const regQuery = (args) => new Promise((resolve) => {
+        execFile('reg.exe', args, { timeout: 3000 }, (err, stdout) => {
+          resolve(err ? null : stdout);
         });
       });
+
+      // Parse the value from a "reg query" output line: "    ValueName    REG_SZ    Data"
+      const parseRegValue = (output, valueName) => {
+        if (!output) return null;
+        const target = valueName === '(Default)' ? /^\s+\(Default\)\s+REG_\w+\s+(.+)$/m
+                                                  : new RegExp(`^\\s+${valueName}\\s+REG_\\w+\\s+(.+)$`, 'm');
+        const m = output.match(target);
+        return m ? m[1].trim() : null;
+      };
+
+      // Step 1: resolve ProgId — prefer per-user UserChoice, fall back to HKCR class root.
+      let progId = null;
+      const userChoiceOut = await regQuery([
+        'query',
+        `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\${ext}\\UserChoice`,
+        '/v', 'ProgId'
+      ]);
+      progId = parseRegValue(userChoiceOut, 'ProgId');
+
+      if (!progId) {
+        const hkcrExtOut = await regQuery(['query', `HKCR\\${ext}`, '/ve']);
+        progId = parseRegValue(hkcrExtOut, '(Default)');
+      }
+
+      if (!progId) return { success: false };
+
+      // Step 2: AppX/MSIX Store apps use a completely different lookup path.
+      // Only these need PowerShell (Get-AppxPackage); everything else stays with reg.exe.
+      if (progId.startsWith('AppX')) {
+        const openKeyOut = await regQuery(['query', `HKCR\\${progId}\\shell\\open`, '/v', 'PackageId']);
+        const pkgFullName = parseRegValue(openKeyOut, 'PackageId');
+        if (!pkgFullName) return { success: false };
+
+        const psScript = `
+$pkgFullName = '${pkgFullName.replace(/'/g, "''")}';
+try {
+  $pkg = Get-AppxPackage -PackageFullName $pkgFullName -ErrorAction Stop;
+  $manifestPath = Join-Path $pkg.InstallLocation 'AppxManifest.xml';
+  $dn = ([xml](Get-Content $manifestPath)).Package.Properties.DisplayName;
+  if ($dn -and -not $dn.StartsWith('ms-resource:')) { $dn; exit 0 }
+} catch {}
+$appName = ($pkgFullName -split '_')[0] -replace '^[^.]+\\.', '';
+if ($appName) { $appName } else { exit 1 }`;
+        const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+        const appName = await new Promise((resolve) => {
+          execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+            { timeout: 8000 }, (err, stdout) => resolve((stdout && stdout.trim()) || null));
+        });
+        return appName ? { success: true, appName } : { success: false };
+      }
+
+      // Step 3: standard app — try FriendlyAppName on the shell\open key first.
+      const openKeyOut = await regQuery(['query', `HKCR\\${progId}\\shell\\open`, '/v', 'FriendlyAppName']);
+      const friendly = parseRegValue(openKeyOut, 'FriendlyAppName');
+      if (friendly) return { success: true, appName: friendly };
+
+      // Step 4: fall back to the command key and extract the exe name.
+      const cmdKeyOut = await regQuery(['query', `HKCR\\${progId}\\shell\\open\\command`, '/ve']);
+      const cmd = parseRegValue(cmdKeyOut, '(Default)');
+      if (!cmd) return { success: false };
+
+      const exeMatch = cmd.match(/"([^"]+)"/) || cmd.match(/^(\S+)/);
+      if (!exeMatch) return { success: false };
+      const exeName = path.basename(exeMatch[1], path.extname(exeMatch[1]));
+      // Title-case: "notepad" → "Notepad", "WINWORD" → "Winword"
+      const appName = exeName.charAt(0).toUpperCase() + exeName.slice(1).toLowerCase();
       return appName ? { success: true, appName } : { success: false };
     }
 

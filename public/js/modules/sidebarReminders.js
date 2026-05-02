@@ -10,13 +10,13 @@
  *   - onReminderAggregatesChanged event         → re-render
  */
 
-import { navigateToDirectory } from './panels.js';
 import { openReminderModal } from './reminders.js';
 import { onSidebarSectionExpanded } from './sidebar.js';
 import { activePanelId } from '../renderer.js';
 
 let isRendering = false;
 let collapsedBuckets = new Set();
+let _lastRenderedBuckets = null;
 
 const BUCKET_TINT = {
   'Past Due':  'sidebar-reminder-bucket-past-due',
@@ -105,6 +105,9 @@ async function refreshRender() {
   isRendering = true;
   try {
     const buckets = await window.electronAPI.getReminderAggregates();
+    const serialized = JSON.stringify(buckets);
+    if (serialized === _lastRenderedBuckets) return;
+    _lastRenderedBuckets = serialized;
     renderGroups(body, buckets);
   } catch (err) {
     console.error('Sidebar Reminders render failed:', err);
@@ -115,6 +118,7 @@ async function refreshRender() {
 }
 
 async function fullRefresh() {
+  _lastRenderedBuckets = null; // force re-render after explicit refresh
   try {
     await window.electronAPI.refreshReminderAggregates();
   } catch (err) {
@@ -133,10 +137,7 @@ async function handleItemDblClick(itemEl) {
   const sectionKey = itemEl.dataset.sectionKey;
   if (!notesPath || !sectionKey) return;
 
-  const sep        = notesPath.includes('\\') ? '\\' : '/';
-  const lastSep    = notesPath.lastIndexOf(sep);
-  const dirPath    = lastSep >= 0 ? notesPath.substring(0, lastSep) : notesPath;
-  const panelId    = activePanelId || 1;
+  const panelId = activePanelId || 1;
 
   // Build a minimal reminder item object for the modal
   const reminderItem = {
@@ -150,12 +151,6 @@ async function handleItemDblClick(itemEl) {
     linkedTodoLine:  itemEl.dataset.linkedTodoLine ? parseInt(itemEl.dataset.linkedTodoLine, 10) : null,
     dirId:           parseInt(itemEl.dataset.dirId, 10) || null
   };
-
-  try {
-    await navigateToDirectory(dirPath, panelId, true);
-  } catch (err) {
-    console.error('Sidebar Reminders navigate failed:', err);
-  }
 
   try {
     await openReminderModal(reminderItem, null, panelId);
@@ -185,7 +180,7 @@ function wireEvents() {
     }
   });
 
-  body.addEventListener('dblclick', (e) => {
+  body.addEventListener('click', (e) => {
     const itemEl = e.target.closest('.sidebar-reminder-item');
     if (itemEl) {
       void handleItemDblClick(itemEl);

@@ -3283,7 +3283,7 @@ export async function initializeAllGrids() {
 	}
 }
 
-async function initializeGridForPanel(panelId) {
+export async function initializeGridForPanel(panelId) {
 	const gridName = `grid-panel-${panelId}`;
 	hidePanelFilterMenu(panelId);
 

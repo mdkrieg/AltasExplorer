@@ -25,6 +25,12 @@ let panelContextMenuState = {};
 let globalHandlersInitialized = false;
 // Cache default app name per extension. Sentinel value null = lookup failed/unknown.
 const defaultAppCache = new Map();
+// Cache generated icon data URLs keyed by a stable string so we never re-render the same icon twice.
+const folderIconCache = new Map();
+const tagIconCache = new Map();
+// Cache custom actions for the session (invalidated by clearCustomActionsCache).
+let customActionsCache = null;
+export function clearCustomActionsCache() { customActionsCache = null; }
 
 async function openActionTerminalPanel(filePath, actionLabel) {
 	let targetPanelId = terminal.getFallbackTerminalPanelId(panels.visiblePanels);
@@ -96,13 +102,14 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 
 	// Resolve default app from cache or start a background fetch.
 	let defaultAppResult = null;
-	let pendingDefaultApp = null; // resolves to { appName } or null after menu is shown
+	let pendingDefaultApp = null; // thunk: () => Promise<{appName}|null>, called after menu is painted
 	if (singleFileExt) {
 		if (defaultAppCache.has(singleFileExt)) {
 			defaultAppResult = defaultAppCache.get(singleFileExt);
 		} else {
-			// Not cached yet — will patch the menu label after it resolves
-			pendingDefaultApp = window.electronAPI.getDefaultApp(singleFilePath)
+			// Not cached yet — defer the IPC call until after the menu is painted to avoid
+			// OS-level jank from spawning PowerShell during the render frame.
+			pendingDefaultApp = () => window.electronAPI.getDefaultApp(singleFilePath)
 				.then(result => {
 					const val = (result && result.success && result.appName) ? result : null;
 					defaultAppCache.set(singleFileExt, val);
@@ -119,11 +126,17 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		Promise.all(categoryNames.map(name => {
 			const cat = allCategories[name];
 			if (!cat || !cat.bgColor) return Promise.resolve(null);
-			return window.electronAPI.generateFolderIcon(cat.bgColor, cat.textColor).catch(() => null);
+			const key = `${cat.bgColor}|${cat.textColor}|${cat.initials || ''}`;
+			if (folderIconCache.has(key)) return Promise.resolve(folderIconCache.get(key));
+			return window.electronAPI.generateFolderIcon(cat.bgColor, cat.textColor).catch(() => null)
+				.then(url => { folderIconCache.set(key, url); return url; });
 		})),
 		Promise.all(allTags.map(tag => {
 			if (!tag || !tag.bgColor) return Promise.resolve(null);
-			return window.electronAPI.generateTagIcon(tag.bgColor, tag.textColor).catch(() => null);
+			const key = `${tag.bgColor}|${tag.textColor}`;
+			if (tagIconCache.has(key)) return Promise.resolve(tagIconCache.get(key));
+			return window.electronAPI.generateTagIcon(tag.bgColor, tag.textColor).catch(() => null)
+				.then(url => { tagIconCache.set(key, url); return url; });
 		}))
 	]);
 	const categoryIconMap = {};
@@ -389,7 +402,8 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 
 	// Custom Actions
 	try {
-		const allActions = await window.electronAPI.getCustomActions();
+		if (!customActionsCache) customActionsCache = await window.electronAPI.getCustomActions();
+		const allActions = customActionsCache;
 		if (allActions && allActions.length > 0) {
 			const singleRecord = !isMultiSelect ? selectedRecords[0] : null;
 			const filename = singleRecord ? (singleRecord.filenameRaw || singleRecord.filename || '') : '';
@@ -982,16 +996,19 @@ export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp, p
 	menu.style.top = y + 'px';
 	document.body.appendChild(menu);
 
-	// If the default app name wasn't cached yet, patch the label once it resolves
+	// If the default app name wasn't cached yet, fire the IPC call AFTER this render frame
+	// to avoid PowerShell spawn jank during the initial menu paint.
 	if (pendingDefaultApp) {
-		pendingDefaultApp.then(result => {
-			if (!result || !result.appName) return;
-			const menuEl = document.getElementById('custom-ctx-menu');
-			if (!menuEl) return; // menu already closed
-			const openRow = menuEl.querySelector('.custom-ctx-item[data-id="open-in-default-app"]');
-			const openLabel = openRow && openRow.querySelector('.custom-ctx-label');
-			if (openLabel) openLabel.textContent = `Open with ${result.appName}`;
-		});
+		setTimeout(() => {
+			pendingDefaultApp().then(result => {
+				if (!result || !result.appName) return;
+				const menuEl = document.getElementById('custom-ctx-menu');
+				if (!menuEl) return; // menu already closed
+				const openRow = menuEl.querySelector('.custom-ctx-item[data-id="open-in-default-app"]');
+				const openLabel = openRow && openRow.querySelector('.custom-ctx-label');
+				if (openLabel) openLabel.textContent = `Open with ${result.appName}`;
+			});
+		}, 0);
 	}
 
 	// Patch the view-file label once the binary probe resolves (unknown file types)

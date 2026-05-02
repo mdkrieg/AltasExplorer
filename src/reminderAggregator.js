@@ -9,6 +9,10 @@ function sha1(text) {
   return crypto.createHash('sha1').update(text).digest('hex');
 }
 
+// In-memory cache: notesFileId → last content hash successfully written.
+// Avoids redundant DB DELETE+INSERT when the file hasn't changed between scans.
+const _lastHash = new Map();
+
 /**
  * Flatten all reminder items from parsed notes sections into a flat array
  * suitable for DB insertion.
@@ -100,9 +104,16 @@ function ensureAndRefresh(notesPath, dirId, opts = {}) {
     }
 
     const notesFileId = existing.id;
-    const sections    = notesParser.parseNotesFileSections(content);
-    const items       = flattenRemindersToItems(sections);
+
+    // Skip expensive replace if nothing has changed since last refresh.
+    if (_lastHash.get(notesFileId) === contentHash) {
+      return { changed: false, notesFileId };
+    }
+
+    const sections = notesParser.parseNotesFileSections(content);
+    const items    = flattenRemindersToItems(sections);
     db.replaceReminderItems(notesFileId, items);
+    _lastHash.set(notesFileId, contentHash);
     return { changed: true, notesFileId };
 
   } catch (err) {

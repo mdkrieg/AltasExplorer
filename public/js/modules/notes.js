@@ -5,7 +5,7 @@
 
 import * as utils from './utils.js';
 import * as panels from './panels.js';
-import { w2confirm } from './vendor/w2ui.es6.min.js';
+import { w2popup, w2confirm } from './vendor/w2ui.es6.min.js';
 import { panelState, setFileEditMode, setSelectedItemState } from '../renderer.js';
 
 let monacoLoaded = false;
@@ -695,6 +695,8 @@ let fvModalContext = null; // { filePath, viewMode }
 let fvModalHost = null; // 'modal' | 1 | 2 | 3 | 4
 let fvModalOriginalContent = ''; // content as loaded from disk; used for cancel dirty-check
 
+export function getFileViewerHost() { return fvModalHost; }
+
 async function moveFileViewerToPanel(targetPanelId) {
   if (targetPanelId > panels.visiblePanels) {
     const $newPanel = $(`#panel-${targetPanelId}`);
@@ -703,23 +705,17 @@ async function moveFileViewerToPanel(targetPanelId) {
     panels.attachPanelEventListeners(targetPanelId);
     panels.updatePanelLayout();
   }
-  // Hide modal overlay, leaving widget intact
-  $('#file-viewer-modal').css('display', 'none');
 
-  // Adopt widget into target panel
+  // Adopt widget into target panel BEFORE closing popup (prevents widget being destroyed)
   const $content = $(`#panel-${targetPanelId} .panel-content`);
   $content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view').hide();
   $content.append($('#fv-widget'));
 
   // Apply panel-fill styles
-  $('#fv-widget').css({
-    width: '100%',
-    height: '100%',
-    borderRadius: '0',
-    maxWidth: 'none',
-    boxShadow: 'none',
-    flex: '1'
-  });
+  $('#fv-widget').css({ width: '100%', height: '100%', flex: '1' });
+
+  // Close the popup now that widget is safely outside it
+  if ($('#w2ui-popup').length > 0 && w2popup.status !== 'closing') w2popup.close();
 
   // Panel-embedded: hide modal-only controls, make path label static
   $('#btn-fv-close').hide();
@@ -745,11 +741,14 @@ async function moveFileViewerToPanel(targetPanelId) {
 }
 
 export async function openFileViewerModal(filePath, viewMode) {
-  // If widget is currently embedded in a panel, return it to the modal first
-  if (typeof fvModalHost === 'number') {
+  const wasInPanel = typeof fvModalHost === 'number';
+  const alreadyModal = fvModalHost === 'modal';
+
+  // If widget is currently embedded in a panel, restore that panel and move widget to storage
+  if (wasInPanel) {
     const prevHost = fvModalHost;
     const $prevContent = $(`#panel-${prevHost} .panel-content`);
-    $('#file-viewer-modal').append($('#fv-widget'));
+    $('#fv-widget-store').append($('#fv-widget'));
     if (panelState[prevHost]?.currentPath) {
       $prevContent.find('.panel-grid').show();
       panels.updatePanelHeader(prevHost); // restore header to previous directory path
@@ -759,15 +758,7 @@ export async function openFileViewerModal(filePath, viewMode) {
     }
   }
   fvModalHost = 'modal';
-  // Restore modal card styles in case widget came from panel mode
-  $('#fv-widget').css({
-    width: '80%',
-    height: '80%',
-    maxWidth: '1100px',
-    borderRadius: '8px',
-    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-    flex: ''
-  });
+
   // Restore modal-only controls
   $('#btn-fv-close').show();
   $('#fv-panel-section').css('display', 'flex');
@@ -776,7 +767,6 @@ export async function openFileViewerModal(filePath, viewMode) {
   fvModalContext = { filePath, viewMode };
   fvModalEditMode = false;
 
-  const $modal = $('#file-viewer-modal');
   const $editorContainer = $('#fv-editor-container');
   const $contentView = $('#fv-content-view');
 
@@ -899,7 +889,25 @@ export async function openFileViewerModal(filePath, viewMode) {
     }
   }
 
-  $modal.css('display', 'flex');
+  // Open w2popup if not already showing (first open, or returning from panel mode)
+  if (!alreadyModal) {
+    const pw = Math.min(Math.round(window.innerWidth * 0.85), 1100);
+    const ph = Math.round(window.innerHeight * 0.82);
+    w2popup.open({
+      title: '',
+      body: '',
+      style: 'padding: 0; overflow: hidden; height: 100%;',
+      width: pw,
+      height: ph,
+      showClose: false,
+      keyboard: false,
+      modal: true
+    });
+    // DOM is available synchronously; inject widget so content is visible during open animation
+    $('#w2ui-popup .w2ui-popup-body').append($('#fv-widget'));
+    // Ensure widget fills the popup body
+    $('#fv-widget').css({ width: '100%', height: '100%', flex: '' });
+  }
 }
 
 export async function cancelFileViewerEdit() {
@@ -1000,27 +1008,24 @@ export function hideFileViewerModal() {
   const host = fvModalHost;
   const $widget = $('#fv-widget');
   if (typeof host === 'number') {
-    // Panel mode: restore the panel and return widget to modal for cleanup
+    // Panel mode: restore the panel's content view
     const $content = $(`#panel-${host} .panel-content`);
     if (panelState[host]?.currentPath) {
       $content.find('.panel-grid').show();
     } else {
       $content.find('.panel-landing-page').css('display', 'flex');
     }
-    $('#file-viewer-modal').append($widget);
-    // Modal stays hidden
-  } else {
-    $('#file-viewer-modal').hide();
   }
-  // Restore modal card styles
-  $widget.css({
-    width: '80%',
-    height: '80%',
-    maxWidth: '1100px',
-    borderRadius: '8px',
-    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-    flex: ''
-  });
+
+  // Return widget to storage BEFORE closing popup so it isn't destroyed with the popup DOM
+  $('#fv-widget-store').append($widget);
+
+  // Close popup if open
+  if ($('#w2ui-popup').length > 0 && w2popup.status !== 'closing') {
+    w2popup.close();
+  }
+
+  // Clean up widget state
   if (fvModalEditor) { fvModalEditor.dispose(); fvModalEditor = null; }
   fvModalEditMode = false;
   fvModalContext = null;
@@ -1029,6 +1034,7 @@ export function hideFileViewerModal() {
   $('#fv-editor-container').empty().hide();
   $('#btn-fv-edit').show();
   $('#btn-fv-save').hide();
+  $('#btn-fv-cancel').hide();
   $('#fv-info-bar').hide();
   $('#fv-panel-btns').empty();
 }

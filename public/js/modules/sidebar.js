@@ -10,7 +10,7 @@
  */
 
 import { w2sidebar } from './vendor/w2ui.es6.min.js';
-import { navigateToDirectory, visiblePanels, addPanel, setActivePanelId, setGridFocusedPanelId, matchFileType } from './panels.js';
+import { navigateToDirectory, visiblePanels, addPanel, setActivePanelId, setGridFocusedPanelId, matchFileType, initializeGridForPanel } from './panels.js';
 import { hideCustomContextMenu } from './contexts.js';
 import {
   panelState,
@@ -1565,8 +1565,14 @@ function showFavoritesContextMenu(x, y, targetType = 'item', node = null) {
       const newPanelId = visiblePanels + 1;
       addRow(`Open in new Panel ${newPanelId}`, async () => {
         if (node.path) {
-          const created = addPanel();
-          const targetId = created ?? newPanelId;
+          const targetId = await addPanel();
+          if (!targetId) return;
+          // addPanel() shows the welcome view (atlas://landing). Initialize the grid,
+          // then hide the welcome view before navigating to the real directory.
+          await initializeGridForPanel(targetId);
+          $(`#panel-${targetId} .panel-welcome-view`).hide();
+          $(`#panel-${targetId} .panel-landing-page`).hide();
+          $(`#panel-${targetId} .panel-grid`).show();
           await navigateToDirectory(node.path, targetId);
           setActivePanelId(targetId);
           setGridFocusedPanelId(targetId);

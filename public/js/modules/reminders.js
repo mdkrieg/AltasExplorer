@@ -11,6 +11,14 @@
 
 import { openTodoModal } from './todos.js';
 import {
+  navigateToDirectory,
+  visiblePanels,
+  setActivePanelId,
+  setGridFocusedPanelId,
+  addPanel,
+  initializeGridForPanel
+} from './panels.js';
+import {
   renderCommentSection,
   startEditAnnotation,
   confirmEditAnnotation,
@@ -112,6 +120,47 @@ function renderReminderModal(reminderItem) {
     const sep  = path.includes('\\') ? '\\' : '/';
     const dir  = path.substring(0, path.lastIndexOf(sep));
     subtitle.textContent = dir.substring(dir.lastIndexOf(sep) + 1) || '';
+  }
+
+  // Navigate buttons — one per visible panel plus optional "new panel"
+  const navContainer = document.getElementById('reminder-navigate-buttons');
+  if (navContainer) {
+    const notesPath = reminderItem.notesPath || '';
+    const sep       = notesPath.includes('\\') ? '\\' : '/';
+    const dirPath   = notesPath.substring(0, notesPath.lastIndexOf(sep));
+    const basename  = dirPath.substring(dirPath.lastIndexOf(sep) + 1) || dirPath;
+
+    navContainer.innerHTML = '';
+
+    const label = document.createElement('span');
+    label.className = 'reminder-navigate-label';
+    label.textContent = 'Navigate';
+    navContainer.appendChild(label);
+
+    for (let i = 1; i <= visiblePanels; i++) {
+      const btn = document.createElement('button');
+      btn.className        = 'btn-reminder-navigate';
+      btn.dataset.panelId  = i;
+      btn.dataset.dirPath  = dirPath;
+      btn.textContent      = `P${i}`;
+      btn.title            = dirPath;
+      navContainer.appendChild(btn);
+    }
+    if (visiblePanels < 4) {
+      const btn = document.createElement('button');
+      btn.className        = 'btn-reminder-navigate';
+      btn.dataset.panelId  = 'new';
+      btn.dataset.dirPath  = dirPath;
+      btn.textContent      = `P${visiblePanels + 1}↑`;
+      btn.title            = dirPath;
+      navContainer.appendChild(btn);
+    }
+
+    const dest = document.createElement('span');
+    dest.className = 'reminder-navigate-dest';
+    dest.textContent = `to ${basename}`;
+    dest.title = dirPath;
+    navContainer.appendChild(dest);
   }
 
   // Cohabitation panel
@@ -381,6 +430,36 @@ function wireModalEvents() {
 
   const modal = getModal();
   if (!modal) return;
+
+  // Navigate buttons (dynamically generated per-open, handled via delegation)
+  const navContainer = document.getElementById('reminder-navigate-buttons');
+  if (navContainer) {
+    navContainer.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.btn-reminder-navigate');
+      if (!btn) return;
+      const dirPath    = btn.dataset.dirPath;
+      const panelIdStr = btn.dataset.panelId;
+      if (!dirPath) return;
+      if (panelIdStr === 'new') {
+        const targetId = await addPanel();
+        if (!targetId) return;
+        // addPanel() shows the welcome view (atlas://landing). Initialize the grid,
+        // then hide the welcome view before navigating to the real directory.
+        await initializeGridForPanel(targetId);
+        $(`#panel-${targetId} .panel-welcome-view`).hide();
+        $(`#panel-${targetId} .panel-landing-page`).hide();
+        $(`#panel-${targetId} .panel-grid`).show();
+        await navigateToDirectory(dirPath, targetId, true);
+        setActivePanelId(targetId);
+        setGridFocusedPanelId(targetId);
+      } else {
+        const targetId = parseInt(panelIdStr, 10);
+        await navigateToDirectory(dirPath, targetId, true);
+        setActivePanelId(targetId);
+        setGridFocusedPanelId(targetId);
+      }
+    });
+  }
 
   // Cancel / backdrop
   document.getElementById('btn-reminder-cancel')?.addEventListener('click', closeReminderModal);
