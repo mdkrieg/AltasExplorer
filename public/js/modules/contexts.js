@@ -1,6 +1,17 @@
 /**
  * Contexts module.
  * Owns grid context-menu state, menu generation, click routing, and custom flyout menus.
+ *
+ * "Context" here means *right-click context menus* on the file grid — not the
+ * plain-English "logical context" that appears elsewhere in the codebase. This
+ * module was extracted from renderer.js early; whether it should remain split
+ * is open for reconsideration.
+ *
+ * UX rule (geometry-first): the context menu must appear immediately on right-
+ * click. Async-resolved data (default-app names, generated icons) fills in
+ * after the menu is already visible — the menu's geometry must not shift when
+ * those resolve. The default-app and icon caches below exist to make this fast
+ * after the first lookup.
  */
 
 import * as panels from './panels.js';

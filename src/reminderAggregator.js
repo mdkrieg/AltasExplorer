@@ -1,3 +1,21 @@
+/**
+ * Reminder aggregator.
+ *
+ * Scrapes REMINDER items (form: "REMINDER (date): reminder text") from every
+ * known notes.txt across all opened panels and reports them as a single dataset
+ * grouped by due date. The user can set a reminder by editing a plain text file
+ * — they don't even need to open the app — and Atlas surfaces it on next scan.
+ *
+ * Why this lives in src/ (backend) instead of public/js/modules/:
+ *   - It must read filesystem files (notes.txt scattered across directories).
+ *   - It produces a single aggregated dataset for the UI; aggregation is a
+ *     backend concern, not a per-panel renderer concern.
+ *
+ * The _lastHash cache below avoids redundant DB DELETE+INSERT churn when a
+ * notes file's content is unchanged between scans (the hot path during normal
+ * filesystem watching).
+ */
+
 const fs     = require('fs');
 const path   = require('path');
 const crypto = require('crypto');

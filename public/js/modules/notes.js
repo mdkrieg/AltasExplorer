@@ -1,6 +1,15 @@
 /**
  * Notes module.
  * Owns notes modal behavior, panel file-view editing, and shared Monaco loader state.
+ *
+ * Originally scoped to notes.txt files; has grown into the generic file editor
+ * shared with the panel file-view. The module name no longer fully fits — a
+ * rename or split-out of the generic file-editor functionality is on the table
+ * if/when it makes sense.
+ *
+ * notes.txt itself stays as a flat file (not in SQLite) because users must be
+ * able to read and edit it on a phone, a thumbdrive, or any other device
+ * without Atlas Explorer installed. See docs/architecture.md.
  */
 
 import * as utils from './utils.js';

@@ -1,6 +1,21 @@
 /**
  * Panels Module
  * Handles panel state, grid management, navigation, layout, and item properties.
+ *
+ * Panels are the heart of the app — they let the user work on and reference
+ * multiple things at once. See docs/concepts.md for the full panel model and
+ * the P1-Pn+1 pattern that governs panel-targeting UI.
+ *
+ * Invariants worth knowing before changing this file:
+ *   - Hard cap of 4 panels (modal not counted). Don't introduce a 5th slot
+ *     without revisiting the cap deliberately.
+ *   - Every panel-hosted view is identifiable by a URI (path + ?query + #fragment).
+ *     "URI" in this codebase means *panel URI*, not a network URL.
+ *   - The path-bar is colored by the assigned category of the displayed dir
+ *     (or its nearest parent). Don't break this — it's a navigational anchor.
+ *
+ * Refactor note: this module has gotten bloated over time. Extraction is on
+ * the table, but preserve the panel-definition invariants above when doing so.
  */
 
 import * as sidebar from './sidebar.js';

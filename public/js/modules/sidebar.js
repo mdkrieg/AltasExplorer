@@ -1,7 +1,12 @@
 /**
  * Sidebar Module
  * Handles sidebar navigation, tree expansion, favorites, and sidebar collapse.
- * All function bodies are extracted verbatim from renderer.js.
+ *
+ * The sidebar is intentionally NOT bound to any single panel — it is a helper
+ * for all panels. It aggregates LOCAL FAVORITES (Windows shortcuts), TODOs, and
+ * REMINDERs across every opened panel, and supports a Tab-key focus pattern that
+ * trades focus between panels and the sidebar for mouseless interaction. Do not
+ * introduce features that couple the sidebar to one panel.
  *
  * Exports consumed by renderer.js:
  *   initializeSidebar, updateSidebarSelection, addToFavorites,

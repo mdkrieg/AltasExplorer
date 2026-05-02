@@ -1,18 +1,24 @@
 ﻿/**
  * AtlasExplorer Renderer Logic
- * Handles all UI interactions and IPC calls
- * 
- * MODULAR ORGANIZATION:
- * This file is being incrementally split into feature modules in public/js/modules/:
+ *
+ * This is the primary orchestrator. It owns page-building, inter-module wiring,
+ * and top-level state (panel state, selected-item state, w2layout instance).
+ *
+ * What does NOT belong here: individual feature implementations. Onclick
+ * handlers and feature logic belong in their respective modules under
+ * public/js/modules/. If you see them in this file, treat that as a refactor
+ * smell, not a pattern to extend.
+ *
+ * MODULAR ORGANIZATION (see docs/modules.md for the full map):
  * - modules/utils.js      – Pure utility functions (formatBytes, escapeHtml, etc.)
  * - modules/sidebar.js    – Sidebar navigation, tree, and favorites [extracted]
  * - modules/panels.js     – Grid management, navigation, layout switching [in progress]
  * - modules/notes.js      – Notes modal, file view, and Monaco loader [extracted]
- * - modules/alerts.js – Alert badge and modal [extracted]
+ * - modules/alerts.js     – Alert badge and modal [extracted]
  * - modules/settings.js   – Settings modal, categories, tags, hotkeys [in progress]
  * - modules/history.js    – History modal and change summaries [extracted]
  * - modules/contexts.js   – Grid context menus and flyout interactions [extracted]
- * 
+ *
  * Functions are being extracted incrementally as features are developed.
  * See module files for planned function extractions.
  */
