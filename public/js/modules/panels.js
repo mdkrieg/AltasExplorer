@@ -6234,8 +6234,6 @@ export async function updateItemPropertiesPage(panelId = 0) {
 
 		// Update the widget path bar and panel header
 		const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
-		$('#ip-path-display').text(pathWithParam).attr('title', pathWithParam);
-		$('#ip-path-input').val(pathWithParam);
 
 		if (panelId !== 0) {
 			// Legacy panel-direct mode (panels 1-4 with their own event handlers)
@@ -6244,15 +6242,22 @@ export async function updateItemPropertiesPage(panelId = 0) {
 				: selectedItemState.path;
 			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
 			panelState[panelId].currentCategory = parentCategory;
-			updatePanelHeader(panelId, selectedItemState.path);
+			updatePanelHeader(panelId, pathWithParam);
 		} else if (typeof ipWidgetHost === 'number') {
-			// Widget embedded in a panel — update that panel's header too
+			// Widget embedded in a panel — update that panel's header with category color
 			const parentDir = selectedItemState.path.includes('\\')
 				? selectedItemState.path.substring(0, selectedItemState.path.lastIndexOf('\\'))
 				: selectedItemState.path;
 			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
 			panelState[ipWidgetHost].currentCategory = parentCategory;
-			updatePanelHeader(ipWidgetHost, selectedItemState.path);
+			updatePanelHeader(ipWidgetHost, pathWithParam);
+		} else if (ipWidgetHost === 'modal') {
+			// Widget in modal — update the ip-widget's own header
+			const parentDir = selectedItemState.path.includes('\\')
+				? selectedItemState.path.substring(0, selectedItemState.path.lastIndexOf('\\'))
+				: selectedItemState.path;
+			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
+			updateIpWidgetHeader(parentCategory);
 		}
 
 		panelState[0].itemInode = stats.inode;
@@ -6792,6 +6797,7 @@ export async function openItemPropertiesWidget(record, sourcePanelId) {
 	_buildIpPanelBtns();
 	$('#btn-ip-close').show();
 	$('#ip-panel-section').css('display', 'flex');
+	$('#ip-widget-header').show();
 
 	if (!alreadyInModal) {
 		const pw = Math.min(Math.round(window.innerWidth * 0.5), 500);
@@ -6876,16 +6882,20 @@ export async function moveItemPropsWidgetToPanel(targetPanelId) {
 	const wasGridVisible = $content.find('.panel-grid').is(':visible');
 	$content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view').hide();
 	panelState[targetPanelId]._preWidgetGridVisible = wasGridVisible;
+	// Save previous path/category so we can restore them when widget leaves
+	panelState[targetPanelId]._preWidgetPath = panelState[targetPanelId].currentPath || '';
+	panelState[targetPanelId]._preWidgetCategory = panelState[targetPanelId].currentCategory || null;
 
 	$content.append($('#ip-widget'));
 	$('#ip-widget').css({ width: '100%', height: '100%', flex: '1' });
 
-	// Hide modal-specific controls when embedded in a panel
-	$('#btn-ip-close').hide();
-	$('#ip-panel-section').hide();
+	// Hide the ip-widget's own header — the panel's header takes over
+	$('#ip-widget-header').hide();
 
-	panelState[targetPanelId].currentPath = selectedItemState.path;
+	const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
+	panelState[targetPanelId].currentPath = pathWithParam;
 	ipWidgetHost = targetPanelId;
+	updatePanelHeader(targetPanelId, pathWithParam);
 	setActivePanelId(targetPanelId);
 }
 
@@ -6896,7 +6906,13 @@ function _restorePanelAfterWidget(panelId) {
 	} else {
 		$content.find('.panel-landing-page').css('display', 'flex');
 	}
+	// Restore path/category and repaint header
+	panelState[panelId].currentPath = panelState[panelId]._preWidgetPath || '';
+	panelState[panelId].currentCategory = panelState[panelId]._preWidgetCategory || null;
+	updatePanelHeader(panelId);
 	delete panelState[panelId]._preWidgetGridVisible;
+	delete panelState[panelId]._preWidgetPath;
+	delete panelState[panelId]._preWidgetCategory;
 }
 
 function _buildIpPanelBtns() {
@@ -6925,38 +6941,78 @@ async function openItemPropsInPanel(targetPanel) {
 	await updateItemPropertiesPage(0);
 }
 
-/** Initialise path-bar interactions on the ip-widget header. */
-export function initIpPathInput() {
-	const $display = $('#ip-path-display');
-	const $input = $('#ip-path-input');
+/**
+ * Update the ip-widget's own path bar (used in modal mode).
+ * Applies the same category-color styling as updatePanelHeader.
+ */
+export function updateIpWidgetHeader(category) {
+	const headerEl = document.getElementById('ip-widget-header');
+	if (!headerEl) return;
+	const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
+	const $header = $(headerEl);
+	$header.find('.panel-path').text(pathWithParam);
+	$header.find('.panel-path-input').val(pathWithParam);
+	if (category?.bgColor) {
+		headerEl.style.background = category.bgColor;
+		headerEl.style.borderBottomColor = category.textColor || darkenRgb(category.bgColor);
+		$header.find('.panel-header-content').css('border-bottom-color', category.textColor || darkenRgb(category.bgColor));
+	} else {
+		headerEl.style.background = '';
+		headerEl.style.borderBottomColor = '';
+		$header.find('.panel-header-content').css('border-bottom-color', '');
+	}
+}
 
-	$display.on('click', function () {
-		$display.hide();
-		const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
-		$input.show().val(pathWithParam).focus().select();
+/**
+ * Update the fv-widget's own path bar (used in modal mode).
+ * Applies the same category-color styling as updatePanelHeader.
+ * @param {string} filePath  - The file path to display
+ * @param {object} category  - Category object with bgColor / textColor
+ */
+export function updateFvWidgetHeader(filePath, category) {
+	const headerEl = document.getElementById('fv-widget-header');
+	if (!headerEl) return;
+	const $header = $(headerEl);
+	$header.find('.panel-path').text(filePath || '');
+	$header.find('.panel-path-input').val(filePath || '');
+	if (category?.bgColor) {
+		headerEl.style.background = category.bgColor;
+		headerEl.style.borderBottomColor = category.textColor || darkenRgb(category.bgColor);
+		$header.find('.panel-header-content').css('border-bottom-color', category.textColor || darkenRgb(category.bgColor));
+	} else {
+		headerEl.style.background = '';
+		headerEl.style.borderBottomColor = '';
+		$header.find('.panel-header-content').css('border-bottom-color', '');
+	}
+}
+
+/**
+ * Wire up path-input interactions on the ip-widget header.
+ * Called once at startup (replaces initIpPathInput).
+ * Uses the real attachPathInputListeners so the ip-widget header
+ * behaves identically to a panel header (autocomplete, Enter, Escape, blur).
+ * The panelId passed is a sentinel (0) — on Enter we resolve the actual target.
+ */
+export function attachIpWidgetHeaderListeners() {
+	const $header = $('#ip-widget-header');
+
+	// Intercept Enter before attachPathInputListeners so we can route to the
+	// correct host panel rather than using panelId=0 (which has no grid).
+	$header.find('.panel-path-input').on('keydown.ipwidget', function (e) {
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		const raw = $(this).val().trim();
+		if (!raw) return;
+		hidePathAutocomplete();
+		$(this).hide();
+		$header.find('.panel-path').show();
+		const hostId = typeof ipWidgetHost === 'number' ? ipWidgetHost : activePanelId;
+		navigateToDirectory(raw, hostId);
 	});
 
-	$input.on('keydown', function (e) {
-		if (e.key === 'Enter') {
-			const raw = $input.val().trim();
-			if (!raw) return;
-			$input.hide();
-			$display.show();
-			// If bare file path without ?properties, append the param
-			const needsParam = raw.indexOf('?') === -1;
-			const navPath = needsParam ? raw + '?properties' : raw;
-			const hostId = typeof ipWidgetHost === 'number' ? ipWidgetHost : activePanelId;
-			navigateToDirectory(navPath, hostId);
-		} else if (e.key === 'Escape') {
-			$input.hide();
-			$display.show();
-		}
-	});
-
-	$input.on('blur', function () {
-		$input.hide();
-		$display.show();
-	});
+	// Delegate the rest (click-to-edit, autocomplete, Escape, blur) to the shared helper
+	attachPathInputListeners($header, 0);
 }
 
 

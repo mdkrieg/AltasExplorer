@@ -7,13 +7,15 @@
 ### Panel anatomy
 
 - A panel **always** has an editable path-bar on top, colored with the assigned category of the displayed directory (or the nearest parent directory if a file or other item is shown).
+- The path bar is the **static header** of the panel. It is the canonical navigation entry point regardless of what the panel body is showing — a directory, a file viewer, item properties, or any future view. The body is what changes; the path bar persists.
+- The path bar displays the full **URI** (see below) of the current view and is always editable. Pressing Enter in the path bar navigates to whatever URI the user typed.
 - A panel can display:
   - A directory (grid or gallery view).
   - A file viewer/editor.
   - A file properties summary.
   - Other panel-hosted views in the future.
 - Anything in a panel is identifiable by a **URI** (see below).
-- A modal popup may also act as a panel-like surface (its exact role is still being shaped).
+- A modal popup may also act as a panel-like surface. When it does, it renders the same styled path bar so the experience is consistent.
 
 ### Hard cap: 4 panels
 
@@ -30,6 +32,14 @@ A URI can include:
 - A **fragment** (`#edit`, etc.) for sub-states like edit mode.
 
 The URI is the canonical handle for "what is this panel showing right now."
+
+Recognized query parameters (non-exhaustive):
+
+| Parameter | Meaning |
+|---|---|
+| `?properties` | Show the file properties summary for the given path |
+| `?orphans` | Show files not linked to any directory in the database |
+| `?trash` | Show items in the trash virtual view |
 
 ## The P1-Pn+1 pattern
 

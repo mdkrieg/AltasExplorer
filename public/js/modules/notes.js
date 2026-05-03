@@ -717,6 +717,11 @@ async function moveFileViewerToPanel(targetPanelId) {
 
   // Adopt widget into target panel BEFORE closing popup (prevents widget being destroyed)
   const $content = $(`#panel-${targetPanelId} .panel-content`);
+  // Save pre-widget path/category so we can restore them when the widget leaves
+  const prevPath = panelState[targetPanelId]?.currentPath || '';
+  const prevCategory = panelState[targetPanelId]?.currentCategory || null;
+  panelState[targetPanelId]._preWidgetPath = prevPath;
+  panelState[targetPanelId]._preWidgetCategory = prevCategory;
   $content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view').hide();
   $content.append($('#fv-widget'));
 
@@ -726,10 +731,8 @@ async function moveFileViewerToPanel(targetPanelId) {
   // Close the popup now that widget is safely outside it
   if ($('#w2ui-popup').length > 0 && w2popup.status !== 'closing') w2popup.close();
 
-  // Panel-embedded: hide modal-only controls, make path label static
-  $('#btn-fv-close').hide();
-  $('#fv-panel-section').hide();
-  $('#fv-path-display').css('cursor', 'default');
+  // Panel-embedded: hide the fv-widget's own header — the panel header takes over
+  $('#fv-widget-header').hide();
 
   // Adopt the category of the file's parent directory so the panel header uses its colour
   const filePath = fvModalContext.filePath;
@@ -737,7 +740,10 @@ async function moveFileViewerToPanel(targetPanelId) {
     ? filePath.substring(0, filePath.lastIndexOf('\\'))
     : filePath;
   const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
-  if (panelState[targetPanelId]) panelState[targetPanelId].currentCategory = parentCategory;
+  if (panelState[targetPanelId]) {
+    panelState[targetPanelId].currentCategory = parentCategory;
+    panelState[targetPanelId].currentPath = filePath;
+  }
 
   // Update the panel's own path bar to show the hosted file path
   panels.updatePanelHeader(targetPanelId, filePath);
@@ -758,32 +764,28 @@ export async function openFileViewerModal(filePath, viewMode) {
     const prevHost = fvModalHost;
     const $prevContent = $(`#panel-${prevHost} .panel-content`);
     $('#fv-widget-store').append($('#fv-widget'));
-    if (panelState[prevHost]?.currentPath) {
+    // Restore saved pre-widget path/category
+    panelState[prevHost].currentPath = panelState[prevHost]._preWidgetPath || '';
+    panelState[prevHost].currentCategory = panelState[prevHost]._preWidgetCategory || null;
+    delete panelState[prevHost]._preWidgetPath;
+    delete panelState[prevHost]._preWidgetCategory;
+    if (panelState[prevHost].currentPath) {
       $prevContent.find('.panel-grid').show();
-      panels.updatePanelHeader(prevHost); // restore header to previous directory path
     } else {
       $prevContent.find('.panel-landing-page').css('display', 'flex');
-      panels.updatePanelHeader(prevHost, '');
     }
+    panels.updatePanelHeader(prevHost);
   }
   fvModalHost = 'modal';
 
-  // Restore modal-only controls
-  $('#btn-fv-close').show();
-  $('#fv-panel-section').css('display', 'flex');
-  $('#fv-path-display').css('cursor', 'pointer');
+  // Show the fv-widget's own header in modal mode
+  $('#fv-widget-header').show();
 
   fvModalContext = { filePath, viewMode };
   fvModalEditMode = false;
 
   const $editorContainer = $('#fv-editor-container');
   const $contentView = $('#fv-content-view');
-
-  // Title: filename in display span, full path in input
-  const filename = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
-  $('#fv-path-display').text(filename).attr('title', filePath);
-  $('#fv-path-input').val(filePath);
-  panelState[0].currentPath = filePath;
 
   $editorContainer.empty();
   if (fvModalEditor) { fvModalEditor.dispose(); fvModalEditor = null; }
@@ -799,7 +801,7 @@ export async function openFileViewerModal(filePath, viewMode) {
   $editorContainer.hide();
   $contentView.empty().hide();
 
-  // Info bar: panel push buttons + encoding/newline badges
+  // Header: panel push buttons
   const $panelBtns = $('#fv-panel-btns').empty();
   const maxPanel = Math.min(panels.visiblePanels + 1, 4);
   for (let p = 1; p <= maxPanel; p++) {
@@ -897,6 +899,13 @@ export async function openFileViewerModal(filePath, viewMode) {
       $('#btn-fv-save').hide();
     }
   }
+
+  // Update fv-widget header with file path + category color
+  const parentDir = filePath.includes('\\')
+    ? filePath.substring(0, filePath.lastIndexOf('\\'))
+    : filePath;
+  const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
+  panels.updateFvWidgetHeader(filePath, parentCategory);
 
   // Open w2popup if not already showing (first open, or returning from panel mode)
   if (!alreadyModal) {
@@ -1034,13 +1043,18 @@ export function hideFileViewerModal() {
   const host = fvModalHost;
   const $widget = $('#fv-widget');
   if (typeof host === 'number') {
-    // Panel mode: restore the panel's content view
+    // Panel mode: restore the panel's pre-widget path/category and repaint header
     const $content = $(`#panel-${host} .panel-content`);
-    if (panelState[host]?.currentPath) {
+    panelState[host].currentPath = panelState[host]._preWidgetPath || '';
+    panelState[host].currentCategory = panelState[host]._preWidgetCategory || null;
+    delete panelState[host]._preWidgetPath;
+    delete panelState[host]._preWidgetCategory;
+    if (panelState[host].currentPath) {
       $content.find('.panel-grid').show();
     } else {
       $content.find('.panel-landing-page').css('display', 'flex');
     }
+    panels.updatePanelHeader(host);
   }
 
   // Return widget to storage BEFORE closing popup so it isn't destroyed with the popup DOM
@@ -1066,24 +1080,24 @@ export function hideFileViewerModal() {
 }
 
 /**
- * Wire up click-to-edit behaviour for the file viewer modal path bar.
+ * Wire up path-bar interactions on the fv-widget header.
  * Call once from renderer.js initialize().
+ * The header is only visible in modal mode; in panel mode the panel's own header handles navigation.
  */
-export function initFvPathInput() {
-  const $display = $('#fv-path-display');
-  const $input = $('#fv-path-input');
+export function attachFvWidgetHeaderListeners() {
+  const $header = $('#fv-widget-header');
+  const $pathDisplay = $header.find('.panel-path');
+  const $input = $header.find('.panel-path-input');
 
-  $display.on('click', function () {
-    // In panel-embedded mode the panel title bar handles navigation; don't open inline editor
-    if (typeof fvModalHost === 'number') return;
-    $display.hide();
+  $pathDisplay.on('click', function () {
+    $pathDisplay.hide();
     $input.show().select().focus();
   });
 
   async function submitPathInput() {
     const raw = $input.val().trim();
     $input.hide();
-    $display.show();
+    $pathDisplay.show();
     if (!raw || raw === fvModalContext?.filePath) return;
 
     // Parse #fragment then ?params (mirrors parseNavUri in panels.js)
@@ -1095,12 +1109,17 @@ export function initFvPathInput() {
       withoutHash = raw.slice(0, hashIdx);
     }
     const qIdx = withoutHash.indexOf('?');
-    const basePath = qIdx === -1 ? withoutHash : withoutHash.slice(0, qIdx);
-    const viewMode = (qIdx !== -1 && withoutHash.slice(qIdx + 1).split('&').includes('hexview'))
-      ? 'hex' : 'auto';
+    if (qIdx !== -1) {
+      // Has query params — hand off to the navigation system
+      const hostId = typeof fvModalHost === 'number' ? fvModalHost : 1;
+      panels.navigateToDirectory(raw, hostId);
+      return;
+    }
+    const basePath = withoutHash;
+    const viewMode = 'auto';
 
     await openFileViewerModal(basePath, viewMode);
-    if (fragment === 'edit' && viewMode !== 'hex') {
+    if (fragment === 'edit') {
       await toggleFileViewerEditMode();
     }
   }
@@ -1108,7 +1127,7 @@ export function initFvPathInput() {
   $input.on('keydown', async function (e) {
     if (e.key === 'Escape') {
       $input.val(fvModalContext?.filePath || '').hide();
-      $display.show();
+      $pathDisplay.show();
       return;
     }
     if (e.key === 'Enter') {

@@ -39,7 +39,7 @@ import * as terminal from './modules/terminal.js';
 import { openDragTrayForActivePanel } from './modules/dragdrop.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
-export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, initFvPathInput, openNotesViewerForPath, cancelFileViewerEdit, getFileViewerHost } from './modules/notes.js';
+export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, attachFvWidgetHeaderListeners, openNotesViewerForPath, cancelFileViewerEdit, getFileViewerHost } from './modules/notes.js';
 export { generateW2UIContextMenu, showCustomContextMenu } from './modules/contexts.js';
 export { openHistoryModal, formatHistoryData, buildCompleteFileState } from './modules/history.js';
 export { updateAlertBadge } from './modules/alerts.js';
@@ -319,7 +319,7 @@ async function initialize() {
     });
 
     await notes.initializeMonacoLoader();
-    notes.initFvPathInput();
+    notes.attachFvWidgetHeaderListeners();
     panels.setFileNavHandler(async (filePath, navParams, navFragment, panelId) => {
       if (navParams.has('notes')) {
         await notes.openNotesViewerForPath(filePath, panelId, navFragment === 'edit');
@@ -1206,7 +1206,7 @@ function attachEventListeners() {
   });
 
   // Initialize item properties path input bar
-  panels.initIpPathInput();
+  panels.attachIpWidgetHeaderListeners();
 
   // Settings modal close button
   $('#btn-settings-close').click(function () {
