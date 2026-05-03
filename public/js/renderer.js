@@ -889,9 +889,9 @@ function attachEventListeners() {
       }
     }
 
-    // Escape key: close item properties modal if open
-    if (event.key === 'Escape' && $('#item-props-modal').is(':visible')) {
-      panels.hideItemPropsModal();
+    // Escape key: close item properties widget if open in modal
+    if (event.key === 'Escape' && panels.getIpWidgetHost() === 'modal') {
+      panels.hideItemPropsWidget();
       return;
     }
 
@@ -1200,15 +1200,13 @@ function attachEventListeners() {
     panels.attachPanelEventListeners(panelId);
   }
 
-  // Item properties modal close button
-  $('#btn-item-props-modal-close').click(function () {
-    panels.hideItemPropsModal();
+  // Item properties widget close button
+  $('#btn-ip-close').click(function () {
+    panels.hideItemPropsWidget();
   });
 
-  // Close item properties modal when clicking the backdrop
-  $('#item-props-modal').on('click', function (e) {
-    if (e.target === this) panels.hideItemPropsModal();
-  });
+  // Initialize item properties path input bar
+  panels.initIpPathInput();
 
   // Settings modal close button
   $('#btn-settings-close').click(function () {

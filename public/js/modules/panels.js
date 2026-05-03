@@ -22,7 +22,7 @@ import * as sidebar from './sidebar.js';
 import * as utils from './utils.js';
 import * as terminal from './terminal.js';
 import { attachDragDropForPanel, attachDragDropForGallery } from './dragdrop.js';
-import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip } from './vendor/w2ui.es6.min.js';
+import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip, w2popup } from './vendor/w2ui.es6.min.js';
 import * as autoLabels from './auto-labels.js';
 import { getPathSuggestions } from './path-autocomplete.js';
 import {
@@ -69,6 +69,12 @@ export let panel1SelectedDirectoryName = null;
 export let gridFocusedPanelId = null;
 const closedPanelStack = [];
 const selectionAnchorRecids = {};
+
+// Tracks where the item-properties widget (#ip-widget / #panel-0) is currently hosted.
+// null = in #ip-widget-store (hidden), 'modal' = in w2popup, 1-4 = in that panel.
+let ipWidgetHost = null;
+export function getIpWidgetHost() { return ipWidgetHost; }
+
 export let panelDividerState = {
 	verticalPixels: 400,
 	horizontalPixels: 300,
@@ -1810,10 +1816,8 @@ function syncSelectedRecordTags(tagNames) {
 }
 
 async function refreshAllVisiblePropertyPanels() {
-	for (let panelId = 2; panelId <= 4; panelId++) {
-		if ($(`#panel-${panelId}`).is(':visible') && getPanelViewType(panelId) === 'properties') {
-			await updateItemPropertiesPage(panelId);
-		}
+	if (ipWidgetHost !== null) {
+		await updateItemPropertiesPage(0);
 	}
 }
 
@@ -2821,6 +2825,8 @@ async function showItemPropertiesForPath(filePath, panelId, fileStats) {
 
 	const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
 	panelState[panelId].currentCategory = parentCategory;
+	// Fix: set currentPath so the path bar shows the file path (not a stale directory)
+	panelState[panelId].currentPath = filePath;
 
 	// Update selected item state so updateItemPropertiesPage knows what to show
 	Object.assign(selectedItemState, {
@@ -2833,14 +2839,9 @@ async function showItemPropertiesForPath(filePath, panelId, fileStats) {
 		record: null
 	});
 
-	const $panel = $(`#panel-${panelId}`);
-	$panel.find('.panel-grid').hide();
-	$panel.find('.panel-gallery').removeClass('active');
-	$panel.find('.panel-file-view').hide();
-	$panel.find('.panel-landing-page').show();
-
 	hidePanelToolbar(panelId);
-	await updateItemPropertiesPage(panelId);
+	await moveItemPropsWidgetToPanel(panelId);
+	await updateItemPropertiesPage();
 }
 
 // ============================================================
@@ -2915,7 +2916,8 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		// Parse virtual-view URI params (e.g. "C:\Foo?orphans&trash", "C:\file.txt?notes#edit")
 		const { basePath: parsedBase, params: navParams, fragment: navFragment } = parseNavUri(rawInput);
-		const isVirtualView = navParams.size > 0;
+		const VIRTUAL_VIEW_PARAMS = new Set(['orphans', 'trash']);
+		const isVirtualView = [...navParams].some(p => VIRTUAL_VIEW_PARAMS.has(p));
 
 		let normalizedPath = parsedBase;
 		if (normalizedPath.length === 2 && normalizedPath[1] === ':') {
@@ -5065,7 +5067,8 @@ export function setGridFocusedPanelId(panelId) {
 
 export function getPanelViewType(panelId) {
 	const $panel = $(`#panel-${panelId}`);
-	// fv-widget hosted inside this panel counts as a file view
+	// ip-widget or fv-widget hosted inside this panel
+	if ($panel.find('#ip-widget').length > 0) return 'properties';
 	if ($panel.find('#fv-widget').length > 0) return 'file';
 	if ($panel.find('.panel-file-view').is(':visible')) return 'file';
 	if ($panel.find('.panel-gallery').hasClass('active')) return 'gallery';
@@ -5074,12 +5077,9 @@ export function getPanelViewType(panelId) {
 }
 
 export function refreshItemPropertiesInAllPanels() {
-	for (let i = 2; i <= 4; i++) {
-		if (panelState[i].attrEditMode || panelState[i].notesEditMode) continue;
-		if ($(`#panel-${i}`).is(':visible') && getPanelViewType(i) === 'properties') {
-			updateItemPropertiesPage(i);
-		}
-	}
+	if (ipWidgetHost === null) return;
+	if (panelState[0].attrEditMode || panelState[0].notesEditMode) return;
+	updateItemPropertiesPage(0);
 }
 
 export function navigateBack() {
@@ -5517,6 +5517,11 @@ export function removePanel(panelId) {
 		return;
 	}
 
+	// If this panel is hosting the ip-widget, return it to the store first
+	if (ipWidgetHost === panelId) {
+		hideItemPropsWidget();
+	}
+
 	// Clean up terminal session if present
 	if (terminal.isPanelTerminal(panelId)) {
 		terminal.destroyTerminalPanel(panelId);
@@ -5778,9 +5783,9 @@ export function attachPanelEventListeners(panelId) {
 		$panel.find('.item-properties-content').off('click.sectionHeader').on('click.sectionHeader', '.item-props-section-header', function (e) {
 			if ($(e.target).is('button') && !$(e.target).hasClass('btn-section-toggle')) return;
 			const section = $(this).attr('data-section');
-			if (!section || !panelState[panelId].sectionCollapseState) return;
-			const collapsed = !panelState[panelId].sectionCollapseState[section];
-			panelState[panelId].sectionCollapseState[section] = collapsed;
+			if (!section || !panelState[0].sectionCollapseState) return;
+			const collapsed = !panelState[0].sectionCollapseState[section];
+			panelState[0].sectionCollapseState[section] = collapsed;
 			const body = $(this).parent().find('.item-props-section-body');
 			body.toggle(!collapsed);
 			$(this).find('.btn-section-toggle').html(collapsed ? '&#9656;' : '&#9662;');
@@ -5793,7 +5798,7 @@ export function attachPanelEventListeners(panelId) {
 		});
 
 		$panel.find('.item-properties-content').off('mousedown.labelDismiss').on('mousedown.labelDismiss', function (event) {
-			const uiState = ensureLabelsUiState(panelId);
+			const uiState = ensureLabelsUiState(0);
 			let shouldRerender = false;
 			if (!$(event.target).closest('.item-props-tag-editor').length && uiState.isSuggestionOpen) {
 				uiState.isSuggestionOpen = false;
@@ -5806,23 +5811,23 @@ export function attachPanelEventListeners(panelId) {
 				shouldRerender = true;
 			}
 			if (shouldRerender) {
-				rerenderLabelsSection(panelId);
+				rerenderLabelsSection(0);
 			}
 		});
 
 		$panel.find('.item-properties-content').off('input.labelTags').on('input.labelTags', '.item-props-tag-input', async function () {
-			const uiState = ensureLabelsUiState(panelId);
+			const uiState = ensureLabelsUiState(0);
 			uiState.inputValue = $(this).val();
 			uiState.visibleSuggestionCount = INITIAL_LABEL_SUGGESTION_COUNT;
 			uiState.selectedSuggestionIndex = -1;
 			uiState.isInputFocused = true;
 			uiState.isSuggestionOpen = true;
 			uiState.isCategoryMenuOpen = false;
-			await rerenderLabelsSection(panelId, { restoreFocus: true });
+			await rerenderLabelsSection(0, { restoreFocus: true });
 		});
 
 		$panel.find('.item-properties-content').off('focus.labelTags').on('focus.labelTags', '.item-props-tag-input', async function () {
-			const uiState = ensureLabelsUiState(panelId);
+			const uiState = ensureLabelsUiState(0);
 			const currentValue = $(this).val();
 			if (
 				uiState.isInputFocused &&
@@ -5838,26 +5843,26 @@ export function attachPanelEventListeners(panelId) {
 			uiState.isSuggestionOpen = true;
 			uiState.isCategoryMenuOpen = false;
 			uiState.selectedSuggestionIndex = -1;
-			await rerenderLabelsSection(panelId, { restoreFocus: true });
+			await rerenderLabelsSection(0, { restoreFocus: true });
 		});
 
 		$panel.find('.item-properties-content').off('blur.labelTags').on('blur.labelTags', '.item-props-tag-input', function () {
 			setTimeout(() => {
-				const uiState = ensureLabelsUiState(panelId);
+				const uiState = ensureLabelsUiState(0);
 				const editorHasFocus = $panel.find('.item-props-tag-editor').find(document.activeElement).length > 0;
 				if (!editorHasFocus) {
 					uiState.isInputFocused = false;
 					uiState.isSuggestionOpen = false;
 					uiState.selectedSuggestionIndex = -1;
-					rerenderLabelsSection(panelId);
+					rerenderLabelsSection(0);
 				}
 			}, 0);
 		});
 
 		$panel.find('.item-properties-content').off('keydown.labelTags').on('keydown.labelTags', '.item-props-tag-input', async function (event) {
-			const uiState = ensureLabelsUiState(panelId);
-			const assignedTagNames = Array.isArray(panelState[panelId].currentItemStats?.tags)
-				? panelState[panelId].currentItemStats.tags
+			const uiState = ensureLabelsUiState(0);
+			const assignedTagNames = Array.isArray(panelState[0].currentItemStats?.tags)
+				? panelState[0].currentItemStats.tags
 				: [];
 			const suggestions = getTagSuggestions(uiState, assignedTagNames);
 
@@ -5865,7 +5870,7 @@ export function attachPanelEventListeners(panelId) {
 				event.preventDefault();
 				uiState.isSuggestionOpen = true;
 				uiState.selectedSuggestionIndex = Math.min(uiState.selectedSuggestionIndex + 1, suggestions.length - 1);
-				await rerenderLabelsSection(panelId, { restoreFocus: true });
+				await rerenderLabelsSection(0, { restoreFocus: true });
 				return;
 			}
 
@@ -5873,7 +5878,7 @@ export function attachPanelEventListeners(panelId) {
 				event.preventDefault();
 				uiState.selectedSuggestionIndex = Math.max(uiState.selectedSuggestionIndex - 1, -1);
 				uiState.isSuggestionOpen = true;
-				await rerenderLabelsSection(panelId, { restoreFocus: true });
+				await rerenderLabelsSection(0, { restoreFocus: true });
 				return;
 			}
 
@@ -5881,10 +5886,10 @@ export function attachPanelEventListeners(panelId) {
 				event.preventDefault();
 				try {
 					if (uiState.selectedSuggestionIndex >= 0) {
-						await activateTagSuggestion(panelId, uiState.selectedSuggestionIndex);
+						await activateTagSuggestion(0, uiState.selectedSuggestionIndex);
 						return;
 					}
-					await runPrimaryTagAction(panelId);
+					await runPrimaryTagAction(0);
 				} catch (err) {
 					w2alert('Error updating tags: ' + err.message);
 				}
@@ -5895,14 +5900,14 @@ export function attachPanelEventListeners(panelId) {
 				event.preventDefault();
 				uiState.isSuggestionOpen = false;
 				uiState.selectedSuggestionIndex = -1;
-				await rerenderLabelsSection(panelId, { restoreFocus: true });
+				await rerenderLabelsSection(0, { restoreFocus: true });
 			}
 		});
 
 		$panel.find('.item-properties-content').off('mousedown.labelTagAction').on('mousedown.labelTagAction', '.btn-item-props-tag-action', async function (event) {
 			event.preventDefault();
 			try {
-				await runPrimaryTagAction(panelId);
+				await runPrimaryTagAction(0);
 			} catch (err) {
 				w2alert('Error updating tags: ' + err.message);
 			}
@@ -5913,7 +5918,7 @@ export function attachPanelEventListeners(panelId) {
 			const index = Number($(this).attr('data-index'));
 			if (Number.isNaN(index)) return;
 			try {
-				await activateTagSuggestion(panelId, index);
+				await activateTagSuggestion(0, index);
 			} catch (err) {
 				w2alert('Error updating tags: ' + err.message);
 			}
@@ -5925,7 +5930,7 @@ export function attachPanelEventListeners(panelId) {
 			const tagName = decodeURIComponent($(this).attr('data-tag-name') || '');
 			if (!tagName) return;
 			try {
-				await removeTagFromCurrentItem(panelId, tagName);
+				await removeTagFromCurrentItem(0, tagName);
 			} catch (err) {
 				w2alert('Error removing tag: ' + err.message);
 			}
@@ -5933,11 +5938,11 @@ export function attachPanelEventListeners(panelId) {
 
 		$panel.find('.item-properties-content').off('mousedown.categoryToggle').on('mousedown.categoryToggle', '.item-props-category-trigger', async function (event) {
 			event.preventDefault();
-			const uiState = ensureLabelsUiState(panelId);
+			const uiState = ensureLabelsUiState(0);
 			uiState.isCategoryMenuOpen = !uiState.isCategoryMenuOpen;
 			uiState.isSuggestionOpen = false;
 			uiState.selectedSuggestionIndex = -1;
-			await rerenderLabelsSection(panelId);
+			await rerenderLabelsSection(0);
 		});
 
 		$panel.find('.item-properties-content').off('mousedown.categoryOption').on('mousedown.categoryOption', '.item-props-category-option', async function (event) {
@@ -5955,7 +5960,7 @@ export function attachPanelEventListeners(panelId) {
 			const shouldForce = $(this).is(':checked');
 			try {
 				if (shouldForce) {
-					const currentCategoryName = panelState[panelId].currentItemStats?.categoryName || 'Default';
+					const currentCategoryName = panelState[0].currentItemStats?.categoryName || 'Default';
 					await assignCategoryFromLabels(panelId, currentCategoryName, true);
 				} else {
 					await clearForcedCategoryFromLabels(panelId);
@@ -5975,7 +5980,7 @@ export function attachPanelEventListeners(panelId) {
 				if (!selectedItemState.isDirectory || !selectedItemState.path) return;
 				try {
 					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { initials: val || null, initialsForce: val ? 1 : 0 });
-					await rerenderLabelsSection(panelId);
+					await rerenderLabelsSection(0);
 					await maybeRefreshPanel1TitleAndIcon();
 				} catch (err) {
 					w2alert('Error saving initials: ' + err.message);
@@ -5987,7 +5992,7 @@ export function attachPanelEventListeners(panelId) {
 			if (!selectedItemState.isDirectory || !selectedItemState.path) return;
 			try {
 				await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { initialsInherit: $(this).is(':checked') ? 1 : 0 });
-				await rerenderLabelsSection(panelId);
+				await rerenderLabelsSection(0);
 				await maybeRefreshPanel1TitleAndIcon();
 			} catch (err) {
 				w2alert('Error saving initials inherit: ' + err.message);
@@ -6004,7 +6009,7 @@ export function attachPanelEventListeners(panelId) {
 				} else {
 					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { initialsForce: 1 });
 				}
-				await rerenderLabelsSection(panelId);
+				await rerenderLabelsSection(0);
 				await maybeRefreshPanel1TitleAndIcon();
 			} catch (err) {
 				w2alert('Error updating initials force: ' + err.message);
@@ -6020,7 +6025,7 @@ export function attachPanelEventListeners(panelId) {
 				if (!selectedItemState.isDirectory || !selectedItemState.path) return;
 				try {
 					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { displayName: val || null, displayNameForce: val ? 1 : 0 });
-					await rerenderLabelsSection(panelId);
+					await rerenderLabelsSection(0);
 					await maybeRefreshPanel1TitleAndIcon();
 				} catch (err) {
 					w2alert('Error saving display name: ' + err.message);
@@ -6032,7 +6037,7 @@ export function attachPanelEventListeners(panelId) {
 			if (!selectedItemState.isDirectory || !selectedItemState.path) return;
 			try {
 				await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { displayNameInherit: $(this).is(':checked') ? 1 : 0 });
-				await rerenderLabelsSection(panelId);
+				await rerenderLabelsSection(0);
 				await maybeRefreshPanel1TitleAndIcon();
 			} catch (err) {
 				w2alert('Error saving display name inherit: ' + err.message);
@@ -6048,7 +6053,7 @@ export function attachPanelEventListeners(panelId) {
 				} else {
 					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { displayNameForce: 1 });
 				}
-				await rerenderLabelsSection(panelId);
+				await rerenderLabelsSection(0);
 				await maybeRefreshPanel1TitleAndIcon();
 			} catch (err) {
 				w2alert('Error updating display name force: ' + err.message);
@@ -6056,18 +6061,18 @@ export function attachPanelEventListeners(panelId) {
 		});
 
 		$panel.find('.btn-attrs-edit').off('click').on('click', function () {
-			panelState[panelId].attrEditMode = true;
-			updateItemPropertiesPage(panelId);
+			panelState[0].attrEditMode = true;
+			updateItemPropertiesPage(0);
 		});
 
 		$panel.find('.btn-attrs-cancel').off('click').on('click', function () {
-			panelState[panelId].attrEditMode = false;
-			updateItemPropertiesPage(panelId);
+			panelState[0].attrEditMode = false;
+			updateItemPropertiesPage(0);
 		});
 
 		$panel.find('.btn-attrs-save').off('click').on('click', async function () {
-			const inode = panelState[panelId].itemInode || selectedItemState.inode;
-			const dirId = panelState[panelId].itemDirId || selectedItemState.dir_id;
+			const inode = panelState[0].itemInode || selectedItemState.inode;
+			const dirId = panelState[0].itemDirId || selectedItemState.dir_id;
 			if (!inode || !dirId) {
 				w2alert('Cannot save: item is not yet indexed. Please scan the directory first.');
 				return;
@@ -6087,16 +6092,16 @@ export function attachPanelEventListeners(panelId) {
 			});
 			try {
 				await window.electronAPI.setFileAttributes(inode, dirId, attrs);
-				panelState[panelId].attrEditMode = false;
-				updateItemPropertiesPage(panelId);
+				panelState[0].attrEditMode = false;
+				updateItemPropertiesPage(0);
 			} catch (err) {
 				w2alert('Error saving attributes: ' + err.message);
 			}
 		});
 
 		$panel.find('.btn-notes-edit-item').off('click').on('click', async function () {
-			const notesFilePath = panelState[panelId].notesFilePath;
-			const notesSectionKey = panelState[panelId].notesSectionKey;
+			const notesFilePath = panelState[0].notesFilePath;
+			const notesSectionKey = panelState[0].notesSectionKey;
 			if (!notesFilePath) return;
 
 			let rawFile = '';
@@ -6104,7 +6109,7 @@ export function attachPanelEventListeners(panelId) {
 			const sections = await window.electronAPI.invoke('parse-notes-file', rawFile);
 			const sectionContent = sections[notesSectionKey] || '';
 
-			panelState[panelId].notesEditMode = true;
+			panelState[0].notesEditMode = true;
 			const $notesSection = $panel.find('.item-props-notes-section');
 			$notesSection.find('.btn-notes-edit-item').hide();
 			$notesSection.find('.btn-notes-save-item').show();
@@ -6112,8 +6117,8 @@ export function attachPanelEventListeners(panelId) {
 			$panel.find('.item-props-notes').hide();
 			const $editorContainer = $panel.find('.item-props-notes-editor').show();
 
-			if (!panelState[panelId].notesMonacoEditor) {
-				panelState[panelId].notesMonacoEditor = monaco.editor.create($editorContainer[0], {
+			if (!panelState[0].notesMonacoEditor) {
+				panelState[0].notesMonacoEditor = monaco.editor.create($editorContainer[0], {
 					value: sectionContent,
 					language: 'markdown',
 					theme: 'vs',
@@ -6126,17 +6131,17 @@ export function attachPanelEventListeners(panelId) {
 					fontFamily: 'Consolas, "Courier New", monospace'
 				});
 			} else {
-				panelState[panelId].notesMonacoEditor.setValue(sectionContent);
-				panelState[panelId].notesMonacoEditor.layout();
+				panelState[0].notesMonacoEditor.setValue(sectionContent);
+				panelState[0].notesMonacoEditor.layout();
 			}
-			panelState[panelId].notesMonacoEditor.focus();
+			panelState[0].notesMonacoEditor.focus();
 		});
 
 		$panel.find('.btn-notes-save-item').off('click').on('click', async function () {
-			const notesFilePath = panelState[panelId].notesFilePath;
-			const notesSectionKey = panelState[panelId].notesSectionKey;
+			const notesFilePath = panelState[0].notesFilePath;
+			const notesSectionKey = panelState[0].notesSectionKey;
 			if (!notesFilePath) return;
-			const editor = panelState[panelId].notesMonacoEditor;
+			const editor = panelState[0].notesMonacoEditor;
 			const sectionContent = editor ? editor.getValue() : '';
 			try {
 				let existingContent = '';
@@ -6151,12 +6156,12 @@ export function attachPanelEventListeners(panelId) {
 				w2alert('Error saving notes: ' + err.message);
 				return;
 			}
-			panelState[panelId].notesEditMode = false;
-			updateItemPropertiesPage(panelId);
+			panelState[0].notesEditMode = false;
+			updateItemPropertiesPage(0);
 		});
 
 		$panel.find('.btn-notes-cancel-item').off('click').on('click', function () {
-			panelState[panelId].notesEditMode = false;
+			panelState[0].notesEditMode = false;
 			const $notesSection = $panel.find('.item-props-notes-section');
 			$notesSection.find('.btn-notes-edit-item').show();
 			$notesSection.find('.btn-notes-save-item').hide();
@@ -6203,57 +6208,71 @@ export async function getRecordHeight() {
 	return settings.record_height || 30;
 }
 
-export async function updateItemPropertiesPage(panelId) {
-	const $panel = $(`#panel-${panelId}`);
+export async function updateItemPropertiesPage(panelId = 0) {
+	// Always target #panel-0 (the widget's inner container) for DOM operations.
+	// panelId is kept for state (panelState[panelId]) and panel-header updates when
+	// the widget is embedded in a real panel (panelId > 0).
+	const $panel = $('#panel-0');
 	const $placeholder = $panel.find('.item-properties-placeholder');
 	const $content = $panel.find('.item-properties-content');
 
 	if (!selectedItemState.path) {
-		panelState[panelId].currentItemStats = null;
+		panelState[0].currentItemStats = null;
 		$content.hide();
 		$placeholder.show();
-		getPanelHeaderElement(panelId)?.classList.remove('active');
 		return;
 	}
 
 	try {
 		const stats = await window.electronAPI.getItemStats(selectedItemState.path);
 		if (!stats || !stats.success) {
-			panelState[panelId].currentItemStats = null;
+			panelState[0].currentItemStats = null;
 			$content.hide();
 			$placeholder.show();
-			getPanelHeaderElement(panelId)?.classList.remove('active');
 			return;
 		}
 
-		// Show panel header with item's full path, styled with parent directory's category
+		// Update the widget path bar and panel header
+		const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
+		$('#ip-path-display').text(pathWithParam).attr('title', pathWithParam);
+		$('#ip-path-input').val(pathWithParam);
+
 		if (panelId !== 0) {
+			// Legacy panel-direct mode (panels 1-4 with their own event handlers)
 			const parentDir = selectedItemState.path.includes('\\')
 				? selectedItemState.path.substring(0, selectedItemState.path.lastIndexOf('\\'))
 				: selectedItemState.path;
 			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
 			panelState[panelId].currentCategory = parentCategory;
 			updatePanelHeader(panelId, selectedItemState.path);
+		} else if (typeof ipWidgetHost === 'number') {
+			// Widget embedded in a panel — update that panel's header too
+			const parentDir = selectedItemState.path.includes('\\')
+				? selectedItemState.path.substring(0, selectedItemState.path.lastIndexOf('\\'))
+				: selectedItemState.path;
+			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
+			panelState[ipWidgetHost].currentCategory = parentCategory;
+			updatePanelHeader(ipWidgetHost, selectedItemState.path);
 		}
 
-		panelState[panelId].itemInode = stats.inode;
-		panelState[panelId].itemDirId = stats.dir_id;
-		panelState[panelId].currentItemStats = stats;
+		panelState[0].itemInode = stats.inode;
+		panelState[0].itemDirId = stats.dir_id;
+		panelState[0].currentItemStats = stats;
 
-		if (!panelState[panelId].sectionCollapseState) {
-			panelState[panelId].sectionCollapseState = {
+		if (!panelState[0].sectionCollapseState) {
+			panelState[0].sectionCollapseState = {
 				preview: false, information: false, exif: false, attributes: false, notes: false, history: false
 			};
 		}
 
 		function applyCollapseState(section, $sectionEl) {
-			const collapsed = panelState[panelId].sectionCollapseState[section];
+			const collapsed = panelState[0].sectionCollapseState[section];
 			$sectionEl.find('.item-props-section-body').toggle(!collapsed);
 			$sectionEl.find(`.btn-section-toggle[data-section="${section}"]`).html(collapsed ? '&#9656;' : '&#9662;');
 		}
 
 		const openWith = stats.openWith || null;
-		panelState[panelId].currentItemOpenWith = openWith;
+		panelState[0].currentItemOpenWith = openWith;
 
 		const iconHtml = stats.isDirectory
 			? `<img src="assets/icons/folder.png" style="width:24px;height:24px;object-fit:contain;" onerror="this.src='assets/icons/user-file.png'">`
@@ -6267,7 +6286,7 @@ export async function updateItemPropertiesPage(panelId) {
 			$icon.removeClass('clickable');
 		}
 		$panel.find('.item-props-filename').text(stats.filename || selectedItemState.filename || '');
-		await renderLabelsSection(panelId, stats);
+		await renderLabelsSection(0, stats);
 
 		const $previewSection = $panel.find('.item-props-preview-section');
 		if (!stats.isDirectory && stats.fileType === 'Image') {
@@ -6378,7 +6397,7 @@ export async function updateItemPropertiesPage(panelId) {
 			const checksumDisplay = stats.checksumValue
 				? `<span class="stat-value" title="${stats.checksumValue}">${stats.checksumValue.substring(0, 16)}…</span>`
 				: '<span style="color:#999;">Not calculated</span>';
-			const calcBtn = `<button class="btn-checksum-calc" data-panel="${panelId}">Calculate Now</button>`;
+			const calcBtn = `<button class="btn-checksum-calc">Calculate Now</button>`;
 			$stats.append(`<div class="stat-row"><span class="stat-label">Checksum</span>${checksumDisplay}${calcBtn}</div>`);
 		}
 
@@ -6388,7 +6407,7 @@ export async function updateItemPropertiesPage(panelId) {
 			applyCollapseState('attributes', $attrSection);
 			const $attrContainer = $panel.find('.item-props-attributes').empty();
 			const currentAttrs = stats.attributes || {};
-			const editMode = panelState[panelId].attrEditMode || false;
+			const editMode = panelState[0].attrEditMode || false;
 
 			$attrSection.find('.btn-attrs-edit').toggle(!editMode);
 			$attrSection.find('.btn-attrs-save').toggle(editMode);
@@ -6469,9 +6488,9 @@ export async function updateItemPropertiesPage(panelId) {
 			notesFilePath = stats.path.substring(0, lastSep) + notesSep + 'notes.txt';
 			notesSectionKey = stats.filename;
 		}
-		panelState[panelId].notesFilePath = notesFilePath;
-		panelState[panelId].notesSectionKey = notesSectionKey;
-		const notesEditMode = panelState[panelId].notesEditMode || false;
+		panelState[0].notesFilePath = notesFilePath;
+		panelState[0].notesSectionKey = notesSectionKey;
+		const notesEditMode = panelState[0].notesEditMode || false;
 		const $notesSection = $panel.find('.item-props-notes-section');
 		$notesSection.css('display', 'flex');
 		applyCollapseState('notes', $notesSection);
@@ -6504,8 +6523,8 @@ export async function updateItemPropertiesPage(panelId) {
 			} catch (_) {
 				$notes.html('<span style="color:#bbb;font-size:12px;">No notes</span>');
 			}
-		} else if (panelState[panelId].notesMonacoEditor) {
-			panelState[panelId].notesMonacoEditor.layout();
+		} else if (panelState[0].notesMonacoEditor) {
+			panelState[0].notesMonacoEditor.layout();
 		}
 
 		const $historySection = $panel.find('.item-props-history-section');
@@ -6543,7 +6562,7 @@ export async function updateItemPropertiesPage(panelId) {
 			$(this).prop('disabled', true).text('Calculating…');
 			try {
 				await window.electronAPI.calculateFileChecksum(selectedItemState.path, selectedItemState.inode, selectedItemState.dir_id);
-				updateItemPropertiesPage(panelId);
+				updateItemPropertiesPage(0);
 			} catch (err) {
 				console.error('Checksum error:', err);
 				$(this).prop('disabled', false).text('Calculate Now');
@@ -6554,10 +6573,9 @@ export async function updateItemPropertiesPage(panelId) {
 		$content.css('display', 'flex').show();
 	} catch (err) {
 		console.error('Error updating item properties:', err);
-		panelState[panelId].currentItemStats = null;
+		panelState[0].currentItemStats = null;
 		$content.hide();
 		$placeholder.show();
-		getPanelHeaderElement(panelId)?.classList.remove('active');
 	}
 }
 
@@ -6731,39 +6749,162 @@ export async function openSelectedItem(panelId) {
 			break;
 		}
 	}
-	if (!hasPropertiesPanel && visiblePanels < 4) {
-		visiblePanels++;
-		const newPanelId = visiblePanels;
-		$(`#panel-${newPanelId}`).show();
-		attachPanelEventListeners(newPanelId);
-		updatePanelLayout();
-		setTimeout(() => updateItemPropertiesPage(newPanelId), 150);
+	if (!hasPropertiesPanel) {
+		// Open widget in popup (or refresh it if already shown)
+		await openItemPropertiesWidget(record, panelId);
 	}
 }
 
 /**
- * Shows the Item Properties modal for a file record.
- * Displays buttons to open the properties in panel 2 through min(visiblePanels+1, 4).
+ * Opens (or updates) the item-properties widget for a file record.
+ * If the widget is already embedded in a panel, it refreshes in place.
+ * Otherwise opens it in a w2popup modal.
  */
-export async function showItemPropsModal(record, sourcePanelId) {
+export async function openItemPropertiesWidget(record, sourcePanelId) {
 	Object.assign(selectedItemState, {
 		path: record.path,
 		filename: record.filenameRaw || record.filename,
-		isDirectory: false,
+		isDirectory: !!record.isFolder,
 		inode: record.inode,
 		dir_id: record.dir_id,
 		record: record,
 		panelId: sourcePanelId
 	});
+
+	// If widget is currently embedded in a panel, refresh it in place
+	if (typeof ipWidgetHost === 'number') {
+		const hostId = ipWidgetHost;
+		panelState[hostId].attrEditMode = false;
+		panelState[hostId].notesEditMode = false;
+		_buildIpPanelBtns();
+		await updateItemPropertiesPage(0);
+		return;
+	}
+
+	// Widget is in store or modal — open/update in modal
+	const alreadyInModal = ipWidgetHost === 'modal'
+		&& $('#w2ui-popup').length > 0
+		&& w2popup.status !== 'closing';
 	panelState[0].attrEditMode = false;
 	panelState[0].notesEditMode = false;
+	ipWidgetHost = 'modal';
 
-	const $btns = $('#item-props-modal-panel-btns').empty();
+	_buildIpPanelBtns();
+	$('#btn-ip-close').show();
+	$('#ip-panel-section').css('display', 'flex');
+
+	if (!alreadyInModal) {
+		const pw = Math.min(Math.round(window.innerWidth * 0.5), 500);
+		const ph = Math.round(window.innerHeight * 0.82);
+		w2popup.open({
+			title: '',
+			body: '',
+			style: 'padding: 0; overflow: hidden; height: 100%;',
+			width: pw,
+			height: ph,
+			showClose: false,
+			keyboard: false,
+			modal: true
+		});
+		// DOM is available synchronously; inject widget so content is visible during open animation
+		$('#w2ui-popup .w2ui-popup-body').append($('#ip-widget'));
+		$('#ip-widget').css({ width: '100%', height: '100%', flex: '' });
+	}
+	await updateItemPropertiesPage(0);
+}
+
+/** Backward-compatible alias. */
+export async function showItemPropsModal(record, sourcePanelId) {
+	return openItemPropertiesWidget(record, sourcePanelId);
+}
+
+/** Hides / closes the item-properties widget and restores its previous host. */
+export function hideItemPropsWidget() {
+	if (ipWidgetHost === null) return;
+	const wasModal = ipWidgetHost === 'modal';
+	const wasPanel = typeof ipWidgetHost === 'number';
+
+	if (wasPanel) {
+		_restorePanelAfterWidget(ipWidgetHost);
+	}
+
+	// Return widget to store
+	$('#ip-widget-store').append($('#ip-widget'));
+	$('#ip-widget').css({ width: '', height: '', flex: '' });
+
+	if (wasModal && $('#w2ui-popup').length > 0 && w2popup.status !== 'closing') {
+		w2popup.close();
+	}
+
+	// Clean up notes editor if any
+	if (panelState[0].notesMonacoEditor) {
+		panelState[0].notesMonacoEditor.dispose();
+		panelState[0].notesMonacoEditor = null;
+	}
+	panelState[0].attrEditMode = false;
+	panelState[0].notesEditMode = false;
+	panelState[0].currentItemStats = null;
+	ipWidgetHost = null;
+}
+
+/** Backward-compatible alias. */
+export function hideItemPropsModal() {
+	hideItemPropsWidget();
+}
+
+/** Moves the item-properties widget into the given panel. */
+export async function moveItemPropsWidgetToPanel(targetPanelId) {
+	if (targetPanelId > visiblePanels) {
+		visiblePanels++;
+		$(`#panel-${targetPanelId}`).show();
+		attachPanelEventListeners(targetPanelId);
+		updatePanelLayout();
+	}
+
+	// Close popup if widget is currently in modal
+	if (ipWidgetHost === 'modal' && $('#w2ui-popup').length > 0 && w2popup.status !== 'closing') {
+		w2popup.close();
+	}
+
+	// Restore previous panel if widget is moving from another panel
+	if (typeof ipWidgetHost === 'number' && ipWidgetHost !== targetPanelId) {
+		_restorePanelAfterWidget(ipWidgetHost);
+	}
+
+	const $content = $(`#panel-${targetPanelId} .panel-content`);
+	// Save what was visible before hiding everything
+	const wasGridVisible = $content.find('.panel-grid').is(':visible');
+	$content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view').hide();
+	panelState[targetPanelId]._preWidgetGridVisible = wasGridVisible;
+
+	$content.append($('#ip-widget'));
+	$('#ip-widget').css({ width: '100%', height: '100%', flex: '1' });
+
+	// Hide modal-specific controls when embedded in a panel
+	$('#btn-ip-close').hide();
+	$('#ip-panel-section').hide();
+
+	panelState[targetPanelId].currentPath = selectedItemState.path;
+	ipWidgetHost = targetPanelId;
+	setActivePanelId(targetPanelId);
+}
+
+function _restorePanelAfterWidget(panelId) {
+	const $content = $(`#panel-${panelId} .panel-content`);
+	if (panelState[panelId]?._preWidgetGridVisible) {
+		$content.find('.panel-grid').show();
+	} else {
+		$content.find('.panel-landing-page').css('display', 'flex');
+	}
+	delete panelState[panelId]._preWidgetGridVisible;
+}
+
+function _buildIpPanelBtns() {
+	const $btns = $('#ip-panel-btns').empty();
 	const maxPanel = Math.min(visiblePanels + 1, 4);
 	for (let p = 2; p <= maxPanel; p++) {
 		const targetPanel = p;
 		$('<button>')
-			// Open in Panel X
 			.text(`P${targetPanel}`)
 			.css({
 				padding: '4px 10px',
@@ -6774,36 +6915,50 @@ export async function showItemPropsModal(record, sourcePanelId) {
 				cursor: 'pointer',
 				fontSize: '12px'
 			})
-			.on('click', function () {
-				hideItemPropsModal();
-				openItemPropsInPanel(targetPanel);
-			})
+			.on('click', function () { openItemPropsInPanel(targetPanel); })
 			.appendTo($btns);
 	}
-
-	$('#item-props-modal').css('display', 'flex');
-	await updateItemPropertiesPage(0);
-}
-
-export function hideItemPropsModal() {
-	$('#item-props-modal').hide();
 }
 
 async function openItemPropsInPanel(targetPanel) {
-	if (targetPanel > visiblePanels) {
-		visiblePanels++;
-		$(`#panel-${targetPanel}`).show();
-		attachPanelEventListeners(targetPanel);
-		updatePanelLayout();
-	}
-	const $panel = $(`#panel-${targetPanel}`);
-	$panel.find('.panel-header').removeClass('active');
-	$panel.find('.panel-grid').hide();
-	$panel.find('.panel-file-view').hide();
-	$panel.find('.panel-landing-page').show();
-	await updateItemPropertiesPage(targetPanel);
-	setActivePanelId(targetPanel);
+	await moveItemPropsWidgetToPanel(targetPanel);
+	await updateItemPropertiesPage(0);
 }
+
+/** Initialise path-bar interactions on the ip-widget header. */
+export function initIpPathInput() {
+	const $display = $('#ip-path-display');
+	const $input = $('#ip-path-input');
+
+	$display.on('click', function () {
+		$display.hide();
+		const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
+		$input.show().val(pathWithParam).focus().select();
+	});
+
+	$input.on('keydown', function (e) {
+		if (e.key === 'Enter') {
+			const raw = $input.val().trim();
+			if (!raw) return;
+			$input.hide();
+			$display.show();
+			// If bare file path without ?properties, append the param
+			const needsParam = raw.indexOf('?') === -1;
+			const navPath = needsParam ? raw + '?properties' : raw;
+			const hostId = typeof ipWidgetHost === 'number' ? ipWidgetHost : activePanelId;
+			navigateToDirectory(navPath, hostId);
+		} else if (e.key === 'Escape') {
+			$input.hide();
+			$display.show();
+		}
+	});
+
+	$input.on('blur', function () {
+		$input.hide();
+		$display.show();
+	});
+}
+
 
 export async function reopenLastClosedPanel() {
 	if (closedPanelStack.length === 0) return;

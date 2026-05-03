@@ -14,7 +14,7 @@
 
 import * as utils from './utils.js';
 import * as panels from './panels.js';
-import { w2popup, w2confirm } from './vendor/w2ui.es6.min.js';
+import { w2popup, w2confirm, w2utils } from './vendor/w2ui.es6.min.js';
 import { panelState, setFileEditMode, setSelectedItemState } from '../renderer.js';
 
 let monacoLoaded = false;
@@ -948,14 +948,31 @@ export async function cancelFileViewerEdit() {
   }
 
   if (isDirty) {
-    w2confirm({
-      msg: 'You have unsaved changes.<br><br>Click "Abandon" to discard them, or "Keep Editing" to go back.',
-      title: 'Abandon Changes?',
-      width: 420,
-      height: 190,
-      btn_yes: { text: 'Abandon', class: '', style: '' },
-      btn_no: { text: 'Keep Editing', class: '', style: '' }
-    }).yes(() => doCancel());
+    const isPanelMode = typeof fvModalHost === 'number';
+    if (isPanelMode) {
+      const panelEl = document.getElementById(`panel-${fvModalHost}`);
+      w2utils.message(
+        { box: panelEl, after: '.panel-header' },
+        {
+          title: 'Abandon Changes?',
+          body: '<div class="w2ui-centered w2ui-msg-text">You have unsaved changes.<br><br>Click "Abandon" to discard them, or "Keep Editing" to go back.</div>',
+          actions: { abandon: 'Abandon', keep: 'Keep Editing' },
+          cancelAction: 'keep'
+        }
+      ).action(evt => {
+        if (evt.detail.action === 'Abandon') doCancel();
+        evt.detail.self.close();
+      });
+    } else {
+      w2confirm({
+        msg: 'You have unsaved changes.<br><br>Click "Abandon" to discard them, or "Keep Editing" to go back.',
+        title: 'Abandon Changes?',
+        width: 420,
+        height: 190,
+        btn_yes: { text: 'Abandon', class: '', style: '' },
+        btn_no: { text: 'Keep Editing', class: '', style: '' }
+      }).yes(() => doCancel());
+    }
   } else {
     doCancel();
   }

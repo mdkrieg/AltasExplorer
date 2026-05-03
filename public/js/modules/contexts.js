@@ -483,10 +483,8 @@ async function handleContextMenuClick(event, panelId) {
 					dir_id: firstRecord.dir_id,
 					record: firstRecord
 				});
-				$panel.find('.panel-grid').hide();
-				$panel.find('.panel-file-view').hide();
-				$panel.find('.panel-landing-page').show();
-				panels.updateItemPropertiesPage(targetPanel);
+				await panels.moveItemPropsWidgetToPanel(targetPanel);
+				await panels.updateItemPropertiesPage(0);
 			}
 
 			panels.setActivePanelId(targetPanel);
