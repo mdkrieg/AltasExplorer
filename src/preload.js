@@ -122,6 +122,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileAttributes: (inode, dir_id) => ipcRenderer.invoke('get-file-attributes', { inode, dir_id }),
   setFileAttributes: (inode, dir_id, attributes) => ipcRenderer.invoke('set-file-attributes', { inode, dir_id, attributes }),
   getItemStats: (itemPath) => ipcRenderer.invoke('get-item-stats', { itemPath }),
+  getItemsStats: (items) => ipcRenderer.invoke('get-items-stats', { items }),
+  getItemsHistory: (items) => ipcRenderer.invoke('get-items-history', { items }),
   deleteItems: (items) => ipcRenderer.invoke('delete-items', items),
   createFolder: (parentPath, folderName) => ipcRenderer.invoke('create-folder', { parentPath, folderName }),
   moveItems: (items, targetDirPath, onCollision) => ipcRenderer.invoke('move-items', { items, targetDirPath, onCollision }),

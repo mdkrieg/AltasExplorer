@@ -70,7 +70,10 @@ export let selectedItemState = {
   inode: null,
   dir_id: null,
   record: null,
-  panelId: null
+  panelId: null,
+  // Decoded absolute paths for aux items in a multi-select properties view.
+  // Empty array = single-select mode.
+  auxItemsPaths: []
 };
 
 export let activePanelId = 1;

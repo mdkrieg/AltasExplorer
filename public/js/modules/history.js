@@ -109,6 +109,7 @@ export function formatHistoryData(historyRecords, fullState) {
   return historyRecords.map((record, index) => ({
       recid: index + 1,
       _id: record.id,
+      _rawTimestamp: record.detectedAt || null,
       detectedAt: record.detectedAt ? new Date(record.detectedAt).toLocaleString() : '-',
       changeValue: EVENT_LABELS[record.eventType] || record.eventType || '-',
       path: fullState.path || '-',
@@ -208,8 +209,15 @@ function updateHistoryChangeSummary(fullState, selectedIndex) {
  * Render history view inside a panel's `.panel-history-view` element.
  * The w2grid is named `history-grid-${panelId}` to avoid clashes between panels.
  */
-export async function openHistoryViewInPanel(selectedRecord, panelId) {
+export async function openHistoryViewInPanel(selectedRecord, panelId, auxPaths = []) {
   try {
+    const isMultiSelect = Array.isArray(auxPaths) && auxPaths.length > 0;
+
+    if (isMultiSelect) {
+      await _openMultiSelectHistoryView(selectedRecord, panelId, auxPaths);
+      return;
+    }
+
     const result = await window.electronAPI.getItemHistory({
       isDirectory: !!selectedRecord.isFolder,
       inode: selectedRecord.inode,
@@ -279,6 +287,115 @@ export async function openHistoryViewInPanel(selectedRecord, panelId) {
     _createHistorySummaryInContainer(summaryEl, fullState, 0);
   } catch (err) {
     console.error('Error opening history view in panel:', err);
+  }
+}
+
+/**
+ * Multi-select history view: fetch history for all items, merge and display in one grid.
+ */
+async function _openMultiSelectHistoryView(primaryRecord, panelId, auxPaths) {
+  const $panel = $(`#panel-${panelId}`);
+  const $view = $panel.find('.panel-history-view');
+  const $gridContainer = $view.find('.panel-history-grid-container');
+  const $summaryContainer = $view.find('.panel-history-summary-container');
+
+  // Build item descriptors for bulk fetch
+  const allItemDescriptors = [primaryRecord, ...auxPaths.map(p => {
+    // We have only paths — do a quick stats lookup
+    return { path: p, _needsStats: true };
+  })];
+
+  // For aux paths we need to fetch their isFolder/inode/dir_id
+  const resolvedItems = [primaryRecord];
+  for (const auxPath of auxPaths) {
+    try {
+      const s = await window.electronAPI.getItemStats(auxPath);
+      if (s && s.success) {
+        resolvedItems.push({ path: auxPath, isFolder: !!s.isDirectory, inode: s.inode, dir_id: s.dir_id, filename: s.filename });
+      }
+    } catch (_) {}
+  }
+
+  const historyItems = resolvedItems.map(r => ({
+    isDirectory: !!r.isFolder,
+    inode: r.inode || null,
+    dirId: r.dir_id || null
+  }));
+
+  const multiResult = await window.electronAPI.getItemsHistory(historyItems);
+
+  const gridName = `history-grid-${panelId}`;
+  if (w2ui[gridName]) {
+    try { w2ui[gridName].destroy(); } catch (_) {}
+  }
+
+  // Build per-item fullStates and format their rows
+  const allItemsData = []; // { itemLabel, fullState, rawData, formattedRows }
+  if (multiResult && multiResult.success && multiResult.results) {
+    multiResult.results.forEach(res => {
+      const item = resolvedItems[res._itemIndex];
+      const itemLabel = item ? (item.filename || item.path || `Item ${res._itemIndex}`) : `Item ${res._itemIndex}`;
+      if (!res.success || !res.data || !res.data.length) {
+        allItemsData[res._itemIndex] = { itemLabel, fullState: {}, rawData: [], formattedRows: [] };
+        return;
+      }
+      const fullState = buildCompleteFileState(res.data, item);
+      const formattedRows = formatHistoryData(res.data, fullState);
+      allItemsData[res._itemIndex] = { itemLabel, fullState, rawData: res.data, formattedRows };
+    });
+  }
+
+  // Merge all rows, tagging each with _itemIndex and renumbering recids
+  let mergedRows = [];
+  allItemsData.forEach((itemData, idx) => {
+    if (!itemData) return;
+    itemData.formattedRows.forEach((row, rowIdx) => {
+      mergedRows.push({ ...row, _itemIndex: idx, _rowIndexWithinItem: rowIdx, _itemLabel: itemData.itemLabel });
+    });
+  });
+  // Sort by timestamp descending
+  mergedRows.sort((a, b) => {
+    const ta = new Date(a._rawTimestamp || 0).getTime();
+    const tb = new Date(b._rawTimestamp || 0).getTime();
+    return tb - ta;
+  });
+  // Re-number recids
+  mergedRows = mergedRows.map((row, i) => ({ ...row, recid: i + 1 }));
+
+  $gridContainer.empty();
+  const gridEl = document.createElement('div');
+  gridEl.style.cssText = 'width: 100%; height: 100%;';
+  $gridContainer.append(gridEl);
+
+  const summaryEl = $summaryContainer[0];
+  w2ui[gridName] = new w2grid({
+    name: gridName,
+    box: gridEl,
+    columns: [
+      { field: '_itemLabel', text: 'Item', size: '120px', resizable: true, sortable: true },
+      { field: 'detectedAt', text: 'Detected At', size: '160px', resizable: true, sortable: true },
+      { field: 'changeValue', text: 'Change', size: '200px', resizable: true, sortable: true },
+      { field: 'path', text: 'Path', size: '100%', resizable: true, sortable: true }
+    ],
+    records: mergedRows,
+    show: { header: true, toolbar: false, footer: true },
+    onClick: function (event) {
+      if (!event.detail || !event.detail.recid) return;
+      const clickedRow = mergedRows.find(r => r.recid === event.detail.recid);
+      if (!clickedRow) return;
+      const itemData = allItemsData[clickedRow._itemIndex];
+      if (!itemData) return;
+      // Use the row's position within its item's own history for the comparison card
+      _createHistorySummaryInContainer(summaryEl, itemData.fullState, clickedRow._rowIndexWithinItem);
+    }
+  });
+
+  if (mergedRows.length > 0) {
+    const first = mergedRows[0];
+    const firstItemData = allItemsData[first._itemIndex];
+    if (firstItemData) {
+      _createHistorySummaryInContainer(summaryEl, firstItemData.fullState, first._rowIndexWithinItem);
+    }
   }
 }
 

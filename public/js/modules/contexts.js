@@ -55,7 +55,7 @@ async function openActionTerminalPanel(filePath, actionLabel) {
 	return terminal.createTerminalPanel(targetPanelId, filePath, `Action: ${actionLabel}`);
 }
 
-export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount = panels.visiblePanels) {
+export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount = panels.visiblePanels, triggerRecord = null) {
 	const allCategories = getAllCategories();
 	const allTags = getAllTags();
 	const isMultiSelect = selectedRecords.length > 1;
@@ -90,6 +90,7 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 
 	panelContextMenuState = {
 		selectedRecords,
+		triggerRecord: triggerRecord || selectedRecords[0] || null,
 		isMultiSelect,
 		directoryCount,
 		fileCount,
@@ -356,16 +357,18 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		}
 	}
 
+	addSeparator(contextMenu);
 	if (!isMultiSelect) {
-		addSeparator(contextMenu);
 		contextMenu.push({ id: 'view-notes', text: 'Notes', icon: 'fa fa-sticky-note' });
 		const singleRecord = selectedRecords[0];
 		const todoCompleted = singleRecord?.todo?.completed ?? 0;
 		const todoTotal = singleRecord?.todo?.total ?? 0;
 		const todoLabel = todoTotal > 0 ? `TODO (${todoCompleted}/${todoTotal})` : 'TODO';
 		contextMenu.push({ id: 'view-todo', text: todoLabel, icon: 'fa fa-check-square' });
-		contextMenu.push({ id: 'view-properties', text: 'Properties', icon: 'fa fa-info-circle' });
 	}
+	// Properties is always available — for multi-select the label shows how many additional items
+	const propsLabel = isMultiSelect ? `Properties (+${selectedRecords.length - 1})` : 'Properties';
+	contextMenu.push({ id: 'view-properties', text: propsLabel, icon: 'fa fa-info-circle' });
 
 	if (fileCount > 0) {
 		addSeparator(contextMenu);
@@ -557,13 +560,22 @@ async function handleContextMenuClick(event, panelId) {
 	}
 
 	if (menuItemId === 'view-properties') {
-		const selectedRecord = selectedRecords[0];
-		if (!selectedRecord) return;
-
+		const triggerRecord = panelContextMenuState.triggerRecord || selectedRecords[0];
+		if (!triggerRecord) return;
 		try {
-			await panels.showItemPropsModal(selectedRecord, activePanelId);
+			let auxEncoded = '';
+			if (isMultiSelect) {
+				const sep = triggerRecord.path && triggerRecord.path.includes('\\') ? '\\' : '/';
+				const lastSepIdx = triggerRecord.path ? triggerRecord.path.lastIndexOf(sep) : -1;
+				const triggerDirname = lastSepIdx >= 0 ? triggerRecord.path.slice(0, lastSepIdx) : (triggerRecord.path || '');
+				const otherPaths = selectedRecords
+					.filter(r => r.path !== triggerRecord.path)
+					.map(r => r.path);
+				auxEncoded = panels.encodeAuxItems(triggerDirname, otherPaths);
+			}
+			await panels.showItemPropsModal(triggerRecord, activePanelId, auxEncoded);
 		} catch (err) {
-			alert('Error opening properties: ' + err.message);
+			console.error('Error opening properties:', err);
 		}
 	}
 

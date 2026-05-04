@@ -1197,25 +1197,42 @@ function parseNavUri(input) {
 		input = input.slice(0, hashIdx);
 	}
 	const idx = input.indexOf('?');
-	if (idx === -1) return { basePath: input, params: new Set(), fragment };
+	if (idx === -1) return { basePath: input, params: new Set(), paramValues: new Map(), fragment };
 	const basePath = input.slice(0, idx);
-	const params = new Set(
-		input.slice(idx + 1).split('&').map(p => p.trim().toLowerCase()).filter(Boolean)
-	);
-	return { basePath, params, fragment };
+	const params = new Set();
+	const paramValues = new Map();
+	input.slice(idx + 1).split('&').forEach(p => {
+		const trimmed = p.trim();
+		if (!trimmed) return;
+		const eqIdx = trimmed.indexOf('=');
+		if (eqIdx === -1) {
+			params.add(trimmed.toLowerCase());
+		} else {
+			const key = trimmed.slice(0, eqIdx).toLowerCase();
+			const val = trimmed.slice(eqIdx + 1);
+			paramValues.set(key, val);
+		}
+	});
+	return { basePath, params, paramValues, fragment };
 }
 
 /**
- * Build a nav URI from a basePath and a Set or array of param strings.
- * Returns plain basePath when params is empty.
+ * Build a nav URI from a basePath, a Set or array of flag params, and an optional
+ * Map of key=value params (e.g. auxitems).
+ * Returns plain basePath when both params collections are empty.
  * @param {string} basePath
  * @param {Set<string>|string[]} params
+ * @param {Map<string,string>} [paramValues]
  * @returns {string}
  */
-function buildNavUri(basePath, params) {
+function buildNavUri(basePath, params, paramValues) {
 	const arr = params instanceof Set ? [...params] : (params || []);
-	if (arr.length === 0) return basePath;
-	return basePath + '?' + arr.join('&');
+	const kvArr = paramValues instanceof Map
+		? [...paramValues.entries()].map(([k, v]) => `${k}=${v}`)
+		: [];
+	const all = [...arr, ...kvArr];
+	if (all.length === 0) return basePath;
+	return basePath + '?' + all.join('&');
 }
 
 /**
@@ -1229,6 +1246,47 @@ function toggleNavParam(current, param) {
 	if (next.has(param)) next.delete(param);
 	else next.add(param);
 	return next;
+}
+
+/**
+ * Encode a list of absolute paths as a pipe-delimited string of paths relative
+ * to baseDirname for use in the auxitems URI param.
+ *
+ * NOTE: The pipe character (|) is used as a delimiter because it is not a
+ * valid Windows path character and thus safe there.  On Linux/macOS the pipe
+ * IS technically legal in filenames, so this encoding can produce collisions
+ * if a file or directory name contains a literal '|'.  That edge case is
+ * accepted as a known limitation for now.
+ *
+ * @param {string}   baseDirname  - the base directory (dirname of the trigger item)
+ * @param {string[]} otherPaths   - absolute paths of the other selected items
+ * @returns {string}
+ */
+export function encodeAuxItems(baseDirname, otherPaths) {
+	if (!otherPaths || otherPaths.length === 0) return '';
+	const sep = baseDirname.includes('\\') ? '\\' : '/';
+	return otherPaths.map(p => {
+		if (p.startsWith(baseDirname + sep)) {
+			return p.slice(baseDirname.length + 1);
+		}
+		return p; // keep absolute if not directly under baseDirname
+	}).join('|');
+}
+
+/**
+ * Decode an auxitems encoded string back to absolute paths.
+ * @param {string} baseDirname
+ * @param {string} encoded
+ * @returns {string[]}
+ */
+function decodeAuxItems(baseDirname, encoded) {
+	if (!encoded) return [];
+	const sep = baseDirname.includes('\\') ? '\\' : '/';
+	return encoded.split('|').filter(Boolean).map(rel => {
+		// If it looks absolute, keep as-is
+		if (/^[A-Za-z]:[\\/]/.test(rel) || rel.startsWith('/')) return rel;
+		return baseDirname + sep + rel;
+	});
 }
 
 function getPanelToolbarElement(panelId) {
@@ -1635,11 +1693,234 @@ function renderTagEditorMarkup(uiState, assignedTagNames, options = {}) {
 	`;
 }
 
-async function renderLabelsSection(panelId, stats, options = {}) {
+/**
+ * Render the Labels section for a multi-select properties page.
+ * Shows tag intersection/union, aggregated category, and directory-only initials/displayName.
+ */
+async function renderMultiLabelsSection(panelId, primaryStats, options = {}, allItems) {
 	const $panel = $(`#panel-${panelId}`);
 	const $container = $panel.find('.item-props-labels-content');
 	if ($container.length === 0) return;
 
+	const tagDefs = getTagDefinitionMap();
+	const uiState = ensureLabelsUiState(panelId);
+
+	// Compute tag intersection (all items have it) and "some" tags (some items have it)
+	const tagSets = allItems.map(s => new Set(Array.isArray(s.tags) ? s.tags : []));
+	const allTagNames = [...new Set(allItems.flatMap(s => Array.isArray(s.tags) ? s.tags : []))];
+	const intersectionTags = allTagNames.filter(t => tagSets.every(s => s.has(t)));
+	const someTags = allTagNames.filter(t => !intersectionTags.includes(t));
+
+	const currentTagsHtml = intersectionTags.length > 0
+		? intersectionTags.map(t => renderTagChip(t, tagDefs[t])).join('')
+		: '<span class="item-props-label-empty">No tags on all items</span>';
+
+	const someTagsHtml = someTags.length > 0
+		? `<div class="item-props-some-tags-row" style="margin-top:4px;">
+			<span style="font-size:11px;color:#888;">Some:</span>
+			${someTags.map(t => {
+				const td = tagDefs[t];
+				const safeT = utils.escapeHtml(t);
+				const encodedT = encodeURIComponent(t);
+				const bg = td ? td.bgColor : '#777';
+				const fg = td ? td.textColor : '#fff';
+				return `<span class="item-props-tag-chip" style="background:${bg};color:${fg};"><button class="btn-item-props-promote-tag" data-tag-name="${encodedT}" title="Add to all items" style="font-size:10px;padding:0 3px;background:transparent;border:none;color:inherit;cursor:pointer;line-height:1;">+</button><span class="item-props-tag-chip-label">${safeT}</span><button class="btn-item-props-remove-tag" data-tag-name="${encodedT}" title="Remove tag">&times;</button></span>`;
+			}).join('')}
+		</div>`
+		: '';
+
+	const tagEditorHtml = renderTagEditorMarkup(uiState, intersectionTags);
+
+	const tagSectionHtml = `
+		<div class="item-props-current-tags">${currentTagsHtml}</div>
+		${someTagsHtml}
+		<div class="item-props-tag-editor" style="margin-top:6px;">
+			${tagEditorHtml.match(/<div class="item-props-tag-editor">([\s\S]*?)<\/div>\s*$/)?.[1] || tagEditorHtml}
+		</div>
+	`;
+
+	// Category for multi-select
+	const dirItems = allItems.filter(s => s.isDirectory);
+	const fileItems = allItems.filter(s => !s.isDirectory);
+
+	let categoryControlHtml = '';
+	if (dirItems.length > 0) {
+		// Find unique categories across dirs
+		const dirCategories = dirItems.map(s => s.categoryName || 'Default');
+		const uniqueCategories = [...new Set(dirCategories)];
+		if (uniqueCategories.length === 1) {
+			// All dirs have same category — show normal picker
+			const catDef = getCategoryDefinitionByName(uniqueCategories[0]) || {
+				name: uniqueCategories[0],
+				bgColor: 'rgb(175,175,175)',
+				textColor: 'rgb(51,51,51)'
+			};
+			const isForcedForDir = dirItems.some(s => s.isForcedCategory);
+			const showCategoryMenu = isForcedForDir && uiState.isCategoryMenuOpen;
+			const currentIcon = await getCategoryIconUrl(catDef, null);
+			const sortedCats = Object.values(allCategories).sort((a, b) => a.name.localeCompare(b.name));
+			const catEntries = await Promise.all(sortedCats.map(async c => ({
+				category: c,
+				iconUrl: await getCategoryIconUrl(c)
+			})));
+			categoryControlHtml = `
+				<div class="item-props-category-with-force">
+					<div class="item-props-category-picker">
+						<button class="item-props-category-trigger${showCategoryMenu ? ' is-open' : ''}" type="button" ${isForcedForDir ? '' : 'disabled'}>
+							<img src="${currentIcon}" alt="" class="item-props-category-icon">
+							<span>${utils.escapeHtml(catDef.name)}</span>
+						</button>
+						${showCategoryMenu ? `
+							<div class="item-props-category-menu">
+							${catEntries.map(({ category, iconUrl }) => `
+								<div class="item-props-category-option${category.name === catDef.name ? ' is-selected' : ''}" data-category-name="${encodeURIComponent(category.name)}">
+									<img src="${iconUrl}" alt="" class="item-props-category-icon">
+									<span>${utils.escapeHtml(category.name)}</span>
+								</div>
+							`).join('')}
+							</div>
+						` : ''}
+					</div>
+					<label class="item-props-category-force">
+						<input class="item-props-category-force-toggle" type="checkbox" ${isForcedForDir ? 'checked' : ''}>
+						<span>Force</span>
+					</label>
+				</div>
+			`;
+		} else {
+			// Multiple different categories — show assign button with same dropdown as single-select
+			const categoryList = uniqueCategories.map(n => utils.escapeHtml(n)).join(', ');
+			const menuOpen = uiState.isCategoryMenuOpen;
+			const sortedCats = Object.values(allCategories).sort((a, b) => a.name.localeCompare(b.name));
+			const catEntries = await Promise.all(sortedCats.map(async c => ({
+				category: c,
+				iconUrl: await getCategoryIconUrl(c)
+			})));
+			categoryControlHtml = `
+				<div class="item-props-category-picker">
+					<button class="item-props-category-trigger${menuOpen ? ' is-open' : ''}" type="button">
+						<span>Assign Category</span>
+					</button>
+					${menuOpen ? `
+						<div class="item-props-category-menu">
+						${catEntries.map(({ category, iconUrl }) => `
+							<div class="item-props-category-option" data-category-name="${encodeURIComponent(category.name)}">
+								<img src="${iconUrl}" alt="" class="item-props-category-icon">
+								<span>${utils.escapeHtml(category.name)}</span>
+							</div>
+						`).join('')}
+						</div>
+					` : ''}
+				</div>
+				<div style="font-size:11px;color:#999;margin-top:2px;">${categoryList}</div>
+			`;
+		}
+	} else {
+		// Files only — show read-only category from primary stats (parent dir's category)
+		const catDef = getCategoryDefinitionByName(primaryStats.categoryName) || {
+			name: primaryStats.categoryName || 'Default',
+			bgColor: 'rgb(175,175,175)',
+			textColor: 'rgb(51,51,51)'
+		};
+		const currentIcon = await getCategoryIconUrl(catDef, null);
+		categoryControlHtml = `
+			<div class="item-props-category-readonly">
+				<img src="${currentIcon}" alt="" class="item-props-category-icon">
+				<span>${utils.escapeHtml(catDef.name)}</span>
+				<span class="item-props-category-note">From parent directory</span>
+			</div>
+		`;
+	}
+
+	// Initials and display name — only if there are directories
+	let initialsGroupHtml = '';
+	let displayNameGroupHtml = '';
+	if (dirItems.length > 0) {
+		try {
+			const labelsResults = await Promise.all(
+				dirItems.map(s => window.electronAPI.getDirectoryLabels(s.path).catch(() => null))
+			);
+			const validLabels = labelsResults.filter(Boolean);
+			if (validLabels.length > 0) {
+				// Initials
+				const iniValues = validLabels.map(l => l.initials || '');
+				const uniqueInis = [...new Set(iniValues)];
+				const iniValue = uniqueInis.length === 1 ? uniqueInis[0] : '';
+				const iniPlaceholder = uniqueInis.length > 1 ? '*' : '';
+				const iniAmbiguous = uniqueInis.length > 1;
+				initialsGroupHtml = `
+					<div class="item-props-label-group">
+						<div class="item-props-label-group-title">Initials</div>
+						<div class="item-props-label-group-value">
+							<input
+								class="item-props-initials-input"
+								type="text"
+								maxlength="2"
+								value="${utils.escapeHtml(iniValue)}"
+								placeholder="${utils.escapeHtml(iniPlaceholder)}"
+								style="width:40px;text-align:center;text-transform:uppercase;font-weight:bold;"
+							>
+							${iniAmbiguous ? `<span style="font-size:11px;color:#999;margin-left:6px;">Multiple values — saving will apply to all dirs</span>` : ''}
+						</div>
+					</div>
+				`;
+
+				// Display name
+				const dnValues = validLabels.map(l => l.displayName || '');
+				const uniqueDns = [...new Set(dnValues)];
+				const dnValue = uniqueDns.length === 1 ? uniqueDns[0] : '';
+				const dnPlaceholder = uniqueDns.length > 1 ? `(${dirItems.length}) Custom Names` : 'Custom name';
+				displayNameGroupHtml = `
+					<div class="item-props-label-group">
+						<div class="item-props-label-group-title">Display Name</div>
+						<div class="item-props-label-group-value">
+							<input
+								class="item-props-display-name-input"
+								type="text"
+								value="${utils.escapeHtml(dnValue)}"
+								placeholder="${utils.escapeHtml(dnPlaceholder)}"
+								style="flex:1;min-width:80px;"
+							>
+							${uniqueDns.length > 1 ? `<span style="font-size:11px;color:#999;margin-left:6px;">Multiple values — saving will apply to all dirs</span>` : ''}
+						</div>
+					</div>
+				`;
+			}
+		} catch (_) {}
+	}
+
+	$container.html(`
+		<div class="item-props-label-group">
+			<div class="item-props-label-group-title">Tags</div>
+			<div class="item-props-label-group-value">
+				${tagSectionHtml}
+			</div>
+		</div>
+		<div class="item-props-label-group">
+			<div class="item-props-label-group-title">Category</div>
+			<div class="item-props-label-group-value">
+				${categoryControlHtml}
+			</div>
+		</div>
+		${initialsGroupHtml}
+		${displayNameGroupHtml}
+	`);
+}
+
+async function renderLabelsSection(panelId, stats, options = {}, allItems = null) {
+	const $panel = $(`#panel-${panelId}`);
+	const $container = $panel.find('.item-props-labels-content');
+	if ($container.length === 0) return;
+
+	const isMultiSelect = allItems && allItems.length > 1;
+
+	// ---- Multi-select labels rendering ----
+	if (isMultiSelect) {
+		await renderMultiLabelsSection(panelId, stats, options, allItems);
+		return;
+	}
+
+	// ---- Single-select labels rendering ----
 	const uiState = ensureLabelsUiState(panelId);
 	const assignedTagNames = Array.isArray(stats.tags) ? stats.tags : [];
 	const tagEditorHtml = renderTagEditorMarkup(uiState, assignedTagNames);
@@ -1717,7 +1998,6 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 								type="text"
 								maxlength="2"
 								value="${utils.escapeHtml(iniDisabled ? iniResolved : ini)}"
-								placeholder="AB"
 								${iniDisabled ? 'disabled' : ''}
 								style="width:40px;text-align:center;text-transform:uppercase;font-weight:bold;"
 							>
@@ -1806,7 +2086,9 @@ async function renderLabelsSection(panelId, stats, options = {}) {
 async function rerenderLabelsSection(panelId, options = {}) {
 	const stats = panelState[panelId].currentItemStats;
 	if (!stats) return;
-	await renderLabelsSection(panelId, stats, options);
+	// In multi-select mode, reconstruct allItems from lastRenderedAllItems if available
+	const allItems = panelState[panelId].lastRenderedAllItems || null;
+	await renderLabelsSection(panelId, stats, options, allItems);
 }
 
 function getSelectedGridRecord() {
@@ -1874,6 +2156,7 @@ async function addTagToCurrentItem(panelId, tagName) {
 		: [];
 	if (isAssignedTag(assignedTagNames, tagDefinition.name)) return;
 
+	// Primary item
 	const result = await window.electronAPI.addTagToItem({
 		path: selectedItemState.path,
 		tagName: tagDefinition.name,
@@ -1885,6 +2168,25 @@ async function addTagToCurrentItem(panelId, tagName) {
 		throw new Error(result?.error || 'Unable to add tag');
 	}
 
+	// Aux items in multi-select
+	const auxPaths = selectedItemState.auxItemsPaths || [];
+	for (const auxPath of auxPaths) {
+		try {
+			const auxStats = await window.electronAPI.getItemStats(auxPath);
+			if (auxStats && auxStats.success) {
+				await window.electronAPI.addTagToItem({
+					path: auxPath,
+					tagName: tagDefinition.name,
+					isDirectory: !!auxStats.isDirectory,
+					inode: auxStats.inode,
+					dir_id: auxStats.dir_id
+				});
+			}
+		} catch (err) {
+			console.warn(`[addTagToCurrentItem] Could not add tag to aux item ${auxPath}:`, err);
+		}
+	}
+
 	const nextTags = [...assignedTagNames, tagDefinition.name];
 	panelState[panelId].currentItemStats.tags = nextTags;
 	const uiState = ensureLabelsUiState(panelId);
@@ -1893,6 +2195,43 @@ async function addTagToCurrentItem(panelId, tagName) {
 	uiState.selectedSuggestionIndex = -1;
 	uiState.isSuggestionOpen = false;
 	syncSelectedRecordTags(nextTags);
+	await refreshAllVisiblePropertyPanels();
+}
+
+/**
+ * Add a tag that some items already have to ALL items in the current multi-select.
+ * This promotes a "some" tag to an intersection tag.
+ */
+async function promoteTagToAllItems(panelId, tagName) {
+	const tagDefinition = getCanonicalTagDefinition(tagName);
+	if (!tagDefinition || !selectedItemState.path) return;
+	const allPaths = [
+		selectedItemState.path,
+		...(selectedItemState.auxItemsPaths || [])
+	].filter(Boolean);
+	for (const itemPath of allPaths) {
+		try {
+			const itemStats = await window.electronAPI.getItemStats(itemPath);
+			if (!itemStats || !itemStats.success) continue;
+			const existingTags = Array.isArray(itemStats.tags) ? itemStats.tags : [];
+			if (isAssignedTag(existingTags, tagDefinition.name)) continue;
+			await window.electronAPI.addTagToItem({
+				path: itemPath,
+				tagName: tagDefinition.name,
+				isDirectory: !!itemStats.isDirectory,
+				inode: itemStats.inode,
+				dir_id: itemStats.dir_id
+			});
+		} catch (err) {
+			console.warn(`[promoteTagToAllItems] Could not promote tag to ${itemPath}:`, err);
+		}
+	}
+	// Update primary item stats cache
+	const primaryStats = panelState[panelId].currentItemStats;
+	if (primaryStats && Array.isArray(primaryStats.tags) && !primaryStats.tags.includes(tagDefinition.name)) {
+		primaryStats.tags = [...primaryStats.tags, tagDefinition.name];
+	}
+	syncSelectedRecordTags(panelState[panelId].currentItemStats?.tags || []);
 	await refreshAllVisiblePropertyPanels();
 }
 
@@ -2195,6 +2534,8 @@ async function activateTagSuggestion(panelId, suggestionIndex) {
 
 async function removeTagFromCurrentItem(panelId, tagName) {
 	if (!selectedItemState.path) return;
+
+	// Primary item
 	const result = await window.electronAPI.removeTagFromItem({
 		path: selectedItemState.path,
 		tagName,
@@ -2204,6 +2545,25 @@ async function removeTagFromCurrentItem(panelId, tagName) {
 	});
 	if (!result || result.success === false) {
 		throw new Error(result?.error || 'Unable to remove tag');
+	}
+
+	// Aux items in multi-select
+	const auxPaths = selectedItemState.auxItemsPaths || [];
+	for (const auxPath of auxPaths) {
+		try {
+			const auxStats = await window.electronAPI.getItemStats(auxPath);
+			if (auxStats && auxStats.success) {
+				await window.electronAPI.removeTagFromItem({
+					path: auxPath,
+					tagName,
+					isDirectory: !!auxStats.isDirectory,
+					inode: auxStats.inode,
+					dir_id: auxStats.dir_id
+				});
+			}
+		} catch (err) {
+			console.warn(`[removeTagFromCurrentItem] Could not remove tag from aux item ${auxPath}:`, err);
+		}
 	}
 
 	const currentTags = Array.isArray(panelState[panelId].currentItemStats?.tags)
@@ -2336,10 +2696,19 @@ export async function maybeRefreshPanel1TitleAndIcon() {
 }
 
 async function assignCategoryFromLabels(panelId, categoryName, force = true) {
-	if (!selectedItemState.isDirectory || !selectedItemState.path) return;
-	const result = await window.electronAPI.assignCategoryToDirectory(selectedItemState.path, categoryName, force);
-	if (!result || result.success === false) {
-		throw new Error(result?.error || 'Unable to assign category');
+	if (!selectedItemState.path) return;
+	// Build list of all directory paths to update
+	const allDirPaths = [
+		...(selectedItemState.isDirectory ? [selectedItemState.path] : []),
+		...(selectedItemState.auxItemsPaths || [])
+	].filter(Boolean);
+	if (!allDirPaths.length) return;
+
+	for (const dirPath of allDirPaths) {
+		const result = await window.electronAPI.assignCategoryToDirectory(dirPath, categoryName, force);
+		if (!result || result.success === false) {
+			throw new Error(result?.error || `Unable to assign category to ${dirPath}`);
+		}
 	}
 	const uiState = ensureLabelsUiState(panelId);
 	uiState.isCategoryMenuOpen = false;
@@ -2347,10 +2716,17 @@ async function assignCategoryFromLabels(panelId, categoryName, force = true) {
 }
 
 async function clearForcedCategoryFromLabels(panelId) {
-	if (!selectedItemState.isDirectory || !selectedItemState.path) return;
-	const result = await window.electronAPI.removeDirectoryAssignment(selectedItemState.path);
-	if (!result || result.success === false) {
-		throw new Error(result?.error || 'Unable to clear category assignment');
+	const allDirPaths = [
+		...(selectedItemState.isDirectory ? [selectedItemState.path] : []),
+		...(selectedItemState.auxItemsPaths || [])
+	].filter(Boolean);
+	if (!allDirPaths.length) return;
+
+	for (const dirPath of allDirPaths) {
+		const result = await window.electronAPI.removeDirectoryAssignment(dirPath);
+		if (!result || result.success === false) {
+			throw new Error(result?.error || `Unable to clear category assignment for ${dirPath}`);
+		}
 	}
 	const uiState = ensureLabelsUiState(panelId);
 	uiState.isCategoryMenuOpen = false;
@@ -2864,9 +3240,12 @@ async function refreshBadgeCounts(panelId) {
  * Switch a panel to item-properties view for a specific file path.
  * Assumes navigateToDirectory has already updated state.currentPath and history.
  */
-async function showItemPropertiesForPath(filePath, panelId, fileStats) {
-	const filename = filePath.includes('\\') ? filePath.substring(filePath.lastIndexOf('\\') + 1) : filePath;
-	const parentDir = filePath.includes('\\') ? filePath.substring(0, filePath.lastIndexOf('\\')) : filePath;
+async function showItemPropertiesForPath(filePath, panelId, fileStats, auxEncoded = '') {
+	const sep = filePath.includes('\\') ? '\\' : '/';
+	const lastSepIdx = filePath.lastIndexOf(sep);
+	const filename = lastSepIdx >= 0 ? filePath.slice(lastSepIdx + 1) : filePath;
+	const parentDir = lastSepIdx >= 0 ? filePath.slice(0, lastSepIdx) : filePath;
+	const auxItemsPaths = auxEncoded ? decodeAuxItems(parentDir, auxEncoded) : [];
 
 	const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
 	panelState[panelId].currentCategory = parentCategory;
@@ -2881,7 +3260,8 @@ async function showItemPropertiesForPath(filePath, panelId, fileStats) {
 		panelId,
 		inode: fileStats.inode || null,
 		dir_id: fileStats.dir_id || null,
-		record: null
+		record: null,
+		auxItemsPaths
 	});
 
 	hidePanelToolbar(panelId);
@@ -2889,7 +3269,7 @@ async function showItemPropertiesForPath(filePath, panelId, fileStats) {
 	await updateItemPropertiesPage();
 }
 
-async function showHistoryViewForPath(filePath, panelId, fileStats) {
+async function showHistoryViewForPath(filePath, panelId, fileStats, auxEncoded = '') {
 	const lastSep = Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/'));
 	const filename = lastSep >= 0 ? filePath.slice(lastSep + 1) : filePath;
 
@@ -2916,10 +3296,20 @@ async function showHistoryViewForPath(filePath, panelId, fileStats) {
 	// Resolve the category implied by this file's parent directory before painting
 	// the header, so the title bar receives the correct category colours on first paint.
 	await resolvePathCategory(panelId, filePath, fileStats.isDirectory || false);
-	updatePanelHeader(panelId, filePath + '?history');
+	// Build history URI — include auxitems if this is a multi-select history view
+	const historyUri = auxEncoded
+		? buildNavUri(filePath, new Set(['history']), new Map([['auxitems', auxEncoded]]))
+		: filePath + '?history';
+	updatePanelHeader(panelId, historyUri);
 	setActivePanelId(panelId);
 
-	await openHistoryViewInPanel(selectedRecord, panelId);
+	// Decode aux item paths and pass them as resolved paths
+	const sep2 = filePath.includes('\\') ? '\\' : '/';
+	const lastSep2 = filePath.lastIndexOf(sep2);
+	const baseDir = lastSep2 >= 0 ? filePath.slice(0, lastSep2) : filePath;
+	const auxPaths = auxEncoded ? decodeAuxItems(baseDir, auxEncoded) : [];
+
+	await openHistoryViewInPanel(selectedRecord, panelId, auxPaths);
 }
 
 // ============================================================
@@ -2994,7 +3384,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		}
 
 		// Parse virtual-view URI params (e.g. "C:\Foo?orphans&trash", "C:\file.txt?notes#edit")
-		const { basePath: parsedBase, params: navParams, fragment: navFragment } = parseNavUri(rawInput);
+		const { basePath: parsedBase, params: navParams, fragment: navFragment, paramValues } = parseNavUri(rawInput);
 		const VIRTUAL_VIEW_PARAMS = new Set(['orphans', 'trash']);
 		const isVirtualView = [...navParams].some(p => VIRTUAL_VIEW_PARAMS.has(p));
 
@@ -3098,15 +3488,17 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			if (fileStats && fileStats.success && !fileStats.isDirectory) {
 				if (navParams.has('properties')) {
 					// ?properties → show item properties panel (existing behaviour)
+					const auxEncoded = paramValues ? (paramValues.get('auxitems') || '') : '';
 					const hasItemPropsView = $(`#panel-${panelId} .panel-landing-page`).length > 0;
 					if (hasItemPropsView) {
-						await showItemPropertiesForPath(normalizedPath, panelId, fileStats);
+						await showItemPropertiesForPath(normalizedPath, panelId, fileStats, auxEncoded);
 						return;
 					}
 				} else if (navParams.has('history')) {
 					// ?history → show history view inside panel
+					const auxEncoded = paramValues ? (paramValues.get('auxitems') || '') : '';
 					hidePanelLoading(panelId);
-					await showHistoryViewForPath(normalizedPath, panelId, fileStats);
+					await showHistoryViewForPath(normalizedPath, panelId, fileStats, auxEncoded);
 					return;
 				} else if (_fileNavHandler) {
 					// bare path / ?hexview / ?notes / ?notes#edit → delegate to renderer
@@ -3132,10 +3524,11 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		setPanelPathValidity(panelId, true);
 		if (navParams.has('history')) {
 			// ?history on a directory → show directory history inside panel
+			const auxEncoded = paramValues ? (paramValues.get('auxitems') || '') : '';
 			hidePanelLoading(panelId);
 			const statsResult = await window.electronAPI.getItemStats(normalizedPath);
 			if (statsResult && statsResult.success) {
-				await showHistoryViewForPath(normalizedPath, panelId, statsResult);
+				await showHistoryViewForPath(normalizedPath, panelId, statsResult, auxEncoded);
 			}
 			return;
 		}
@@ -3641,10 +4034,14 @@ export async function initializeGridForPanel(panelId) {
 			if (event.detail.recid) {
 				event.preventDefault();
 				setActivePanelId(panelId);
+				const triggerRecid = event.detail.recid;
 				const selectedRecIds = this.getSelection();
 				const selectedRecords = selectedRecIds.map(recid => this.records.find(r => r.recid === recid));
 				if (selectedRecords.length === 0) return;
-				const { items: menuItems, pendingDefaultApp, pendingViewMode } = await generateW2UIContextMenu(selectedRecords, visiblePanels);
+				// Capture the right-clicked record explicitly so multi-select Properties
+				// uses it as the trigger (base path) regardless of selection order.
+				const triggerRecord = this.records.find(r => r.recid === triggerRecid) || selectedRecords[0];
+				const { items: menuItems, pendingDefaultApp, pendingViewMode } = await generateW2UIContextMenu(selectedRecords, visiblePanels, triggerRecord);
 				const origEvent = event.detail.originalEvent;
 				showCustomContextMenu(menuItems, origEvent.clientX, origEvent.clientY, panelId, pendingDefaultApp, pendingViewMode);
 			}
@@ -6038,6 +6435,19 @@ export function attachPanelEventListeners(panelId) {
 			}
 		});
 
+		// Promote a "some" tag to all items in multi-select
+		$panel.find('.item-properties-content').off('click.promoteTag').on('click.promoteTag', '.btn-item-props-promote-tag', async function (event) {
+			event.preventDefault();
+			event.stopPropagation();
+			const tagName = decodeURIComponent($(this).attr('data-tag-name') || '');
+			if (!tagName) return;
+			try {
+				await promoteTagToAllItems(0, tagName);
+			} catch (err) {
+				w2alert('Error promoting tag: ' + err.message);
+			}
+		});
+
 		$panel.find('.item-properties-content').off('mousedown.categoryToggle').on('mousedown.categoryToggle', '.item-props-category-trigger', async function (event) {
 			event.preventDefault();
 			const uiState = ensureLabelsUiState(0);
@@ -6079,9 +6489,19 @@ export function attachPanelEventListeners(panelId) {
 			const val = this.value;
 			clearTimeout(initialsDebounceTimer);
 			initialsDebounceTimer = setTimeout(async () => {
-				if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+				const dirsToSave = [
+					...(selectedItemState.isDirectory ? [selectedItemState.path] : []),
+					...(selectedItemState.auxItemsPaths || []).filter(p => {
+						// only include if it was a dir in the last known stats
+						const auxStats = panelState[0].currentItemStats;
+						return true; // we'll let the API handle non-dirs gracefully
+					})
+				].filter(Boolean);
+				if (!dirsToSave.length) return;
 				try {
-					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { initials: val || null, initialsForce: val ? 1 : 0 });
+					for (const dirPath of dirsToSave) {
+						await window.electronAPI.saveDirectoryLabels(dirPath, { initials: val || null, initialsForce: val ? 1 : 0 });
+					}
 					await rerenderLabelsSection(0);
 					await maybeRefreshPanel1TitleAndIcon();
 				} catch (err) {
@@ -6124,9 +6544,15 @@ export function attachPanelEventListeners(panelId) {
 			const val = this.value;
 			clearTimeout(displayNameDebounceTimer);
 			displayNameDebounceTimer = setTimeout(async () => {
-				if (!selectedItemState.isDirectory || !selectedItemState.path) return;
+				const dirsToSave = [
+					...(selectedItemState.isDirectory ? [selectedItemState.path] : []),
+					...(selectedItemState.auxItemsPaths || [])
+				].filter(Boolean);
+				if (!dirsToSave.length) return;
 				try {
-					await window.electronAPI.saveDirectoryLabels(selectedItemState.path, { displayName: val || null, displayNameForce: val ? 1 : 0 });
+					for (const dirPath of dirsToSave) {
+						await window.electronAPI.saveDirectoryLabels(dirPath, { displayName: val || null, displayNameForce: val ? 1 : 0 });
+					}
 					await rerenderLabelsSection(0);
 					await maybeRefreshPanel1TitleAndIcon();
 				} catch (err) {
@@ -6320,8 +6746,34 @@ export async function updateItemPropertiesPage(panelId = 0) {
 			return;
 		}
 
+		// Fetch aux item stats for multi-select mode
+		const auxPaths = selectedItemState.auxItemsPaths || [];
+		let auxItemsStats = [];
+		if (auxPaths.length > 0) {
+			try {
+				const auxResult = await window.electronAPI.getItemsStats(auxPaths.map(p => ({ itemPath: p })));
+				if (auxResult && auxResult.success && auxResult.results) {
+					auxItemsStats = auxResult.results.filter(r => r && r.success);
+				}
+			} catch (err) {
+				console.warn('[updateItemPropertiesPage] Could not fetch aux items stats:', err);
+			}
+		}
+		const allItems = [stats, ...auxItemsStats];
+		const isMultiSelect = allItems.length > 1;
+
+		// Store for rerenderLabelsSection
+		panelState[0].lastRenderedAllItems = isMultiSelect ? allItems : null;
+
 		// Update the widget path bar and panel header
-		const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
+		const pathWithParam = isMultiSelect
+			? (() => {
+				const sep = selectedItemState.path.includes('\\') ? '\\' : '/';
+				const parentDir = selectedItemState.path.slice(0, selectedItemState.path.lastIndexOf(sep));
+				const auxEncoded = encodeAuxItems(parentDir, auxPaths);
+				return buildNavUri(selectedItemState.path, new Set(['properties']), new Map([['auxitems', auxEncoded]]));
+			})()
+			: (selectedItemState.path ? selectedItemState.path + '?properties' : '');
 
 		if (panelId !== 0) {
 			// Legacy panel-direct mode (panels 1-4 with their own event handlers)
@@ -6357,31 +6809,76 @@ export async function updateItemPropertiesPage(panelId = 0) {
 		const openWith = stats.openWith || null;
 		panelState[0].currentItemOpenWith = openWith;
 
-		const iconHtml = stats.isDirectory
-			? `<img src="assets/icons/folder.png" style="width:24px;height:24px;object-fit:contain;" onerror="this.src='assets/icons/user-file.png'">`
-			: `<img src="assets/icons/${stats.ftIcon || 'user-file.png'}" style="width:24px;height:24px;object-fit:contain;">`;
-		const $icon = $panel.find('.item-props-icon').html(iconHtml);
-		const hasViewer = !stats.isDirectory && openWith && openWith !== 'none'
-			&& openWith !== 'os-default' && openWith !== 'item-properties' && openWith !== 'aly-layout';
-		if (hasViewer) {
-			$icon.addClass('clickable');
+		if (isMultiSelect) {
+			// Multi-select header: grouped <details> for files and dirs
+			const dirItems = allItems.filter(s => s.isDirectory);
+			const fileItems = allItems.filter(s => !s.isDirectory);
+
+			let headerHtml = `<div class="item-props-multi-header" style="display:flex;flex-direction:column;gap:4px;padding:4px 0;">`;
+			headerHtml += `<div style="font-size:12px;color:#666;font-style:italic;margin-bottom:2px;">${allItems.length} items selected</div>`;
+
+			if (dirItems.length > 0) {
+				headerHtml += `<details open><summary style="font-size:12px;font-weight:bold;cursor:pointer;">`;
+				headerHtml += `<img src="assets/icons/folder.png" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">`;
+				headerHtml += `${dirItems.length} Folder${dirItems.length !== 1 ? 's' : ''}</summary>`;
+				headerHtml += `<ul style="margin:2px 0 4px 20px;padding:0;font-size:11px;list-style:none;">`;
+				dirItems.forEach((s, i) => {
+					const isBase = i === 0 && !fileItems.length ? '' : (s.path === stats.path ? ' ★' : '');
+					headerHtml += `<li style="padding:1px 0;">${utils.escapeHtml(s.filename || s.path)}${isBase}</li>`;
+				});
+				headerHtml += `</ul></details>`;
+			}
+
+			if (fileItems.length > 0) {
+				headerHtml += `<details open><summary style="font-size:12px;font-weight:bold;cursor:pointer;">`;
+				const iconSrc = stats.isDirectory ? 'user-file.png' : (stats.ftIcon || 'user-file.png');
+				headerHtml += `<img src="assets/icons/${iconSrc}" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">`;
+				headerHtml += `${fileItems.length} File${fileItems.length !== 1 ? 's' : ''}</summary>`;
+				headerHtml += `<ul style="margin:2px 0 4px 20px;padding:0;font-size:11px;list-style:none;">`;
+				fileItems.forEach(s => {
+					headerHtml += `<li style="padding:1px 0;">${utils.escapeHtml(s.filename || s.path)}</li>`;
+				});
+				headerHtml += `</ul></details>`;
+			}
+
+			headerHtml += `</div>`;
+
+			$panel.find('.item-props-icon').html('').hide();
+			$panel.find('.item-props-filename').html(headerHtml).show();
 		} else {
-			$icon.removeClass('clickable');
+			// Single-select header: icon + filename
+			const iconHtml = stats.isDirectory
+				? `<img src="assets/icons/folder.png" style="width:24px;height:24px;object-fit:contain;" onerror="this.src='assets/icons/user-file.png'">`
+				: `<img src="assets/icons/${stats.ftIcon || 'user-file.png'}" style="width:24px;height:24px;object-fit:contain;">`;
+			const $icon = $panel.find('.item-props-icon').html(iconHtml).show();
+			const hasViewer = !stats.isDirectory && openWith && openWith !== 'none'
+				&& openWith !== 'os-default' && openWith !== 'item-properties' && openWith !== 'aly-layout';
+			if (hasViewer) {
+				$icon.addClass('clickable');
+			} else {
+				$icon.removeClass('clickable');
+			}
+			$panel.find('.item-props-filename').text(stats.filename || selectedItemState.filename || '').show();
 		}
-		$panel.find('.item-props-filename').text(stats.filename || selectedItemState.filename || '');
-		await renderLabelsSection(0, stats);
+
+		await renderLabelsSection(0, stats, {}, isMultiSelect ? allItems : null);
 
 		const $previewSection = $panel.find('.item-props-preview-section');
-		if (!stats.isDirectory && stats.fileType === 'Image') {
+		if (!isMultiSelect && !stats.isDirectory && stats.fileType === 'Image') {
 			const imgPath = stats.path.replace(/\\/g, '/');
 			$panel.find('.item-preview-img').attr('src', `file:///${imgPath}`).show();
 			$panel.find('.item-preview-unavailable').hide();
-		} else {
+			$previewSection.css('display', 'flex');
+			applyCollapseState('preview', $previewSection);
+		} else if (!isMultiSelect) {
 			$panel.find('.item-preview-img').hide();
 			$panel.find('.item-preview-unavailable').show();
+			$previewSection.css('display', 'flex');
+			applyCollapseState('preview', $previewSection);
+		} else {
+			// Multi-select: hide preview
+			$previewSection.hide();
 		}
-		$previewSection.css('display', 'flex');
-		applyCollapseState('preview', $previewSection);
 
 		const $infoSection = $panel.find('.item-props-information-section');
 		$infoSection.css('display', 'flex');
@@ -6389,7 +6886,7 @@ export async function updateItemPropertiesPage(panelId = 0) {
 
 		// EXIF section — dynamically injected for Image files, removed otherwise
 		$panel.find('.item-props-exif-section').remove();
-		if (!stats.isDirectory && stats.fileType === 'Image') {
+		if (!isMultiSelect && !stats.isDirectory && stats.fileType === 'Image') {
 			const $exifSection = $(`
 				<div class="item-props-exif-section" style="display: flex; flex-direction: column; gap: 0;">
 					<div class="item-props-section-header" data-section="exif" style="display: flex; align-items: center; gap: 6px; border-top: 1px solid #eee; padding-top: 8px; cursor: pointer;">
@@ -6466,26 +6963,75 @@ export async function updateItemPropertiesPage(panelId = 0) {
 			return renderCopyValueButton(value, ' item-props-copy-btn');
 		}
 
-		const filenameVal = stats.filename || '';
-		$stats.append(statRow('Name', filenameVal, copyBtn(filenameVal)));
-		const fullPath = stats.path || '';
-		$stats.append(statRow('Full Path', fullPath, copyBtn(fullPath)));
-		$stats.append(statRow('Type', stats.isDirectory ? 'Folder' : (stats.fileType || 'File')));
-		if (!stats.isDirectory) {
-			$stats.append(statRow('Size', utils.formatBytes(stats.size || 0)));
-		}
-		$stats.append(statRow('Date Modified', stats.dateModified ? new Date(stats.dateModified).toLocaleString() : '-'));
-		$stats.append(statRow('Date Created', stats.dateCreated ? new Date(stats.dateCreated).toLocaleString() : '-'));
-		if (!stats.isDirectory) {
-			const checksumDisplay = stats.checksumValue
-				? `<span class="stat-value" title="${stats.checksumValue}">${stats.checksumValue.substring(0, 16)}…</span>`
-				: '<span style="color:#999;">Not calculated</span>';
-			const calcBtn = `<button class="btn-checksum-calc">Calculate Now</button>`;
-			$stats.append(`<div class="stat-row"><span class="stat-label">Checksum</span>${checksumDisplay}${calcBtn}</div>`);
+		if (isMultiSelect) {
+			// Aggregate info for multi-select
+			const dirCount = allItems.filter(s => s.isDirectory).length;
+			const fileCount = allItems.filter(s => !s.isDirectory).length;
+			const totalSize = allItems.filter(s => !s.isDirectory).reduce((acc, s) => acc + (s.size || 0), 0);
+
+			// Unique parent directories
+			const sep = stats.path.includes('\\') ? '\\' : '/';
+			const parentDirs = [...new Set(allItems.map(s => {
+				const lastSep = s.path ? s.path.lastIndexOf(sep) : -1;
+				return lastSep >= 0 ? s.path.slice(0, lastSep) : s.path;
+			}))];
+
+			// Date ranges
+			const modDates = allItems.map(s => s.dateModified).filter(Boolean).map(d => new Date(d).getTime());
+			const createDates = allItems.map(s => s.dateCreated).filter(Boolean).map(d => new Date(d).getTime());
+			const formatDateRange = (dates) => {
+				if (!dates.length) return '-';
+				const min = new Date(Math.min(...dates));
+				const max = new Date(Math.max(...dates));
+				if (min.getTime() === max.getTime()) return min.toLocaleString();
+				const diffMs = max.getTime() - min.getTime();
+				const diffDays = Math.round(diffMs / 86400000);
+				const deltaStr = diffDays >= 1 ? ` (Δ ${diffDays}d)` : ` (Δ <1d)`;
+				return `${min.toLocaleDateString()} – ${max.toLocaleDateString()}${deltaStr}`;
+			};
+
+			// Type counts
+			const typeCounts = {};
+			allItems.forEach(s => {
+				const type = s.isDirectory ? 'Folder' : (s.fileType || 'File');
+				typeCounts[type] = (typeCounts[type] || 0) + 1;
+			});
+			const typeStr = Object.entries(typeCounts).map(([t, c]) => `${c} ${t}${c !== 1 ? 's' : ''}`).join(', ');
+
+			if (parentDirs.length === 1) {
+				$stats.append(statRow('Parent', parentDirs[0], copyBtn(parentDirs[0])));
+			} else {
+				const parentsHtml = parentDirs.map(p => `<div style="font-size:11px;">${utils.escapeHtml(p)}</div>`).join('');
+				$stats.append(`<div class="stat-row"><span class="stat-label">Parents</span><span class="stat-value stat-value-wrap" style="flex-direction:column;">${parentsHtml}</span></div>`);
+			}
+			$stats.append(statRow('Items', typeStr));
+			if (fileCount > 0) {
+				$stats.append(statRow('Total Size', utils.formatBytes(totalSize)));
+			}
+			$stats.append(statRow('Date Modified', formatDateRange(modDates)));
+			$stats.append(statRow('Date Created', formatDateRange(createDates)));
+		} else {
+			const filenameVal = stats.filename || '';
+			$stats.append(statRow('Name', filenameVal, copyBtn(filenameVal)));
+			const fullPath = stats.path || '';
+			$stats.append(statRow('Full Path', fullPath, copyBtn(fullPath)));
+			$stats.append(statRow('Type', stats.isDirectory ? 'Folder' : (stats.fileType || 'File')));
+			if (!stats.isDirectory) {
+				$stats.append(statRow('Size', utils.formatBytes(stats.size || 0)));
+			}
+			$stats.append(statRow('Date Modified', stats.dateModified ? new Date(stats.dateModified).toLocaleString() : '-'));
+			$stats.append(statRow('Date Created', stats.dateCreated ? new Date(stats.dateCreated).toLocaleString() : '-'));
+			if (!stats.isDirectory) {
+				const checksumDisplay = stats.checksumValue
+					? `<span class="stat-value" title="${stats.checksumValue}">${stats.checksumValue.substring(0, 16)}…</span>`
+					: '<span style="color:#999;">Not calculated</span>';
+				const calcBtn = `<button class="btn-checksum-calc">Calculate Now</button>`;
+				$stats.append(`<div class="stat-row"><span class="stat-label">Checksum</span>${checksumDisplay}${calcBtn}</div>`);
+			}
 		}
 
 		const $attrSection = $panel.find('.item-props-attributes-section');
-		if (stats.categoryAttributes && stats.categoryAttributes.length > 0) {
+		if (!isMultiSelect && stats.categoryAttributes && stats.categoryAttributes.length > 0) {
 			$attrSection.css('display', 'flex');
 			applyCollapseState('attributes', $attrSection);
 			const $attrContainer = $panel.find('.item-props-attributes').empty();
@@ -6577,37 +7123,76 @@ export async function updateItemPropertiesPage(panelId = 0) {
 		const $notesSection = $panel.find('.item-props-notes-section');
 		$notesSection.css('display', 'flex');
 		applyCollapseState('notes', $notesSection);
-		$notesSection.find('.btn-notes-edit-item').toggle(!notesEditMode);
-		$notesSection.find('.btn-notes-save-item').toggle(notesEditMode);
-		$notesSection.find('.btn-notes-cancel-item').toggle(notesEditMode);
-		$panel.find('.item-props-notes').toggle(!notesEditMode);
-		$panel.find('.item-props-notes-editor').toggle(notesEditMode);
 
-		if (!notesEditMode) {
-			const $notes = $panel.find('.item-props-notes').empty();
+		if (isMultiSelect) {
+			// Multi-select: hide edit controls, show per-item collapsible notes
+			$notesSection.find('.btn-notes-edit-item, .btn-notes-save-item, .btn-notes-cancel-item').hide();
+			$panel.find('.item-props-notes-editor').hide();
+			const $notes = $panel.find('.item-props-notes').empty().show();
 			try {
-				const rawFile = await window.electronAPI.readFileContent(notesFilePath);
-				const sections = await window.electronAPI.invoke('parse-notes-file', rawFile || '');
-				const sectionContent = sections[notesSectionKey] || '';
-				if (sectionContent.trim()) {
-					const settings = await window.electronAPI.getSettings();
-					const fmt = settings.file_format || 'Markdown';
-					if (fmt === 'Markdown') {
-						const htmlContent = await window.electronAPI.renderMarkdown(sectionContent);
-						$notes.html(htmlContent);
-					} else if (fmt === 'HTML') {
-						$notes.html(sectionContent);
+				const settings = await window.electronAPI.getSettings();
+				const fmt = settings.file_format || 'Markdown';
+				const renderNote = async (text) => {
+					if (!text || !text.trim()) return '';
+					if (fmt === 'Markdown') return window.electronAPI.renderMarkdown(text);
+					if (fmt === 'HTML') return text;
+					return utils.escapeHtml(text);
+				};
+				const itemNoteHtmls = await Promise.all(allItems.map(async (s) => {
+					const sep2 = s.path.includes('\\') ? '\\' : '/';
+					const nFile = s.isDirectory
+						? s.path + sep2 + 'notes.txt'
+						: s.path.substring(0, s.path.lastIndexOf(sep2)) + sep2 + 'notes.txt';
+					const nKey = s.isDirectory ? '__dir__' : s.filename;
+					let noteHtml = '';
+					try {
+						const raw = await window.electronAPI.readFileContent(nFile);
+						const sections = await window.electronAPI.invoke('parse-notes-file', raw || '');
+						noteHtml = await renderNote(sections[nKey] || '');
+					} catch (_) {}
+					const label = utils.escapeHtml(s.filename || s.path);
+					const hasNotes = !!noteHtml;
+					const labelHtml = hasNotes ? `<strong>${label}</strong>` : label;
+					const inner = noteHtml || '<span style="color:#bbb;font-size:11px;">No notes</span>';
+					return `<details style="margin-bottom:4px;"><summary style="font-size:12px;cursor:pointer;">${labelHtml}</summary><div style="padding:4px 0 4px 12px;">${inner}</div></details>`;
+				}));
+				$notes.html(itemNoteHtmls.join(''));
+			} catch (_) {
+				$panel.find('.item-props-notes').html('<span style="color:#bbb;font-size:12px;">No notes</span>');
+			}
+		} else {
+			$notesSection.find('.btn-notes-edit-item').toggle(!notesEditMode);
+			$notesSection.find('.btn-notes-save-item').toggle(notesEditMode);
+			$notesSection.find('.btn-notes-cancel-item').toggle(notesEditMode);
+			$panel.find('.item-props-notes').toggle(!notesEditMode);
+			$panel.find('.item-props-notes-editor').toggle(notesEditMode);
+
+			if (!notesEditMode) {
+				const $notes = $panel.find('.item-props-notes').empty();
+				try {
+					const rawFile = await window.electronAPI.readFileContent(notesFilePath);
+					const sections = await window.electronAPI.invoke('parse-notes-file', rawFile || '');
+					const sectionContent = sections[notesSectionKey] || '';
+					if (sectionContent.trim()) {
+						const settings = await window.electronAPI.getSettings();
+						const fmt = settings.file_format || 'Markdown';
+						if (fmt === 'Markdown') {
+							const htmlContent = await window.electronAPI.renderMarkdown(sectionContent);
+							$notes.html(htmlContent);
+						} else if (fmt === 'HTML') {
+							$notes.html(sectionContent);
+						} else {
+							$notes.text(sectionContent);
+						}
 					} else {
-						$notes.text(sectionContent);
+						$notes.html('<span style="color:#bbb;font-size:12px;">No notes</span>');
 					}
-				} else {
+				} catch (_) {
 					$notes.html('<span style="color:#bbb;font-size:12px;">No notes</span>');
 				}
-			} catch (_) {
-				$notes.html('<span style="color:#bbb;font-size:12px;">No notes</span>');
+			} else if (panelState[0].notesMonacoEditor) {
+				panelState[0].notesMonacoEditor.layout();
 			}
-		} else if (panelState[0].notesMonacoEditor) {
-			panelState[0].notesMonacoEditor.layout();
 		}
 
 		const $historySection = $panel.find('.item-props-history-section');
@@ -6615,26 +7200,68 @@ export async function updateItemPropertiesPage(panelId = 0) {
 		applyCollapseState('history', $historySection);
 		const $historyTable = $panel.find('.item-props-history-table').empty();
 		try {
-			const historyResult = await window.electronAPI.getItemHistory({
-				isDirectory: !!stats.isDirectory,
-				inode: stats.inode,
-				dirId: stats.dir_id || null
-			});
-			if (historyResult && historyResult.success && historyResult.data && historyResult.data.length > 0) {
-				const completeState = buildCompleteFileState(historyResult.data, selectedItemState.record);
-				const historyRows = formatHistoryData(historyResult.data, completeState);
-				if (historyRows.length > 0) {
-					let tableHtml = '<table class="history-table"><thead><tr><th>Detected At</th><th>Change</th><th>Path</th></tr></thead><tbody>';
-					historyRows.forEach(row => {
-						tableHtml += `<tr><td>${row.detectedAt || ''}</td><td>${row.changeValue || ''}</td><td>${row.path || ''}</td></tr>`;
+			if (isMultiSelect) {
+				// Fetch history for all items in bulk
+				const itemsForHistory = allItems.map(s => ({
+					isDirectory: !!s.isDirectory,
+					inode: s.inode || null,
+					dirId: s.dir_id || null
+				}));
+				const multiHistResult = await window.electronAPI.getItemsHistory(itemsForHistory);
+				if (multiHistResult && multiHistResult.success && multiHistResult.results) {
+					// Merge all history rows, tagged with item index and filename
+					let allRows = [];
+					multiHistResult.results.forEach(res => {
+						if (!res || !res.success || !res.data || !res.data.length) return;
+						const itemStats = allItems[res._itemIndex];
+						const itemLabel = itemStats ? (itemStats.filename || itemStats.path) : `Item ${res._itemIndex}`;
+						const completeState = buildCompleteFileState(res.data, null);
+						const formatted = formatHistoryData(res.data, completeState);
+						formatted.forEach(row => {
+							allRows.push({ ...row, _itemLabel: itemLabel, _rawTimestamp: row._rawTimestamp || row.detectedAt });
+						});
 					});
-					tableHtml += '</tbody></table>';
-					$historyTable.html(tableHtml);
+					// Sort by timestamp descending
+					allRows.sort((a, b) => {
+						const ta = new Date(a._rawTimestamp || 0).getTime();
+						const tb = new Date(b._rawTimestamp || 0).getTime();
+						return tb - ta;
+					});
+					if (allRows.length > 0) {
+						let tableHtml = '<table class="history-table"><thead><tr><th>Item</th><th>Detected At</th><th>Change</th><th>Path</th></tr></thead><tbody>';
+						allRows.forEach(row => {
+							tableHtml += `<tr><td>${utils.escapeHtml(row._itemLabel || '')}</td><td>${row.detectedAt || ''}</td><td>${row.changeValue || ''}</td><td>${row.path || ''}</td></tr>`;
+						});
+						tableHtml += '</tbody></table>';
+						$historyTable.html(tableHtml);
+					} else {
+						$historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
+					}
 				} else {
 					$historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
 				}
 			} else {
-				$historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
+				const historyResult = await window.electronAPI.getItemHistory({
+					isDirectory: !!stats.isDirectory,
+					inode: stats.inode,
+					dirId: stats.dir_id || null
+				});
+				if (historyResult && historyResult.success && historyResult.data && historyResult.data.length > 0) {
+					const completeState = buildCompleteFileState(historyResult.data, selectedItemState.record);
+					const historyRows = formatHistoryData(historyResult.data, completeState);
+					if (historyRows.length > 0) {
+						let tableHtml = '<table class="history-table"><thead><tr><th>Detected At</th><th>Change</th><th>Path</th></tr></thead><tbody>';
+						historyRows.forEach(row => {
+							tableHtml += `<tr><td>${row.detectedAt || ''}</td><td>${row.changeValue || ''}</td><td>${row.path || ''}</td></tr>`;
+						});
+						tableHtml += '</tbody></table>';
+						$historyTable.html(tableHtml);
+					} else {
+						$historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
+					}
+				} else {
+					$historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
+				}
 			}
 		} catch (_) {
 			$historyTable.html('<span style="color:#bbb;font-size:12px;">No history</span>');
@@ -6843,7 +7470,12 @@ export async function openSelectedItem(panelId) {
  * If the widget is already embedded in a panel, it refreshes in place.
  * Otherwise opens it in a w2popup modal.
  */
-export async function openItemPropertiesWidget(record, sourcePanelId) {
+export async function openItemPropertiesWidget(record, sourcePanelId, auxEncoded = '') {
+	const sep = record.path && record.path.includes('\\') ? '\\' : '/';
+	const lastSepIdx = record.path ? record.path.lastIndexOf(sep) : -1;
+	const triggerDirname = lastSepIdx >= 0 ? record.path.slice(0, lastSepIdx) : (record.path || '');
+	const auxItemsPaths = auxEncoded ? decodeAuxItems(triggerDirname, auxEncoded) : [];
+
 	Object.assign(selectedItemState, {
 		path: record.path,
 		filename: record.filenameRaw || record.filename,
@@ -6851,7 +7483,8 @@ export async function openItemPropertiesWidget(record, sourcePanelId) {
 		inode: record.inode,
 		dir_id: record.dir_id,
 		record: record,
-		panelId: sourcePanelId
+		panelId: sourcePanelId,
+		auxItemsPaths
 	});
 
 	// If widget is currently embedded in a panel, refresh it in place
@@ -6859,6 +7492,17 @@ export async function openItemPropertiesWidget(record, sourcePanelId) {
 		const hostId = ipWidgetHost;
 		panelState[hostId].attrEditMode = false;
 		panelState[hostId].notesEditMode = false;
+		// Update the panel's current path and history so back/forward navigation
+		// and the path bar stay in sync (including ?auxitems= for multi-select).
+		const propertiesUri = _buildCurrentPropertiesUri();
+		panelState[hostId].currentPath = propertiesUri;
+		if (propertiesUri && panelState[hostId].navigationHistory) {
+			const hist = panelState[hostId].navigationHistory;
+			const idx = panelState[hostId].navigationIndex ?? hist.length - 1;
+			panelState[hostId].navigationHistory = hist.slice(0, idx + 1);
+			panelState[hostId].navigationHistory.push(propertiesUri);
+			panelState[hostId].navigationIndex = panelState[hostId].navigationHistory.length - 1;
+		}
 		_buildIpPanelBtns();
 		await updateItemPropertiesPage(0);
 		return;
@@ -6898,8 +7542,8 @@ export async function openItemPropertiesWidget(record, sourcePanelId) {
 }
 
 /** Backward-compatible alias. */
-export async function showItemPropsModal(record, sourcePanelId) {
-	return openItemPropertiesWidget(record, sourcePanelId);
+export async function showItemPropsModal(record, sourcePanelId, auxEncoded = '') {
+	return openItemPropertiesWidget(record, sourcePanelId, auxEncoded);
 }
 
 /** Hides / closes the item-properties widget and restores its previous host. */
@@ -6971,7 +7615,7 @@ export async function moveItemPropsWidgetToPanel(targetPanelId) {
 	// Hide the ip-widget's own header — the panel's header takes over
 	$('#ip-widget-header').hide();
 
-	const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
+	const pathWithParam = _buildCurrentPropertiesUri();
 	panelState[targetPanelId].currentPath = pathWithParam;
 	ipWidgetHost = targetPanelId;
 	updatePanelHeader(targetPanelId, pathWithParam);
@@ -6994,6 +7638,23 @@ function _restorePanelAfterWidget(panelId) {
 	delete panelState[panelId]._preWidgetGridVisible;
 	delete panelState[panelId]._preWidgetPath;
 	delete panelState[panelId]._preWidgetCategory;
+}
+
+/**
+ * Build the canonical properties URI for the currently-selected item,
+ * including the ?auxitems= param when multiple items are selected.
+ * Used to keep the modal path bar and embedded-panel currentPath in sync.
+ */
+function _buildCurrentPropertiesUri() {
+	if (!selectedItemState.path) return '';
+	const auxPaths = selectedItemState.auxItemsPaths || [];
+	if (auxPaths.length > 0) {
+		const sep = selectedItemState.path.includes('\\') ? '\\' : '/';
+		const parentDir = selectedItemState.path.slice(0, selectedItemState.path.lastIndexOf(sep));
+		const auxEncoded = encodeAuxItems(parentDir, auxPaths);
+		return buildNavUri(selectedItemState.path, new Set(['properties']), new Map([['auxitems', auxEncoded]]));
+	}
+	return selectedItemState.path + '?properties';
 }
 
 function _buildIpPanelBtns() {
@@ -7024,8 +7685,9 @@ function _buildIpPanelBtns() {
  */
 function _buildHistoryPanelBtns() {
 	const $container = $('#ip-widget .history-panel-btns').empty();
-	const record = selectedItemState.record;
+	const record = selectedItemState.record || (selectedItemState.path ? { path: selectedItemState.path } : null);
 	if (!record || !record.path) return;
+	const auxItemsPaths = selectedItemState.auxItemsPaths || [];
 	const maxPanel = Math.min(visiblePanels + 1, 4);
 	for (let p = 1; p <= maxPanel; p++) {
 		const targetPanel = p;
@@ -7055,7 +7717,18 @@ function _buildHistoryPanelBtns() {
 				if (ipWidgetHost === 'modal') {
 					hideItemPropsWidget();
 				}
-				navigateToDirectory(record.path + '?history', targetPanel);
+				// Build the history URI — include auxitems for multi-select
+				let historyUri;
+				if (auxItemsPaths.length > 0) {
+					const sep = record.path.includes('\\') ? '\\' : '/';
+					const lastSepIdx = record.path.lastIndexOf(sep);
+					const triggerDir = lastSepIdx >= 0 ? record.path.slice(0, lastSepIdx) : record.path;
+					const auxEncoded = encodeAuxItems(triggerDir, auxItemsPaths);
+					historyUri = buildNavUri(record.path, new Set(['history']), new Map([['auxitems', auxEncoded]]));
+				} else {
+					historyUri = record.path + '?history';
+				}
+				navigateToDirectory(historyUri, targetPanel);
 			})
 			.appendTo($container);
 	}
@@ -7073,7 +7746,7 @@ async function openItemPropsInPanel(targetPanel) {
 export function updateIpWidgetHeader(category) {
 	const headerEl = document.getElementById('ip-widget-header');
 	if (!headerEl) return;
-	const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
+	const pathWithParam = _buildCurrentPropertiesUri();
 	const $header = $(headerEl);
 	const _ipSplit = splitDisplayPath(pathWithParam);
 	$header.find('.panel-path').html(`<span class="path-base">${utils.escapeHtml(_ipSplit.base)}</span><span class="path-meta">${utils.escapeHtml(_ipSplit.meta)}</span>`);

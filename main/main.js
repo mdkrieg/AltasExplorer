@@ -1475,120 +1475,140 @@ ipcMain.handle('set-file-attributes', (event, { inode, dir_id, attributes: attrs
 });
 
 /**
+ * Internal helper: get full stats for a single item path.
+ * Shared by get-item-stats and get-items-stats.
+ */
+function getItemStatsByPath(itemPath) {
+  const stats = fs.getStats(itemPath);
+  if (!stats) return { success: false, error: 'Could not stat path', path: itemPath };
+
+  const isDir = stats.isDirectory;
+  const dirname = isDir ? itemPath : path.dirname(itemPath);
+  const filename = path.basename(itemPath);
+
+  const dirEntry = db.getDirectory(dirname);
+  let inode = stats.inode;
+  let dirId = dirEntry ? dirEntry.id : null;
+  let checksumValue = null;
+  let checksumStatus = null;
+  let tagsJson = null;
+  let attrsJson = {};
+  const categoryResolution = categories.getCategoryResolutionForDirectory(dirname);
+  const category = categoryResolution.category;
+
+  if (dirEntry) {
+    if (isDir) {
+      const dotFile = db.getFileByFilename(dirEntry.id, '.');
+      if (dotFile) {
+        tagsJson = dotFile.tags;
+        attrsJson = db.getFileAttributes(dotFile.inode, dirEntry.id);
+      }
+    } else {
+      const fileRecord = db.getFileByFilename(dirEntry.id, filename);
+      if (fileRecord) {
+        inode = fileRecord.inode;
+        dirId = dirEntry.id;
+        checksumValue = fileRecord.checksumValue;
+        checksumStatus = fileRecord.checksumStatus;
+        tagsJson = fileRecord.tags;
+        attrsJson = db.getFileAttributes(fileRecord.inode, dirEntry.id);
+      }
+    }
+  }
+
+  const categoryAttrNames = category ? (category.attributes || []) : [];
+  const allAttributeDefs = attributes.loadAttributes();
+  const categoryAttributeDefs = categoryAttrNames
+    .map(name => allAttributeDefs[name])
+    .filter(Boolean);
+
+  for (const attr of Object.values(allAttributeDefs)) {
+    if (!attr.global) continue;
+    if (categoryAttrNames.includes(attr.name)) continue;
+    const appliesTo = (attr.appliesTo || 'Both').toLowerCase();
+    if (appliesTo === 'directory' && !isDir) continue;
+    if (appliesTo === 'files' && isDir) continue;
+    categoryAttributeDefs.push(attr);
+  }
+
+  const allFileTypes = filetypes.getFileTypes();
+  let fileType = isDir ? 'Directory' : 'File';
+  let openWith = null;
+  let ftIcon = 'user-file.png';
+  if (!isDir) {
+    const matched = allFileTypes.find(ft => {
+      if (ft.pattern.startsWith('*.')) {
+        return filename.toLowerCase().endsWith(ft.pattern.slice(1).toLowerCase());
+      }
+      return filename.toLowerCase() === ft.pattern.toLowerCase();
+    });
+    if (matched) {
+      fileType = matched.type;
+      openWith = matched.openWith || null;
+      ftIcon = matched.icon || 'user-file.png';
+    }
+  }
+
+  let tags = [];
+  if (tagsJson) {
+    try { tags = JSON.parse(tagsJson); } catch {}
+  }
+
+  return {
+    success: true,
+    path: itemPath,
+    filename,
+    isDirectory: isDir,
+    size: stats.size,
+    dateModified: stats.dateModified,
+    dateCreated: stats.dateCreated,
+    inode,
+    dir_id: dirId,
+    checksumValue,
+    checksumStatus,
+    tags,
+    attributes: attrsJson,
+    fileType,
+    ftIcon,
+    openWith,
+    categoryName: category ? category.name : 'Default',
+    effectiveCategoryName: categoryResolution.categoryName,
+    explicitCategoryName: categoryResolution.explicitCategoryName,
+    isForcedCategory: categoryResolution.isForced,
+    isAutoAssignedCategory: categoryResolution.isAutoAssigned,
+    inheritedFromPath: categoryResolution.inheritedFromPath,
+    inheritedFromCategoryName: categoryResolution.inheritedFromCategoryName,
+    canForceCategory: isDir,
+    categoryAttributes: categoryAttributeDefs
+  };
+}
+
+/**
  * Get all metadata for a file/directory (for Item Properties page)
  */
 ipcMain.handle('get-item-stats', (event, { itemPath }) => {
   try {
-    const stats = fs.getStats(itemPath);
-    if (!stats) return { success: false, error: 'Could not stat path' };
-
-    const isDir = stats.isDirectory;
-    const dirname = isDir ? itemPath : path.dirname(itemPath);
-    const filename = isDir ? path.basename(itemPath) : path.basename(itemPath);
-
-    // Get DB records
-    const dirEntry = db.getDirectory(dirname);
-    let inode = stats.inode;
-    let dirId = dirEntry ? dirEntry.id : null;
-    let checksumValue = null;
-    let checksumStatus = null;
-    let tagsJson = null;
-    let attrsJson = {};
-    // Always resolve category regardless of whether the directory is in the DB
-    const categoryResolution = categories.getCategoryResolutionForDirectory(dirname);
-    const category = categoryResolution.category;
-
-    if (dirEntry) {
-      if (isDir) {
-        // For directories, get the dot-entry
-        const dotFile = db.getFileByFilename(dirEntry.id, '.');
-        if (dotFile) {
-          tagsJson = dotFile.tags;
-          attrsJson = db.getFileAttributes(dotFile.inode, dirEntry.id);
-        }
-      } else {
-        const fileRecord = db.getFileByFilename(dirEntry.id, filename);
-        if (fileRecord) {
-          inode = fileRecord.inode;
-          dirId = dirEntry.id;
-          checksumValue = fileRecord.checksumValue;
-          checksumStatus = fileRecord.checksumStatus;
-          tagsJson = fileRecord.tags;
-          attrsJson = db.getFileAttributes(fileRecord.inode, dirEntry.id);
-        }
-      }
-    }
-
-    // Resolve category attribute definitions
-    const categoryAttrNames = category ? (category.attributes || []) : [];
-    const allAttributeDefs = attributes.loadAttributes();
-    const categoryAttributeDefs = categoryAttrNames
-      .map(name => allAttributeDefs[name])
-      .filter(Boolean);
-
-    // Append global attributes not already included via the category, filtered by appliesTo
-    for (const attr of Object.values(allAttributeDefs)) {
-      if (!attr.global) continue;
-      if (categoryAttrNames.includes(attr.name)) continue;
-      const appliesTo = (attr.appliesTo || 'Both').toLowerCase();
-      if (appliesTo === 'directory' && !isDir) continue;
-      if (appliesTo === 'files' && isDir) continue;
-      categoryAttributeDefs.push(attr);
-    }
-
-    // Resolve file icon
-    const allFileTypes = filetypes.getFileTypes();
-    let fileType = isDir ? 'Directory' : 'File';
-    let openWith = null;
-    let ftIcon = 'user-file.png';
-    if (!isDir) {
-      const matched = allFileTypes.find(ft => {
-        if (ft.pattern.startsWith('*.')) {
-          return filename.toLowerCase().endsWith(ft.pattern.slice(1).toLowerCase());
-        }
-        return filename.toLowerCase() === ft.pattern.toLowerCase();
-      });
-      if (matched) {
-        fileType = matched.type;
-        openWith = matched.openWith || null;
-        ftIcon = matched.icon || 'user-file.png';
-      }
-    }
-
-    let tags = [];
-    if (tagsJson) {
-      try { tags = JSON.parse(tagsJson); } catch {}
-    }
-
-    return {
-      success: true,
-      path: itemPath,
-      filename,
-      isDirectory: isDir,
-      size: stats.size,
-      dateModified: stats.dateModified,
-      dateCreated: stats.dateCreated,
-      inode,
-      dir_id: dirId,
-      checksumValue,
-      checksumStatus,
-      tags,
-      attributes: attrsJson,
-      fileType,
-      ftIcon,
-      openWith,
-      categoryName: category ? category.name : 'Default',
-      effectiveCategoryName: categoryResolution.categoryName,
-      explicitCategoryName: categoryResolution.explicitCategoryName,
-      isForcedCategory: categoryResolution.isForced,
-      isAutoAssignedCategory: categoryResolution.isAutoAssigned,
-      inheritedFromPath: categoryResolution.inheritedFromPath,
-      inheritedFromCategoryName: categoryResolution.inheritedFromCategoryName,
-      canForceCategory: isDir,
-      categoryAttributes: categoryAttributeDefs
-    };
+    return getItemStatsByPath(itemPath);
   } catch (err) {
     logger.error('Error getting item stats:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+/**
+ * Get metadata for multiple items in one call (for multi-select properties page)
+ */
+ipcMain.handle('get-items-stats', (event, { items }) => {
+  try {
+    const results = (items || []).map(({ itemPath }) => {
+      try {
+        return getItemStatsByPath(itemPath);
+      } catch (err) {
+        return { success: false, error: err.message, path: itemPath };
+      }
+    });
+    return { success: true, results };
+  } catch (err) {
+    logger.error('Error getting items stats:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -4163,6 +4183,32 @@ ipcMain.handle('get-item-history', (event, item) => {
     return { success: true, data: history };
   } catch (err) {
     logger.error('Error retrieving item history:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Item History: Get history for multiple items in one call (for multi-select history view)
+ */
+ipcMain.handle('get-items-history', (event, { items }) => {
+  try {
+    const results = (items || []).map((item, idx) => {
+      try {
+        if (item.isDirectory) {
+          if (!item.dirId) return { success: false, error: 'Directory ID is required.', _itemIndex: idx };
+          const data = db.getDirectoryHistory(item.dirId);
+          return { success: true, data, _itemIndex: idx };
+        }
+        if (!item.inode) return { success: false, error: 'File inode is required.', _itemIndex: idx };
+        const data = db.getFileHistory(item.inode, item.dirId || null);
+        return { success: true, data, _itemIndex: idx };
+      } catch (err) {
+        return { success: false, error: err.message, _itemIndex: idx };
+      }
+    });
+    return { success: true, results };
+  } catch (err) {
+    logger.error('Error retrieving items history:', err.message);
     return { success: false, error: err.message };
   }
 });
