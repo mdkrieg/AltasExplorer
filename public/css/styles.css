@@ -2310,6 +2310,11 @@ hr {
   background: #e0e0e0;
 }
 
+.path-meta {
+  color: #707070;
+  font-weight: normal;
+}
+
 .panel-path-input {
   display: none;
   font-weight: bold;

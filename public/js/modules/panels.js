@@ -40,6 +40,8 @@ import {
 	showCustomContextMenu,
 	openNotesModal,
 	openHistoryModal,
+	openHistoryViewInPanel,
+	hideHistoryView,
 	showFileView,
 	hideFileView,
 	toggleFileEditMode,
@@ -933,7 +935,14 @@ function attachPathInputListeners($header, panelId) {
 
 	$pathDisplay.off('click').on('click', function () {
 		$pathDisplay.hide();
-		$input.show().select().focus();
+		const fullVal = $input.val();
+		const queryIdx = fullVal.indexOf('?');
+		const hashIdx = fullVal.indexOf('#');
+		let metaStart = fullVal.length;
+		if (queryIdx !== -1) metaStart = Math.min(metaStart, queryIdx);
+		if (hashIdx !== -1) metaStart = Math.min(metaStart, hashIdx);
+		$input.show().focus();
+		$input[0].setSelectionRange(0, metaStart);
 	});
 
 	$input.off('keydown blur input');
@@ -1021,8 +1030,20 @@ function attachPathInputListeners($header, panelId) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+function splitDisplayPath(path) {
+	const queryIdx = path.indexOf('?');
+	const hashIdx = path.indexOf('#');
+	let splitAt = path.length;
+	if (queryIdx !== -1) splitAt = Math.min(splitAt, queryIdx);
+	if (hashIdx !== -1) splitAt = Math.min(splitAt, hashIdx);
+	return { base: path.slice(0, splitAt), meta: path.slice(splitAt) };
+}
+
 function buildGridHeaderHtml(panelId, path, category) {
 	const safePath = utils.escapeHtml(path || '');
+	const { base, meta } = splitDisplayPath(safePath);
+	const safeBase = base;
+	const safeMeta = meta;
 	const buttonsHtml = panelId === 1
 		? ''
 		: '<button class="btn-panel-remove" title="Close panel">X</button>';
@@ -1032,7 +1053,7 @@ function buildGridHeaderHtml(panelId, path, category) {
 
 	return `
 		<div class="panel-header-content"${contentStyle}>
-			<span class="panel-path">${safePath}</span>
+			<span class="panel-path"><span class="path-base">${safeBase}</span><span class="path-meta">${safeMeta}</span></span>
 			<input class="panel-path-input" type="text" value="${safePath}">
 			<div class="panel-header-buttons">
 				${buttonsHtml}
@@ -1101,6 +1122,30 @@ export function updatePanelHeader(panelId, path = panelState[panelId]?.currentPa
 		headerEl.style.borderBottomColor = '';
 	}
 	attachPanelHeaderEventListeners(panelId);
+}
+
+/**
+ * Resolve the category implied by `filePath` and cache it on the panel state.
+ *
+ * Any panel-hosted view for a file or a slice of file metadata (properties,
+ * history, notes, hex view, …) has a category *implied* by the file's parent
+ * directory. The title bar MUST be painted with that category's colours.
+ * Call this before `updatePanelHeader` whenever a panel is being given content
+ * derived from a specific file path, so the principle holds for every present
+ * and future content type without each callsite having to re-implement it.
+ *
+ * @param {number}  panelId
+ * @param {string}  filePath    - bare filesystem path (no URI params)
+ * @param {boolean} isDirectory - if true the path itself is the category scope;
+ *                                if false the parent directory is used
+ */
+async function resolvePathCategory(panelId, filePath, isDirectory = false) {
+	if (!filePath) return;
+	const parentDir = isDirectory
+		? filePath
+		: (filePath.includes('\\') ? filePath.substring(0, filePath.lastIndexOf('\\')) : filePath);
+	const category = await window.electronAPI.getCategoryForDirectory(parentDir);
+	panelState[panelId].currentCategory = category;
 }
 
 function attachPanelHeaderEventListeners(panelId) {
@@ -2844,13 +2889,47 @@ async function showItemPropertiesForPath(filePath, panelId, fileStats) {
 	await updateItemPropertiesPage();
 }
 
+async function showHistoryViewForPath(filePath, panelId, fileStats) {
+	const lastSep = Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/'));
+	const filename = lastSep >= 0 ? filePath.slice(lastSep + 1) : filePath;
+
+	const selectedRecord = {
+		path: filePath,
+		filename,
+		filenameRaw: filename,
+		isFolder: fileStats.isDirectory || false,
+		inode: fileStats.inode || null,
+		dir_id: fileStats.dir_id || null
+	};
+
+	const state = panelState[panelId];
+	state.currentPath = filePath;
+	state.currentBasePath = filePath;
+	state.currentNavParams = new Set(['history']);
+
+	const $panel = $(`#panel-${panelId}`);
+	$panel.find('.panel-grid, .panel-gallery, .panel-landing-page, .panel-file-view, .panel-terminal-view, .panel-welcome-view').hide();
+	hideHistoryView(panelId);
+	$panel.find('.panel-history-view').css('display', 'flex');
+	hidePanelToolbar(panelId);
+
+	// Resolve the category implied by this file's parent directory before painting
+	// the header, so the title bar receives the correct category colours on first paint.
+	await resolvePathCategory(panelId, filePath, fileStats.isDirectory || false);
+	updatePanelHeader(panelId, filePath + '?history');
+	setActivePanelId(panelId);
+
+	await openHistoryViewInPanel(selectedRecord, panelId);
+}
+
 // ============================================================
 // Atlas URI handlers (atlas://landing, etc.)
 // ============================================================
 
 async function showAtlasLandingPage(panelId) {
 	const $content = $(`#panel-${panelId} .panel-content`);
-	$content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view').hide();
+	$content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view, .panel-history-view').hide();
+	hideHistoryView(panelId);
 	const $welcome = $content.find('.panel-welcome-view');
 	const $favList = $welcome.find('.panel-welcome-favorites').empty();
 
@@ -3024,6 +3103,11 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 						await showItemPropertiesForPath(normalizedPath, panelId, fileStats);
 						return;
 					}
+				} else if (navParams.has('history')) {
+					// ?history → show history view inside panel
+					hidePanelLoading(panelId);
+					await showHistoryViewForPath(normalizedPath, panelId, fileStats);
+					return;
 				} else if (_fileNavHandler) {
 					// bare path / ?hexview / ?notes / ?notes#edit → delegate to renderer
 					await _fileNavHandler(normalizedPath, navParams, navFragment, panelId);
@@ -3046,6 +3130,15 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		}
 
 		setPanelPathValidity(panelId, true);
+		if (navParams.has('history')) {
+			// ?history on a directory → show directory history inside panel
+			hidePanelLoading(panelId);
+			const statsResult = await window.electronAPI.getItemStats(normalizedPath);
+			if (statsResult && statsResult.success) {
+				await showHistoryViewForPath(normalizedPath, panelId, statsResult);
+			}
+			return;
+		}
 		const scanResult = await window.electronAPI.scanDirectoryWithComparison(normalizedPath);
 		if (!scanResult.success) {
 			throw new Error(scanResult.error || 'Failed to scan directory');
@@ -3265,6 +3358,8 @@ function showPanelLoading(panelId, dirPath) {
 	$panel.find('.panel-gallery').removeClass('active');
 	$panel.find('.panel-landing-page').hide();
 	$panel.find('.panel-file-view').hide();
+	$panel.find('.panel-history-view').hide();
+	hideHistoryView(panelId);
 	overlay.classList.add('is-visible');
 }
 
@@ -5121,7 +5216,14 @@ export function activatePathEditMode(panelId) {
 	const currentPath = panelState[panelId].currentPath;
 	$pathDisplay.hide();
 	$header.addClass('path-input-editing');
-	$pathInput.val(currentPath).show().select().focus();
+	const fullVal = currentPath || '';
+	const queryIdx = fullVal.indexOf('?');
+	const hashIdx = fullVal.indexOf('#');
+	let metaStart = fullVal.length;
+	if (queryIdx !== -1) metaStart = Math.min(metaStart, queryIdx);
+	if (hashIdx !== -1) metaStart = Math.min(metaStart, hashIdx);
+	$pathInput.val(fullVal).show().focus();
+	$pathInput[0].setSelectionRange(0, metaStart);
 }
 
 export async function deactivatePathEditMode(panelId, navigateToNewPath = false, newPath = '') {
@@ -6170,20 +6272,6 @@ export function attachPanelEventListeners(panelId) {
 			$panel.find('.item-props-notes').show();
 		});
 
-		$panel.find('.item-properties-content').off('click.openHistoryModal').on('click.openHistoryModal', '.btn-open-history-modal', async function (e) {
-			e.stopPropagation();
-			const record = selectedItemState.record;
-			if (!record) return;
-			if (panelId === 0) {
-				hideItemPropsModal();
-			}
-			try {
-				await openHistoryModal(record);
-			} catch (err) {
-				w2alert('Error opening history: ' + err.message);
-			}
-		});
-
 	}
 }
 
@@ -6237,27 +6325,17 @@ export async function updateItemPropertiesPage(panelId = 0) {
 
 		if (panelId !== 0) {
 			// Legacy panel-direct mode (panels 1-4 with their own event handlers)
-			const parentDir = selectedItemState.path.includes('\\')
-				? selectedItemState.path.substring(0, selectedItemState.path.lastIndexOf('\\'))
-				: selectedItemState.path;
-			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
-			panelState[panelId].currentCategory = parentCategory;
+			await resolvePathCategory(panelId, selectedItemState.path, stats.isDirectory || false);
 			updatePanelHeader(panelId, pathWithParam);
 		} else if (typeof ipWidgetHost === 'number') {
-			// Widget embedded in a panel — update that panel's header with category color
-			const parentDir = selectedItemState.path.includes('\\')
-				? selectedItemState.path.substring(0, selectedItemState.path.lastIndexOf('\\'))
-				: selectedItemState.path;
-			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
-			panelState[ipWidgetHost].currentCategory = parentCategory;
+			// Widget embedded in a panel — update that panel's header with category colour
+			await resolvePathCategory(ipWidgetHost, selectedItemState.path, stats.isDirectory || false);
 			updatePanelHeader(ipWidgetHost, pathWithParam);
 		} else if (ipWidgetHost === 'modal') {
-			// Widget in modal — update the ip-widget's own header
-			const parentDir = selectedItemState.path.includes('\\')
-				? selectedItemState.path.substring(0, selectedItemState.path.lastIndexOf('\\'))
-				: selectedItemState.path;
-			const parentCategory = await window.electronAPI.getCategoryForDirectory(parentDir);
-			updateIpWidgetHeader(parentCategory);
+			// Widget in modal — resolve and cache on panelState[0] so that if the
+			// widget is later moved to a panel the category is immediately available.
+			await resolvePathCategory(0, selectedItemState.path, stats.isDirectory || false);
+			updateIpWidgetHeader(panelState[0].currentCategory);
 		}
 
 		panelState[0].itemInode = stats.inode;
@@ -6880,7 +6958,8 @@ export async function moveItemPropsWidgetToPanel(targetPanelId) {
 	const $content = $(`#panel-${targetPanelId} .panel-content`);
 	// Save what was visible before hiding everything
 	const wasGridVisible = $content.find('.panel-grid').is(':visible');
-	$content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view').hide();
+	$content.find('.panel-landing-page, .panel-grid, .panel-gallery, .panel-file-view, .panel-terminal-view, .panel-history-view').hide();
+	hideHistoryView(targetPanelId);
 	panelState[targetPanelId]._preWidgetGridVisible = wasGridVisible;
 	// Save previous path/category so we can restore them when widget leaves
 	panelState[targetPanelId]._preWidgetPath = panelState[targetPanelId].currentPath || '';
@@ -6897,6 +6976,8 @@ export async function moveItemPropsWidgetToPanel(targetPanelId) {
 	ipWidgetHost = targetPanelId;
 	updatePanelHeader(targetPanelId, pathWithParam);
 	setActivePanelId(targetPanelId);
+	// Rebuild panel-picker buttons now that visiblePanels may have changed.
+	_buildIpPanelBtns();
 }
 
 function _restorePanelAfterWidget(panelId) {
@@ -6934,6 +7015,50 @@ function _buildIpPanelBtns() {
 			.on('click', function () { openItemPropsInPanel(targetPanel); })
 			.appendTo($btns);
 	}
+	_buildHistoryPanelBtns();
+}
+
+/**
+ * Populate the `.history-panel-btns` span in the item-properties history section
+ * with P1..Pn+1 buttons that open the selected item's history in a target panel.
+ */
+function _buildHistoryPanelBtns() {
+	const $container = $('#ip-widget .history-panel-btns').empty();
+	const record = selectedItemState.record;
+	if (!record || !record.path) return;
+	const maxPanel = Math.min(visiblePanels + 1, 4);
+	for (let p = 1; p <= maxPanel; p++) {
+		const targetPanel = p;
+		const isNew = p > visiblePanels;
+		$('<button>')
+			.text(isNew ? `P${targetPanel}+` : `P${targetPanel}`)
+			.attr('title', isNew ? `Open history in new Panel ${targetPanel}` : `Open history in Panel ${targetPanel}`)
+			.css({
+				padding: '2px 8px',
+				background: '#555',
+				color: 'white',
+				border: 'none',
+				borderRadius: '3px',
+				cursor: 'pointer',
+				fontSize: '11px'
+			})
+			.on('click', function (e) {
+				e.stopPropagation();
+				if (targetPanel > visiblePanels) {
+					visiblePanels++;
+					$(`#panel-${targetPanel}`).show();
+					attachPanelEventListeners(targetPanel);
+					updatePanelLayout();
+				}
+				// If the item-props widget is in a modal, dismiss it — the history
+				// view is taking over a panel so the modal is no longer needed.
+				if (ipWidgetHost === 'modal') {
+					hideItemPropsWidget();
+				}
+				navigateToDirectory(record.path + '?history', targetPanel);
+			})
+			.appendTo($container);
+	}
 }
 
 async function openItemPropsInPanel(targetPanel) {
@@ -6950,7 +7075,8 @@ export function updateIpWidgetHeader(category) {
 	if (!headerEl) return;
 	const pathWithParam = selectedItemState.path ? selectedItemState.path + '?properties' : '';
 	const $header = $(headerEl);
-	$header.find('.panel-path').text(pathWithParam);
+	const _ipSplit = splitDisplayPath(pathWithParam);
+	$header.find('.panel-path').html(`<span class="path-base">${utils.escapeHtml(_ipSplit.base)}</span><span class="path-meta">${utils.escapeHtml(_ipSplit.meta)}</span>`);
 	$header.find('.panel-path-input').val(pathWithParam);
 	if (category?.bgColor) {
 		headerEl.style.background = category.bgColor;
@@ -6973,7 +7099,8 @@ export function updateFvWidgetHeader(filePath, category) {
 	const headerEl = document.getElementById('fv-widget-header');
 	if (!headerEl) return;
 	const $header = $(headerEl);
-	$header.find('.panel-path').text(filePath || '');
+	const _fvSplit = splitDisplayPath(filePath || '');
+	$header.find('.panel-path').html(`<span class="path-base">${utils.escapeHtml(_fvSplit.base)}</span><span class="path-meta">${utils.escapeHtml(_fvSplit.meta)}</span>`);
 	$header.find('.panel-path-input').val(filePath || '');
 	if (category?.bgColor) {
 		headerEl.style.background = category.bgColor;

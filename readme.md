@@ -67,7 +67,7 @@ Philosophy:
 [x] TODOs in notes get aggregated
 [x] Copy as Path in context menu
 [x] Autotagging rules - need some kind of confirmation pattern for this
-[ ] Make some kind of mark for tags that came from notes
+[ ] Make some kind of mark for tags that came from notes (maybe a notes icon that is clickable to open the source notes file?)
 [ ] Backup Macros (need to use the app more in practice to think about what this should be like)
 [ ] Diffing between files
 [ ] Icons for context menu (Do I really want icons on every menu item? seems too cluttered)
@@ -105,7 +105,6 @@ Item Properties:
 [-] CTRL + Enter to do same as double click in grid --- nvm, change this:
   [ ] Enter browses dirs in same folders, opens Item Properties in modal for files
   [x] Ctrl+Enter does the same in a new panel
-[ ] Add a "pin" to Item Properties that prevents it from updating to the selected item
 [ ] Support multi-select in item properties
   [ ] phase 1 is to allow for categories and tags to be changed on many items at once
   [ ] phase 2 is to aggregate as many statistics as we can, list the count of different file types, the range (maybe even show distribution) of dates modified, dates created, etc.
@@ -130,6 +129,7 @@ Grid View:
 [ ] make the grid toolbar command prompt open a popup in the grid context
   [ ] add P2 - P(n+1) button to the grid context command prompt
   [ ] add right click context on the grid command prompt button like is on the sidebar command prompt button
+[ ] At Depth > 0 only the base dot and dot dot dirs should be displayed. Currently seeing dot dot dirs from subdirectories.
 
 Tagging modal:
 [x] Add Tagging button up top which opens a Tagging modal

@@ -38,6 +38,7 @@ Recognized query parameters (non-exhaustive):
 | Parameter | Meaning |
 |---|---|
 | `?properties` | Show the file properties summary for the given path |
+| `?history` | Show the file/directory change history for the given path |
 | `?orphans` | Show files not linked to any directory in the database |
 | `?trash` | Show items in the trash virtual view |
 

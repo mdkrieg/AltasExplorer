@@ -41,7 +41,7 @@ import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/v
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, attachFvWidgetHeaderListeners, openNotesViewerForPath, cancelFileViewerEdit, getFileViewerHost } from './modules/notes.js';
 export { generateW2UIContextMenu, showCustomContextMenu } from './modules/contexts.js';
-export { openHistoryModal, formatHistoryData, buildCompleteFileState } from './modules/history.js';
+export { openHistoryModal, formatHistoryData, buildCompleteFileState, openHistoryViewInPanel, hideHistoryView } from './modules/history.js';
 export { updateAlertBadge } from './modules/alerts.js';
 export { openTodoModal } from './modules/todos.js';
 
@@ -891,6 +891,8 @@ function attachEventListeners() {
 
     // Escape key: close item properties widget if open in modal
     if (event.key === 'Escape' && panels.getIpWidgetHost() === 'modal') {
+      const ipPathInput = document.querySelector('#ip-widget-header .panel-path-input');
+      if (ipPathInput && document.activeElement === ipPathInput) return; // let input handler dismiss focus first
       panels.hideItemPropsWidget();
       return;
     }

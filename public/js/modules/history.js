@@ -152,16 +152,19 @@ export function buildCompleteFileState(historyRecords, selectedRecord) {
   };
 }
 
-function createHistorySummaryView(fullState, selectedIndex) {
+/**
+ * Render the change-summary into any container element.
+ * Used by both the legacy modal and the panel-embedded history view.
+ */
+function _createHistorySummaryInContainer(containerEl, fullState, selectedIndex) {
+  if (!containerEl) return;
   try {
     const attributeList = fullState.allAttributes;
     const length = fullState.states.length;
     const selectedState = selectedIndex < length ? fullState.states[selectedIndex] : {};
     const previousState = selectedIndex + 1 < length ? fullState.states[selectedIndex + 1] : {};
 
-    console.log('Creating summary for selectedIndex:', selectedIndex, 'states length:', length);
-
-    let summaryHtml = '<div id="history-summary" style="margin-top: 15px; padding: 15px; background: #f9f9f9; border-radius: 4px; border: 1px solid #ddd;">';
+    let summaryHtml = '<div style="padding: 15px; background: #f9f9f9; border-radius: 4px; border: 1px solid #ddd;">';
     summaryHtml += '<h3 style="margin-top: 0; margin-bottom: 10px;">Change Summary</h3>';
     summaryHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">';
 
@@ -186,15 +189,108 @@ function createHistorySummaryView(fullState, selectedIndex) {
     summaryHtml += '</table></div>';
 
     summaryHtml += '</div></div>';
-    $('#history-summary-container').html(summaryHtml);
+    containerEl.innerHTML = summaryHtml;
   } catch (err) {
     console.error('Error creating history summary:', err);
-    $('#history-summary-container').html('<div style="color: red;">Error loading summary: ' + utils.escapeHtml(err.message) + '</div>');
+    containerEl.innerHTML = `<div style="color: red;">Error loading summary: ${utils.escapeHtml(err.message)}</div>`;
   }
+}
+
+function createHistorySummaryView(fullState, selectedIndex) {
+  _createHistorySummaryInContainer(document.getElementById('history-summary-container'), fullState, selectedIndex);
 }
 
 function updateHistoryChangeSummary(fullState, selectedIndex) {
   createHistorySummaryView(fullState, selectedIndex);
+}
+
+/**
+ * Render history view inside a panel's `.panel-history-view` element.
+ * The w2grid is named `history-grid-${panelId}` to avoid clashes between panels.
+ */
+export async function openHistoryViewInPanel(selectedRecord, panelId) {
+  try {
+    const result = await window.electronAPI.getItemHistory({
+      isDirectory: !!selectedRecord.isFolder,
+      inode: selectedRecord.inode,
+      dirId: selectedRecord.dir_id || null
+    });
+
+    const isDir = !!selectedRecord.isFolder;
+    const $panel = $(`#panel-${panelId}`);
+    const $view = $panel.find('.panel-history-view');
+    const $gridContainer = $view.find('.panel-history-grid-container');
+    const $summaryContainer = $view.find('.panel-history-summary-container');
+
+    if (!result.success) {
+      $gridContainer.html(`<div style="padding: 20px; color: #c00;">Error loading history: ${utils.escapeHtml(result.error || 'Unknown error')}</div>`);
+      return;
+    }
+
+    const gridName = `history-grid-${panelId}`;
+    if (w2ui[gridName]) {
+      try { w2ui[gridName].destroy(); } catch (_) {}
+    }
+
+    const fullState = buildCompleteFileState(result.data || [], selectedRecord);
+    const historyData = formatHistoryData(result.data || [], fullState);
+
+    $gridContainer.empty();
+    const gridEl = document.createElement('div');
+    gridEl.style.cssText = 'width: 100%; height: 100%;';
+    $gridContainer.append(gridEl);
+
+    const summaryEl = $summaryContainer[0];
+    w2ui[gridName] = new w2grid({
+      name: gridName,
+      box: gridEl,
+      columns: [
+        { field: 'detectedAt', text: 'Detected At', size: '160px', resizable: true, sortable: true },
+        { field: 'changeValue', text: 'Change', size: '200px', resizable: true, sortable: true },
+        { field: 'path', text: 'Path', size: '100%', resizable: true, sortable: true },
+        { field: 'comment', text: 'Comment', size: '200px', resizable: true, sortable: true, editable: { type: 'text' } }
+      ],
+      records: historyData,
+      show: { header: true, toolbar: false, footer: true },
+      onClick: function (event) {
+        if (event.detail && event.detail.recid) {
+          _createHistorySummaryInContainer(summaryEl, fullState, event.detail.recid - 1);
+        }
+      },
+      onChange: async function (event) {
+        await event.complete;
+        const rec = w2ui[gridName]?.get(event.detail?.recid);
+        if (!rec || event.detail?.column === undefined) return;
+        const col = w2ui[gridName].columns[event.detail.column];
+        if (!col || col.field !== 'comment') return;
+        const newComment = event.detail?.value?.new ?? '';
+        try {
+          if (isDir) {
+            await window.electronAPI.updateDirHistoryComment(rec._id, newComment);
+          } else {
+            await window.electronAPI.updateHistoryComment(rec._id, newComment);
+          }
+        } catch (err) {
+          console.error('Failed to update comment:', err);
+        }
+      }
+    });
+
+    _createHistorySummaryInContainer(summaryEl, fullState, 0);
+  } catch (err) {
+    console.error('Error opening history view in panel:', err);
+  }
+}
+
+/**
+ * Tear down the panel-scoped history grid.
+ * Show/hide of `.panel-history-view` is handled by panels.js.
+ */
+export function hideHistoryView(panelId) {
+  const gridName = `history-grid-${panelId}`;
+  if (w2ui[gridName]) {
+    try { w2ui[gridName].destroy(); } catch (_) {}
+  }
 }
 
 function formatAttributeValue(attr, value) {

@@ -1091,7 +1091,14 @@ export function attachFvWidgetHeaderListeners() {
 
   $pathDisplay.on('click', function () {
     $pathDisplay.hide();
-    $input.show().select().focus();
+    const fullVal = $input.val();
+    const _qIdx = fullVal.indexOf('?');
+    const _hIdx = fullVal.indexOf('#');
+    let _metaStart = fullVal.length;
+    if (_qIdx !== -1) _metaStart = Math.min(_metaStart, _qIdx);
+    if (_hIdx !== -1) _metaStart = Math.min(_metaStart, _hIdx);
+    $input.show().focus();
+    $input[0].setSelectionRange(0, _metaStart);
   });
 
   async function submitPathInput() {
