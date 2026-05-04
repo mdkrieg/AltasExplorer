@@ -354,10 +354,19 @@ async function initialize() {
 
     console.log('Initialization complete');
 
+    const startupOverlay = document.getElementById('startup-overlay');
+    if (startupOverlay) {
+      startupOverlay.style.opacity = '0';
+      startupOverlay.addEventListener('transitionend', () => startupOverlay.remove(), { once: true });
+    }
+
     panels.setActivePanelId(1);
     panels.setGridFocusedPanelId(1);
   } catch (err) {
     console.error('Error initializing app:', err);
+    // Remove overlay so the user can see the error state rather than a stuck loading screen
+    const startupOverlay = document.getElementById('startup-overlay');
+    if (startupOverlay) startupOverlay.remove();
     alert('Fatal error during initialization: ' + err.message);
   }
 }

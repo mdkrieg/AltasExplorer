@@ -263,11 +263,17 @@ function createWindow() {
     mainWindow = new BrowserWindow({
       width: 1200,
       height: 800,
+      show: false,
+      backgroundColor: '#f0f0f0',
       webPreferences: {
         preload: path.join(__dirname, '..', 'src', 'preload.js'),
         nodeIntegration: false,
         contextIsolation: true
       }
+    });
+
+    mainWindow.once('ready-to-show', () => {
+      mainWindow.show();
     });
 
     // Hide the menu bar by default
@@ -294,10 +300,14 @@ function createWindow() {
 
     mainWindow.webContents.on('crashed', () => {
       logger.error('Renderer process crashed');
+      app.isQuitting = true;
+      app.quit();
     });
 
-    mainWindow.webContents.on('unresponsive', () => {
+    mainWindow.on('unresponsive', () => {
       logger.warn('Renderer process became unresponsive');
+      app.isQuitting = true;
+      app.quit();
     });
 
     // Capture renderer console output in the log file.
@@ -314,12 +324,19 @@ function createWindow() {
       mainWindow = null;
     });
 
-    // Handle window close requests - ask renderer if it's OK to close
+    // Handle window close requests - ask renderer if it's OK to close.
+    // A 3-second safety-net timer ensures the window can always be closed
+    // even if the renderer is dead and never sends 'allow-close-app'.
     mainWindow.on('close', (event) => {
       if (!app.isQuitting) {
         event.preventDefault();
-        // Ask the renderer if we should close
         mainWindow.webContents.send('request-close-app');
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            app.isQuitting = true;
+            mainWindow.close();
+          }
+        }, 3000);
       }
     });
 

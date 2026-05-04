@@ -2018,6 +2018,16 @@
        inputs underneath. -->
   <div id="focus-vignette-overlay" aria-hidden="true"></div>
 
+  <!-- Startup loading overlay — removed by renderer.js once initialize() completes -->
+  <div id="startup-overlay" style="
+    position: fixed; inset: 0; z-index: 99999;
+    background: #f0f0f0;
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity 0.3s ease;
+  ">
+    <span style="font-size: 13px; color: #777; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">Loading…</span>
+  </div>
+
   <!-- Renderer logic (ES6 modules enabled) -->
   <script type="module" src="js/renderer.js"></script>
 </body>
