@@ -2732,6 +2732,32 @@ ipcMain.handle('create-folder', async (event, { parentPath, folderName } = {}) =
   }
 });
 
+ipcMain.handle('rename-item', async (event, { oldPath, newName } = {}) => {
+  if (!oldPath || typeof oldPath !== 'string' || !newName || typeof newName !== 'string') {
+    return { success: false, error: 'Invalid arguments' };
+  }
+  const sanitizedName = newName.trim();
+  if (!sanitizedName) {
+    return { success: false, error: 'Name cannot be empty' };
+  }
+  if (/[/\\:*?"<>|]/.test(sanitizedName)) {
+    return { success: false, error: 'Name contains invalid characters (/ \\ : * ? " < > |)' };
+  }
+  const newPath = path.join(path.dirname(oldPath), sanitizedName);
+  if (newPath === oldPath) {
+    return { success: true, path: oldPath };
+  }
+  if (fsSync.existsSync(newPath)) {
+    return { success: false, error: 'An item with that name already exists' };
+  }
+  try {
+    fsSync.renameSync(oldPath, newPath);
+    return { success: true, path: newPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 /**
  * Filesystem: Move items to trash using the DB trash-staging pattern.
  * For each file we first re-parent the files row into the trash sentinel dir

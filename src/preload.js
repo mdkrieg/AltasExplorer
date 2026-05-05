@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getItemsHistory: (items) => ipcRenderer.invoke('get-items-history', { items }),
   deleteItems: (items) => ipcRenderer.invoke('delete-items', items),
   createFolder: (parentPath, folderName) => ipcRenderer.invoke('create-folder', { parentPath, folderName }),
+  renameItem: (oldPath, newName) => ipcRenderer.invoke('rename-item', { oldPath, newName }),
   moveItems: (items, targetDirPath, onCollision) => ipcRenderer.invoke('move-items', { items, targetDirPath, onCollision }),
   copyItems: (items, targetDirPath, onCollision) => ipcRenderer.invoke('copy-items', { items, targetDirPath, onCollision }),
   checkCollisions: (items, targetDirPath) => ipcRenderer.invoke('check-collisions', { items, targetDirPath }),

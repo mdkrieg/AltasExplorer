@@ -662,6 +662,74 @@ function closeNewFolderModal() {
   }
 }
 
+async function showRenameModal(itemPath, panelId) {
+  const sep = itemPath.includes('\\') ? '\\' : '/';
+  const currentName = itemPath.slice(itemPath.lastIndexOf(sep) + 1);
+  const input = document.getElementById('rename-item-input');
+  const errorEl = document.getElementById('rename-item-error');
+  input.value = currentName;
+  errorEl.textContent = '';
+  $('#rename-item-modal').show();
+  // Select the name without extension so the user can type a new stem directly
+  const dotIdx = currentName.lastIndexOf('.');
+  if (dotIdx > 0) {
+    input.setSelectionRange(0, dotIdx);
+  } else {
+    input.select();
+  }
+  input.focus();
+
+  async function doRename() {
+    const newName = input.value.trim();
+    errorEl.textContent = '';
+    if (!newName) {
+      errorEl.textContent = 'Name cannot be empty.';
+      return;
+    }
+    if (newName === currentName) {
+      closeRenameModal();
+      return;
+    }
+    const result = await window.electronAPI.renameItem(itemPath, newName);
+    if (result.success) {
+      closeRenameModal();
+      const state = panelState[panelId];
+      const parentPath = state && state.currentBasePath ? state.currentBasePath : itemPath.slice(0, itemPath.lastIndexOf(sep));
+      await panels.navigateToDirectory(parentPath, panelId);
+      const grid = state && state.w2uiGrid;
+      if (grid) {
+        const record = grid.records.find(r => r.path === result.path);
+        if (record) {
+          grid.selectNone();
+          grid.select(record.recid);
+          if (typeof grid.scrollIntoView === 'function') grid.scrollIntoView(record.recid);
+        }
+      }
+    } else {
+      errorEl.textContent = result.error || 'Could not rename item.';
+      input.focus();
+    }
+  }
+
+  input._renameKeydown = async function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); await doRename(); }
+    if (e.key === 'Escape') { e.preventDefault(); closeRenameModal(); }
+  };
+  document.getElementById('btn-rename-item-confirm')._renameClick = doRename;
+
+  input.addEventListener('keydown', input._renameKeydown);
+  document.getElementById('btn-rename-item-confirm').addEventListener('click', doRename);
+}
+
+function closeRenameModal() {
+  $('#rename-item-modal').hide();
+  const input = document.getElementById('rename-item-input');
+  if (input && input._renameKeydown) {
+    input.removeEventListener('keydown', input._renameKeydown);
+    delete input._renameKeydown;
+  }
+}
+
 /**
  * Attach event listeners to buttons and grid
  */
@@ -1098,6 +1166,12 @@ function attachEventListeners() {
         await showNewFolderModal(state.currentPath, activePanelId);
         break;
       }
+      case 'rename_item': {
+        event.preventDefault();
+        if (!selectedItemState.path) break;
+        await showRenameModal(selectedItemState.path, selectedItemState.panelId || activePanelId);
+        break;
+      }
     }
   });
 
@@ -1176,6 +1250,14 @@ function attachEventListeners() {
   });
   $('#new-folder-modal').click(function (e) {
     if (e.target === this) closeNewFolderModal();
+  });
+
+  // Rename Item modal
+  $('#btn-rename-item-close, #btn-rename-item-cancel').click(function () {
+    closeRenameModal();
+  });
+  $('#rename-item-modal').click(function (e) {
+    if (e.target === this) closeRenameModal();
   });
 
   // Save Layout Global modal

@@ -76,6 +76,11 @@
       "label": "New Folder",
       "key": "Ctrl+Shift+n",
       "default": "Ctrl+Shift+n"
+    },
+    "rename_item": {
+      "label": "Rename Item",
+      "key": "F2",
+      "default": "F2"
     }
   },
   "Drag": {
