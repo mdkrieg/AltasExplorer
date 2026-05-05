@@ -4,6 +4,12 @@
 
 ---
 
+## Viewing Notes for Multiple Items
+
+When the properties panel shows multiple selected items, the Notes section displays one collapsible block per item. Items that already have notes are shown in **bold** in the summary line so you can see at a glance which items need attention. Expand any block to read or compare the note content. Editing individual notes from this view is not supported — open a single item's properties to edit.
+
+---
+
 ## notes.txt
 
 Every directory can have a `notes.txt` file containing free-form Markdown. Atlas Explorer renders it with full Markdown support — including tables, code blocks, and images — and lets you edit it directly in the app.

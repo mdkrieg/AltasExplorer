@@ -1881,7 +1881,7 @@ ipcMain.handle('download-update', async () => {
  * Auto-Update: Quit and install the downloaded update
  */
 ipcMain.handle('quit-and-install', () => {
-  autoUpdater.quitAndInstall(false, true);
+  autoUpdater.quitAndInstall(true, true);
 });
 
 /**
@@ -4547,6 +4547,13 @@ app.on('ready', () => {
       mainWindow.webContents.toggleDevTools();
     }
   });
+});
+
+app.on('before-quit', () => {
+  for (const [, proc] of ptyMap) {
+    try { proc.kill(); } catch (_) {}
+  }
+  ptyMap.clear();
 });
 
 app.on('window-all-closed', () => {

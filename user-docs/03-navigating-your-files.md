@@ -46,6 +46,20 @@ Selecting an item in the grid shows its properties in the active panel's summary
 
 The summary updates as you move the selection. Press `Ctrl+Enter` to open the selected item in a new panel.
 
+### Multi-Select Properties
+
+Right-clicking while multiple items are selected and choosing **Properties (+n)** opens the properties view for all selected items at once. The header lists each item grouped by type (files / directories). The rest of the panel adapts to show combined information:
+
+- **Tags** — intersection tags (shared by all items) are shown normally. Tags held by only *some* items appear in a separate row; each such tag has a **`+` button inside the chip** that promotes it to all items.
+- **Category** — if all selected directories share one category, the normal picker is shown. If they differ, an **Assign Category** dropdown lets you apply a single category to all of them at once. Files display the category inherited from their parent directory (read-only).
+- **Initials & Display Name** — saving applies to all selected directories.
+- **Information** — shows the total size, the full list of parent directories, type breakdown (n files / n directories), and the date range spanned by the items' modified times.
+- **EXIF** — hidden when multiple items are selected.
+- **Notes** — one collapsible `<details>` block per item. Items that have existing notes are shown in **bold**; items with no notes show a grey placeholder.
+- **History** — a merged timeline of all items' change events, sorted by time, with an Item column identifying the source. Panel-picker buttons (`P1`, `P2 …`) open the combined history in a dedicated panel, preserving the multi-select context.
+
+The URI stored in the path bar and navigation history fully encodes the multi-select context (`?properties&auxitems=…`), so back/forward navigation and layout saves all work correctly for multi-select properties views.
+
 ## Built-in Terminal
 
 Press `Ctrl+J` to open a terminal panel rooted at the active directory. Useful for running commands without leaving the app.

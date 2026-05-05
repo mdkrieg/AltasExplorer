@@ -42,6 +42,30 @@ Recognized query parameters (non-exhaustive):
 | `?orphans` | Show files not linked to any directory in the database |
 | `?trash` | Show items in the trash virtual view |
 
+## Two kinds of modals: widgets vs. utility overlays
+
+Not all modals are created equal. There are two distinct categories, and conflating them leads to bad design.
+
+### Panel widgets (URI-addressable, panel-pushable)
+
+These are full-featured views that happen to be shown in a floating popup when there's no room in a panel — but they *can* be pushed into a panel. They own a URI (e.g. `?properties`, `?history`) and are treated as first-class panel content. When hosted in a panel, the panel's path bar takes over as their header. Examples:
+
+- **Item Properties** (`?properties`) — shows labels, attributes, notes, history for a selected item.
+- **File viewer/editor** — opens notes or files in a Monaco editor surface.
+- **File history** — shows change history for a path.
+
+These are the "fifth panel" concept you may have heard called a modal. They are navigable, addressable, and can be closed by navigating away in the path bar.
+
+### Utility modals (transient, single-purpose, no URI)
+
+These are simple overlays for one specific action. They are *not* panel-pushable, have no URI, and are dismissed as soon as the action completes or is cancelled. Examples:
+
+- **New Folder** — prompts for a folder name and creates it.
+- **Confirmation dialogs** — "Are you sure you want to delete?"
+- **Tag creation**, **layout save/load** prompts.
+
+**Do not give utility modals a URI or a panel-push option.** They are not widgets. They are action prompts.
+
 ## The P1-Pn+1 pattern
 
 This is a recurring UI pattern for any action that targets a panel. It governs how those actions are presented in the interface.

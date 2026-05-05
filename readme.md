@@ -40,77 +40,14 @@ Philosophy:
 [ ] Panel title path input should not wordwrap but instead overflow hidden
 
 ### ROADMAP:
-[x] Rework the title/toolbar, maybe the new panel button should be on the left? Need a back button for sure and the parent button is a bit awkwardly placed.
-[x] Add SVGs onto the back and parent nav buttons
-[x] CTRL+L to change path
-[x] Search and Filter, make it so that if I start typing it will start searching by name automatically.
 [ ] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
-  * should I make a universal description field? Or does it make more sense to just display the first little bit of notes. Maybe have some delimiter to designate a description in notes (not crazy about this idea)
-[x] Update title bar to show the styled colors of the folder category
-[x] Right click on favorites to send to particular panel
-[x] Tags in notes get set to file / db
-[x] Tags in notes, add "archive" type, which is just #tag instead of @#tag. tags always update to database. If a user removes a tag that is present in a note it becomes archived. If a user adds a tag that is archived in notes they back-update in the note. 
-[x] Option for Folder initials do inherit down to child directories
-[x] Display names that appear in app title and optionally inherit like initials
-[x] Filter options on each column header - I think this will need to be custom, I don't really see it in the w2ui library. NOTE: I think a key difference between filter and search is that search should always be recursive - possibly searching contents although only certain filetypes maybe?
-[x] BACKBURNER Make directory layout (columns shown, column sizes, depth) retained. I think have default per category would be good but maybe also need - seems like maybe the sidebar width is retentive, need to investigate how much more is needed
-[x] (mostly done, maybe some missed but seems okay) Add some passive ui notifications (https://w2ui.com/web/demos/#/utils/8) for when settings are saved, this includes: Browser Settings, Alerts and Monitoring Settings, Maybe others? Any time one of the "gridded" settings are updated such as Categories and Tabs
-[x] Update the color inputs to use the w2ui color picker (https://w2ui.com/web/demos/#/fields/8)
-[x] (got the color picker, not sure others are used but meh) Update the forms to use more of the standard w2ui elements, see: https://w2ui.com/web/demos/#/form
-[x] Update the forms to not throw alert popups but instead use inline styling and remarks like a modern webform
-[x] Add option on custom attributes for "copyable" which adds a copy button in the grid to copy its value to clipboard
-[x] Instead of having the "History" option in the context menu, change this to the Properties page - check if history modal is vestigial and/or still needed - history modal was still there and is now a button in the item properteis page
 [ ] I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
 [ ] un-forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)
-* (I don't remember why I wanted this) Would it be possible to have a global hotkey (fires even without focus) that opens an always-on-top popup which offers a list of every path of all currently open directories and all favorites?
-[x] LOCAL FAVORITES - instead of links, the user can populate local favorites. I'm thinking this should be in notes.txt - possibly without any special directive but anything that is a valid path gets shown in the sidebar when the user is browsing that dir.
-[x] TODOs in notes get aggregated
-[x] Copy as Path in context menu
-[x] Autotagging rules - need some kind of confirmation pattern for this
 [ ] Make some kind of mark for tags that came from notes (maybe a notes icon that is clickable to open the source notes file?)
 [ ] Backup Macros (need to use the app more in practice to think about what this should be like)
 [ ] Diffing between files
 [ ] Icons for context menu (Do I really want icons on every menu item? seems too cluttered)
-[ ] Historical snapshot viewer
-[x] Photo / Media mode per category - thumbnails and preview pane
-[x] Fix / figure out what to do with link in markdown (web links open in Electron)
-[x] Option for "Active Monitoring", taking combination of category, tags, and attributes
-[x] Notes column change - when there are no notes for a file or dir the notes column offers a "+" icon that opens a notes modal already in edit mode.
-[x] Tags column - add "+" icon to quickly add new tags to the item
-[x] Add a Select All button on the Alerts Summary (to help with the Acknowledge feature)
-[x] Update markdown viewer to consider a single line break as a newline - keep double line breaks as a newline with additional line height (new <p> object perhaps?) - turns out this was a built in option of markdown-it
-[x] Alerts:
-  [x] User can define what files / folders create alerts in a similar way (combo of category, tags, and attributes)
-[x] Fewer alerts. Currently the "All browser settings saved successfully" alert is annoying, things like this should just show some text stating the same, alerts should be reserved for errors only.
-[x] Item landing page is an item summary for the item selected in the grid
-  [x] Currently locked to panel 1 - make it so it obeys the panel with focus - does nothing if landing page is selected - maybe does if file editor selected?
-[x] Heighten the grid text wrappers, "g" for example is getting cut off at the bottom
-[x] Context menu cancel with click off (left click)
-[x] Collapsible Sidebar - all the stuff hides, should just show icons
-[x] Category inheritance (Set rules like "all subdirs get X category" on category definition)
-[x] Filetype profiles (icon and editability)
-[x] exif data
-[ ] exif GPS data aggregated to map
-
-Label Manager
-[x] Fix the way the form sometimes ignores what I have clicked in the grid - figured out it is when the click drags a bit
-[x] Clicking a new item in the grid should clear any validation and styling in the form
-[x] Instead of a New button, have an item at the bottom that says (New) and to assist in selecting it add a button in the header that says +New and merely functions to select it
-[x] Categories once again not available immediately in the grid context menu after adding new
-[x] Add global attributes, with default entry for Description
-[x] Attribute type options show invalid character in dropdown menu
-[x] Attribute applies-to field make Directory the default, move Both to bottom of list
-
-Item Properties:
-[-] CTRL + Enter to do same as double click in grid --- nvm, change this:
-  [ ] Enter browses dirs in same folders, opens Item Properties in modal for files
-  [x] Ctrl+Enter does the same in a new panel
-[ ] Support multi-select in item properties
-  [ ] phase 1 is to allow for categories and tags to be changed on many items at once
-  [ ] phase 2 is to aggregate as many statistics as we can, list the count of different file types, the range (maybe even show distribution) of dates modified, dates created, etc.
-  [ ] Phase 3 would be to aggregate the multiple items' history
-  * Notes and previews would be hidden
-  * What would the title-bar show? parameter list based on inodes?
+[ ] exif GPS data aggregated to map (need to get some photos with GPS data to test)
 
 Gallery View:
 [ ] Support coordinate organizing, like the old windows desktops
