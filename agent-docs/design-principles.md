@@ -39,6 +39,30 @@ When a confirmation modal is shown:
 - **Enter must select the default option.**
 - The default option must be **visually distinguishable** — brighter or more saturated than the alternative — so the user instantly knows what Enter will do.
 
+## Keyboard event ownership
+
+**The focused panel or opened modal captures most key events.** Key events belong to whatever surface the user is currently interacting with and should stop there.
+
+### Global exceptions (always propagate)
+
+A small set of keys are intentionally global — they should fire regardless of focus state, but must be **blocked when a modal is open**:
+
+| Key | Action |
+|---|---|
+| `Ctrl+Shift+S` | Save layout |
+| `Ctrl+Shift+L` | Load layout |
+
+`Ctrl+W` is the sole exception to the modal-blocking rule: it closes a panel under normal circumstances, but when a modal is open it should **close the modal instead** (prompting for abort-edit confirmation if applicable). This is the correct behaviour because "close what I'm looking at" is the semantic meaning of `Ctrl+W`. *Note: as of May 2026, `Ctrl+W` incorrectly closes the panel behind an open modal rather than the modal itself.*
+
+### Sidebar-owned keys
+
+Some keys appear to act on panels but are actually in service of the currently focused sidebar item. Left/Right arrow keys while a favorites item is keyboard-focused cycle the **target panel** for that item — the action is owned by the sidebar context, not the panels. This means:
+
+- The keys have no meaning (and should do nothing) if the corresponding sidebar item is not highlighted.
+- They should not be treated as "panel navigation" globally; they only apply when the sidebar has keyboard focus on a `fav-item`.
+
+This is a useful mental model for deciding where a new keyboard action belongs: ask *what surface gives this key its meaning*, then bind it there.
+
 ## Multiple discoverable paths to the same task
 
 Users won't read docs for a file explorer.

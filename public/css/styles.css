@@ -2482,12 +2482,19 @@ hr {
 .w2ui-node.sidebar-arrow-focused,
 .sidebar-item.sidebar-arrow-focused,
 .sidebar-todo-group-header.sidebar-arrow-focused,
-.sidebar-todo-item.sidebar-arrow-focused {
+.sidebar-todo-item.sidebar-arrow-focused,
+.sidebar-reminder-group-header.sidebar-arrow-focused,
+.sidebar-reminder-item.sidebar-arrow-focused {
   background: #d4f0f0;
 }
 
 /* Override w2ui vendor specificity (.w2ui-sidebar .w2ui-sidebar-body .w2ui-node-group = 0,3,0) */
 .w2ui-sidebar .w2ui-sidebar-body .w2ui-node-group.sidebar-arrow-focused {
+  background: #d4f0f0;
+}
+
+/* Override the LOCAL FAVORITES background:none rule (specificity 1,2,0) when focused */
+#w2ui-favorites [data-id="local-favorites"].w2ui-node-group.sidebar-arrow-focused {
   background: #d4f0f0;
 }
 
@@ -3161,6 +3168,14 @@ hr {
 .sidebar-reminder-bucket-tomorrow  .sidebar-reminder-group-header:hover { background: #ddeeff; }
 .sidebar-reminder-bucket-this-week .sidebar-reminder-group-header { background: #f5f0ff; color: #6a1b9a; }
 .sidebar-reminder-bucket-this-week .sidebar-reminder-group-header:hover { background: #ede0ff; }
+
+/* Focused state wins over all bucket tints */
+.sidebar-reminder-bucket-past-due  .sidebar-reminder-group-header.sidebar-arrow-focused,
+.sidebar-reminder-bucket-today     .sidebar-reminder-group-header.sidebar-arrow-focused,
+.sidebar-reminder-bucket-tomorrow  .sidebar-reminder-group-header.sidebar-arrow-focused,
+.sidebar-reminder-bucket-this-week .sidebar-reminder-group-header.sidebar-arrow-focused {
+  background: #d4f0f0;
+}
 
 /* =====================
    Reminder Modal

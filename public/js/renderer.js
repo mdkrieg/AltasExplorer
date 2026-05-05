@@ -767,6 +767,21 @@ function attachEventListeners() {
       }
     }
 
+    // Sidebar Ctrl+Enter: open focused favorite in a new panel
+    if (sidebarHasFocus && event.ctrlKey && !event.altKey && !event.metaKey &&
+        event.key === 'Enter') {
+      const tgt = event.target;
+      const inInput = tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+          tgt.contentEditable === 'true' ||
+          (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0));
+      if (!inInput) {
+        event.preventDefault();
+        event.stopPropagation();
+        sidebar.handleSidebarCtrlEnter();
+        return;
+      }
+    }
+
     // Printable key while grid/gallery has focus → redirect to search bar
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
       const target = event.target;

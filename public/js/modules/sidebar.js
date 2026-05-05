@@ -11,7 +11,8 @@
  * Exports consumed by renderer.js:
  *   initializeSidebar, updateSidebarSelection, addToFavorites,
  *   refreshFavoritesSidebar, toggleSidebarCollapse, handleSidebarLayoutResize,
- *   applySidebarDragWidth
+ *   applySidebarDragWidth, handleSidebarArrowKey, handleSidebarCtrlEnter,
+ *   initSidebarFocus, clearSidebarFocus
  */
 
 import { w2sidebar } from './vendor/w2ui.es6.min.js';
@@ -584,6 +585,29 @@ async function initializeSidebarSections() {
     e.stopPropagation();
     const sectionName = toggleEl.dataset.sectionToggle;
     if (sectionName) void toggleSidebarSection(sectionName);
+  });
+
+  // Clicking the header body (not a button/input) focuses the sidebar with
+  // arrow-key selection landed on that section header.
+  container.addEventListener('click', (e) => {
+    const header = e.target.closest('.sidebar-section-header');
+    if (!header) return;
+    // Ignore clicks on interactive children (buttons, inputs, toggles)
+    if (e.target.closest('button, input, [data-section-toggle]')) return;
+
+    if (!sidebarHasFocus) {
+      previouslyFocusedPanelId = activePanelId || 1;
+    }
+    activateSidebarContext(previouslyFocusedPanelId);
+    const sectionName = header.closest('.sidebar-section')?.dataset?.section;
+    const items = getVisibleSectionItems();
+    const idx = items.findIndex(item => item.type === 'section-header' && item.section === sectionName);
+    if (idx !== -1) {
+      sidebarFocusZone = 'sections';
+      sidebarFocusIndex = idx;
+      applySidebarArrowFocus();
+    }
+    document.getElementById('sidebar-content')?.focus({ preventScroll: true });
   });
 
   // Fire expand callbacks for any sections that start expanded (e.g. TODO) so they
@@ -2049,6 +2073,22 @@ function getVisibleSectionItems() {
           }
         }
       }
+    } else if (sectionName === 'reminders') {
+      const remBody = section.querySelector('.sidebar-section-body');
+      if (remBody) {
+        const groups = remBody.querySelectorAll('.sidebar-reminder-group');
+        for (const group of groups) {
+          const groupHeader = group.querySelector('.sidebar-reminder-group-header');
+          if (groupHeader) items.push({ el: groupHeader, type: 'reminder-group', groupEl: group });
+          if (!group.classList.contains('collapsed')) {
+            const remItems = group.querySelectorAll('.sidebar-reminder-item');
+            for (const item of remItems) {
+              if (item.offsetParent === null) continue;
+              items.push({ el: item, type: 'reminder-item' });
+            }
+          }
+        }
+      }
     }
   }
   return items;
@@ -2096,6 +2136,49 @@ function applySidebarArrowFocus() {
         setPreviouslyActivePanel(null);
       }
     }
+  }
+}
+
+export function handleSidebarCtrlEnter() {
+  if (sidebarFocusZone !== 'sections') return;
+  const items = getVisibleSectionItems();
+  const current = items[sidebarFocusIndex];
+  if (!current) return;
+
+  const openInNewPanel = async (destPath, onAfterNavigate) => {
+    if (visiblePanels < 4) {
+      const targetId = await addPanel();
+      if (!targetId) return;
+      await initializeGridForPanel(targetId);
+      $(`#panel-${targetId} .panel-welcome-view`).hide();
+      $(`#panel-${targetId} .panel-landing-page`).hide();
+      $(`#panel-${targetId} .panel-grid`).show();
+      await navigateToDirectory(destPath, targetId);
+      if (onAfterNavigate) onAfterNavigate(targetId);
+      setActivePanelId(targetId);
+      setGridFocusedPanelId(targetId);
+    } else {
+      // At cap — fall back to navigating the target panel (same as Enter)
+      navigateToDirectory(destPath, previouslyFocusedPanelId);
+      if (onAfterNavigate) onAfterNavigate(previouslyFocusedPanelId);
+      setActivePanelId(previouslyFocusedPanelId);
+      setGridFocusedPanelId(previouslyFocusedPanelId);
+    }
+  };
+
+  if (current.type === 'fav-item') {
+    const nodeId = current.el.dataset?.id;
+    if (!nodeId) return;
+    const node = w2uiFavoritesSidebar?.get(nodeId);
+    if (!node || node.disabled) return;
+    const destPath = (nodeId.startsWith('lf-') && node.targetPath) ? node.targetPath : node.path;
+    if (destPath) void openInNewPanel(destPath);
+  } else if (current.type === 'sidebar-item') {
+    const path = current.el.getAttribute('data-path');
+    if (path) void openInNewPanel(path, (targetId) => {
+      // update sidebar selection after navigation settles
+      updateSidebarSelection(path);
+    });
   }
 }
 
@@ -2169,7 +2252,38 @@ export function handleSidebarArrowKey(key) {
         const groupHeader = group.querySelector('.sidebar-todo-group-header');
         if (groupHeader) groupHeader.click();
       }
-    } else if (current?.type === 'fav-group' || current?.type === 'fav-item') {
+    } else if (current?.type === 'todo-item') {
+      // Collapse parent group and move focus to it
+      const parentIdx = items.slice(0, sidebarFocusIndex).findLastIndex(item => item.type === 'todo-group');
+      if (parentIdx !== -1) {
+        const parentGroup = items[parentIdx];
+        if (parentGroup.groupEl && !parentGroup.groupEl.classList.contains('collapsed')) {
+          const groupHeader = parentGroup.groupEl.querySelector('.sidebar-todo-group-header');
+          if (groupHeader) groupHeader.click();
+        }
+        sidebarFocusIndex = parentIdx;
+        applySidebarArrowFocus();
+      }
+    } else if (current?.type === 'reminder-group') {
+      // Collapse reminder bucket
+      const group = current.groupEl;
+      if (group && !group.classList.contains('collapsed')) {
+        const groupHeader = group.querySelector('.sidebar-reminder-group-header');
+        if (groupHeader) groupHeader.click();
+      }
+    } else if (current?.type === 'reminder-item') {
+      // Collapse parent bucket and move focus to it
+      const parentIdx = items.slice(0, sidebarFocusIndex).findLastIndex(item => item.type === 'reminder-group');
+      if (parentIdx !== -1) {
+        const parentGroup = items[parentIdx];
+        if (parentGroup.groupEl && !parentGroup.groupEl.classList.contains('collapsed')) {
+          const groupHeader = parentGroup.groupEl.querySelector('.sidebar-reminder-group-header');
+          if (groupHeader) groupHeader.click();
+        }
+        sidebarFocusIndex = parentIdx;
+        applySidebarArrowFocus();
+      }
+    } else if (current?.type === 'fav-group') {
       // Collapse w2ui node if expanded
       const nodeId = current.el.dataset?.id;
       if (nodeId && w2uiFavoritesSidebar) {
@@ -2179,6 +2293,11 @@ export function handleSidebarArrowKey(key) {
           setTimeout(() => applySidebarArrowFocus(), 0);
         }
       }
+    } else if (current?.type === 'fav-item') {
+      // Cycle orange panel focus to previous panel
+      const count = visiblePanels;
+      previouslyFocusedPanelId = ((previouslyFocusedPanelId - 2 + count) % count) + 1;
+      applySidebarArrowFocus();
     }
   } else if (key === 'ArrowRight') {
     if (current?.type === 'section-header') {
@@ -2199,7 +2318,14 @@ export function handleSidebarArrowKey(key) {
         const groupHeader = group.querySelector('.sidebar-todo-group-header');
         if (groupHeader) groupHeader.click();
       }
-    } else if (current?.type === 'fav-group' || current?.type === 'fav-item') {
+    } else if (current?.type === 'reminder-group') {
+      // Expand reminder bucket
+      const group = current.groupEl;
+      if (group && group.classList.contains('collapsed')) {
+        const groupHeader = group.querySelector('.sidebar-reminder-group-header');
+        if (groupHeader) groupHeader.click();
+      }
+    } else if (current?.type === 'fav-group') {
       // Expand w2ui node if collapsed
       const nodeId = current.el.dataset?.id;
       if (nodeId && w2uiFavoritesSidebar) {
@@ -2209,18 +2335,34 @@ export function handleSidebarArrowKey(key) {
           setTimeout(() => applySidebarArrowFocus(), 0);
         }
       }
+    } else if (current?.type === 'fav-item') {
+      // Cycle orange panel focus to next panel
+      const count = visiblePanels;
+      previouslyFocusedPanelId = (previouslyFocusedPanelId % count) + 1;
+      applySidebarArrowFocus();
     }
   } else if (key === 'Enter') {
     if (current?.type === 'section-header') {
       void toggleSidebarSection(current.section);
+    } else if (current?.type === 'reminder-group') {
+      // Toggle the bucket collapse state
+      const groupHeader = current.groupEl?.querySelector('.sidebar-reminder-group-header');
+      if (groupHeader) groupHeader.click();
+    } else if (current?.type === 'reminder-item') {
+      // Same as clicking — opens the reminder modal
+      current.el.click();
     } else if (current?.type === 'fav-item') {
       const nodeId = current.el.dataset?.id;
       if (nodeId) {
         const node = w2uiFavoritesSidebar?.get(nodeId);
-        if (node && node.path && !node.disabled) {
-          navigateToDirectory(node.path, previouslyFocusedPanelId);
-          setActivePanelId(previouslyFocusedPanelId);
-          setGridFocusedPanelId(previouslyFocusedPanelId);
+        if (node && !node.disabled) {
+          // LOCAL FAVORITES nodes use targetPath; regular favorites use path
+          const destPath = (nodeId.startsWith('lf-') && node.targetPath) ? node.targetPath : node.path;
+          if (destPath) {
+            navigateToDirectory(destPath, previouslyFocusedPanelId);
+            setActivePanelId(previouslyFocusedPanelId);
+            setGridFocusedPanelId(previouslyFocusedPanelId);
+          }
         }
       }
     } else if (current?.type === 'sidebar-item') {
