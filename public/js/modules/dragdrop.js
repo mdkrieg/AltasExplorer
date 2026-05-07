@@ -938,7 +938,7 @@ function alertAsync(msg) {
  * Uses w2confirm's yes/no/btn interface with relabeled buttons. Returns the
  * chosen directive string or 'cancel'.
  */
-function promptCollisionChoice(collisions, isCopy) {
+export function promptCollisionChoice(collisions, isCopy) {
 	const verb = isCopy ? 'copy' : 'move';
 	const preview = collisions.slice(0, 5).map(c => `• ${c.filename}`).join('\n');
 	const extra = collisions.length > 5 ? `\n(and ${collisions.length - 5} more)` : '';

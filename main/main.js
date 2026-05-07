@@ -2890,6 +2890,111 @@ ipcMain.handle('check-collisions', async (event, { items, targetDirPath } = {}) 
 });
 
 /**
+ * Read the operating-system clipboard and return a typed payload:
+ *   { type: 'files', data: string[] }   — list of absolute paths
+ *   { type: 'image', data: string }     — PNG encoded as base64
+ *   { type: 'text',  data: string }     — plain text string
+ *   { type: 'empty' }                   — nothing useful on clipboard
+ */
+ipcMain.handle('read-system-clipboard', async () => {
+  const { clipboard } = require('electron');
+
+  // Windows: use PowerShell to read CF_HDROP (the format Windows Explorer uses for file copies).
+  // Electron's clipboard.readBuffer cannot read predefined Windows clipboard format IDs (CF_HDROP=15)
+  // because its internals call RegisterClipboardFormat which creates a new custom-format ID, not
+  // the predefined one. PowerShell .NET has direct access to System.Windows.Forms.Clipboard.
+  if (process.platform === 'win32') {
+    try {
+      const filePaths = await new Promise((resolve, reject) => {
+        execFile('powershell', [
+          '-NoProfile', '-NonInteractive', '-Command',
+          `Add-Type -Assembly 'System.Windows.Forms'; [System.Windows.Forms.Clipboard]::GetFileDropList() | ForEach-Object { $_ }`
+        ], { timeout: 4000 }, (err, stdout) => {
+          if (err) return reject(err);
+          resolve(stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean));
+        });
+      });
+      if (filePaths.length > 0) return { type: 'files', data: filePaths };
+    } catch (_) { /* fall through to image/text */ }
+  }
+
+  // Check for image data.
+  const img = clipboard.readImage();
+  if (!img.isEmpty()) {
+    const base64 = img.toPNG().toString('base64');
+    return { type: 'image', data: base64 };
+  }
+
+  // Plain text.
+  const text = clipboard.readText();
+  if (text && text.trim()) return { type: 'text', data: text };
+
+  return { type: 'empty' };
+});
+
+/**
+ * Write a list of file paths to the OS clipboard as a file-drop list (CF_HDROP).
+ * Uses PowerShell on Windows so Explorer can paste files copied from within the app.
+ * Falls back to plain text on non-Windows.
+ */
+ipcMain.handle('set-file-clipboard', async (event, { paths } = {}) => {
+  if (!Array.isArray(paths) || paths.length === 0) return { success: false };
+  if (process.platform !== 'win32') {
+    try {
+      const { clipboard } = require('electron');
+      clipboard.writeText(paths.join('\n'));
+    } catch (_) {}
+    return { success: true };
+  }
+  try {
+    // Escape single quotes in each path for inline PowerShell safety.
+    const fileAdds = paths
+      .map(p => `$files.Add('${String(p).replace(/'/g, "''")}')`)
+      .join('; ');
+    await new Promise((resolve, reject) => {
+      execFile('powershell', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        `Add-Type -Assembly 'System.Windows.Forms'; $files = New-Object System.Collections.Specialized.StringCollection; ${fileAdds}; [System.Windows.Forms.Clipboard]::SetFileDropList($files)`
+      ], { timeout: 5000 }, (err) => { if (err) reject(err); else resolve(); });
+    });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Save a base64-encoded PNG image to a directory.
+ * Guards against path traversal.
+ */
+ipcMain.handle('save-image-to-dir', async (event, { dir, filename, base64 } = {}) => {
+  if (!dir || !filename || !base64) return { success: false, error: 'Missing parameters' };
+
+  // Validate: filename must not contain path separators or traversal sequences.
+  const safe = path.basename(filename);
+  if (!safe || safe !== filename || safe.includes('..')) {
+    return { success: false, error: 'Invalid filename' };
+  }
+
+  const absDir = path.resolve(dir);
+  const filePath = path.join(absDir, `${safe}.png`);
+
+  // Ensure we stay within the requested directory.
+  if (!filePath.startsWith(absDir + path.sep) && filePath !== absDir) {
+    return { success: false, error: 'Path traversal detected' };
+  }
+
+  try {
+    const buf = Buffer.from(base64, 'base64');
+    await fsSync.promises.mkdir(absDir, { recursive: true });
+    await fsSync.promises.writeFile(filePath, buf);
+    return { success: true, filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * Drag & drop: move a batch of files/folders into a target directory.
  * Mirrors the delete-items pipeline: per-item try/catch, detailed
  * succeeded/failed/skipped arrays, and user-initiated audit entries.

@@ -127,6 +127,7 @@
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%;"></div>
             <div class="panel-gallery"></div>
+            <div class="panel-gallery-footer"><div class="gallery-footer-left"></div></div>
             <div class="panel-file-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
               <div class="w2ui-panel-title" style="display: none;">
                 <span class="file-path" style="font-weight: bold; font-size: 12px;"></span>
@@ -190,6 +191,7 @@
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
             <div class="panel-gallery"></div>
+            <div class="panel-gallery-footer"><div class="gallery-footer-left"></div></div>
             <div class="panel-file-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
               <div class="w2ui-panel-title" style="display: none;">
                 <span class="file-path" style="font-weight: bold; font-size: 12px;"></span>
@@ -255,6 +257,7 @@
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
             <div class="panel-gallery"></div>
+            <div class="panel-gallery-footer"><div class="gallery-footer-left"></div></div>
             <div class="panel-file-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
               <div class="w2ui-panel-title" style="display: none;">
                 <span class="file-path" style="font-weight: bold; font-size: 12px;"></span>
@@ -320,6 +323,7 @@
             </div>
             <div class="panel-grid" style="width: 100%; height: 100%; display: none;"></div>
             <div class="panel-gallery"></div>
+            <div class="panel-gallery-footer"><div class="gallery-footer-left"></div></div>
             <div class="panel-file-view" style="width: 100%; height: 100%; display: none; flex-direction: column;">
               <div class="w2ui-panel-title" style="display: none;">
                 <span class="file-path" style="font-weight: bold; font-size: 12px;"></span>
@@ -2046,6 +2050,58 @@
     </div>
   </div>
 
+  <!-- Paste Text Modal -->
+  <div id="paste-text-modal"
+    style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001;">
+    <div
+      style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 24px; border-radius: 8px; width: 480px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+      <div style="display: flex; align-items: center; margin-bottom: 16px;">
+        <h2 style="margin: 0; flex: 1; font-size: 16px;">Save as Text File</h2>
+        <button id="btn-paste-text-close"
+          style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">&#x2715;</button>
+      </div>
+      <pre id="paste-text-content"
+        style="margin: 0 0 12px; padding: 10px; background: #f8f8f8; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; max-height: 240px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;"></pre>
+      <label style="font-size: 13px; color: #555; margin-bottom: 6px;">File name</label>
+      <input id="paste-text-filename" type="text" placeholder="pasted-text"
+        style="font-size: 14px; border: 1px solid #ccc; border-radius: 4px; padding: 7px 10px; width: 100%; box-sizing: border-box; margin-bottom: 8px;">
+      <div id="paste-text-error" style="font-size: 12px; color: #c62828; min-height: 18px; margin-bottom: 8px;"></div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end;">
+        <button id="btn-paste-text-cancel"
+          style="padding: 8px 18px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Cancel</button>
+        <button id="btn-paste-text-save"
+          style="padding: 8px 18px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Paste Image Modal -->
+  <div id="paste-image-modal"
+    style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001;">
+    <div
+      style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 24px; border-radius: 8px; width: 420px; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+      <div style="display: flex; align-items: center; margin-bottom: 16px;">
+        <h2 style="margin: 0; flex: 1; font-size: 16px;">Save as Image</h2>
+        <button id="btn-paste-image-close"
+          style="padding: 6px 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">&#x2715;</button>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: center; background: #f0f0f0; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 12px; min-height: 160px;">
+        <img id="paste-image-preview" src="" alt="Image preview"
+          style="max-width: 320px; max-height: 240px; object-fit: contain; display: block;">
+      </div>
+      <label style="font-size: 13px; color: #555; margin-bottom: 6px;">File name</label>
+      <input id="paste-image-filename" type="text" placeholder="pasted-image"
+        style="font-size: 14px; border: 1px solid #ccc; border-radius: 4px; padding: 7px 10px; width: 100%; box-sizing: border-box; margin-bottom: 8px;">
+      <div id="paste-image-error" style="font-size: 12px; color: #c62828; min-height: 18px; margin-bottom: 8px;"></div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end;">
+        <button id="btn-paste-image-cancel"
+          style="padding: 8px 18px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Cancel</button>
+        <button id="btn-paste-image-save"
+          style="padding: 8px 18px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Save</button>
+      </div>
+    </div>
+  </div>
+
   <script src="../node_modules/jquery/dist/jquery.min.js"></script>
 
   <!-- Blur vignette overlay (shown when main window loses OS focus). Captures
@@ -2053,15 +2109,79 @@
        inputs underneath. -->
   <div id="focus-vignette-overlay" aria-hidden="true"></div>
 
-  <!-- Startup loading overlay — removed by renderer.js once initialize() completes -->
-  <div id="startup-overlay" style="
-    position: fixed; inset: 0; z-index: 99999;
-    background: #f0f0f0;
-    display: flex; align-items: center; justify-content: center;
-    transition: opacity 0.3s ease;
-  ">
-    <span
-      style="font-size: 13px; color: #777; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">Loading…</span>
+  <!-- Startup skeleton overlay — removed by renderer.js once initialize() completes -->
+  <div id="startup-overlay">
+    <script>
+      // Match sidebar width to whatever the user had last session
+      (function () {
+        var w = parseInt(
+          localStorage.getItem('sidebarExpandedWidth') ||
+          localStorage.getItem('sidebarWidth') || '250'
+        );
+        document.getElementById('startup-overlay').style.setProperty('--sk-sidebar-width', w + 'px');
+      })();
+    </script>
+    <!-- Sidebar skeleton -->
+    <div class="sk-sidebar">
+      <div class="sk-sidebar-toolbar">
+        <div class="sk-btn sk-shimmer"></div>
+        <div class="sk-btn sk-shimmer"></div>
+        <div class="sk-btn sk-shimmer"></div>
+        <div class="sk-btn sk-shimmer"></div>
+        <div class="sk-btn sk-shimmer"></div>
+      </div>
+      <div class="sk-sidebar-body">
+        <div class="sk-section-label sk-shimmer" style="width:70px"></div>
+        <div class="sk-sidebar-row sk-shimmer" style="width:88%"></div>
+        <div class="sk-sidebar-row sk-shimmer" style="width:75%"></div>
+        <div class="sk-sidebar-row sk-shimmer" style="width:82%"></div>
+        <div class="sk-sidebar-row sk-shimmer" style="width:60%"></div>
+        <div class="sk-section-label sk-shimmer" style="width:50px; margin-top:12px"></div>
+        <div class="sk-section-label sk-shimmer" style="width:90px; margin-top:14px"></div>
+      </div>
+    </div>
+    <!-- Main content skeleton -->
+    <div class="sk-main">
+      <div class="sk-panel-toolbar">
+        <div class="sk-nav-btn sk-shimmer"></div>
+        <div class="sk-nav-btn sk-shimmer"></div>
+        <div class="sk-path-bar sk-shimmer"></div>
+        <div class="sk-scan-btn sk-shimmer"></div>
+      </div>
+      <div class="sk-grid-header">
+        <div class="sk-col-hdr sk-shimmer" style="flex:2"></div>
+        <div class="sk-col-hdr sk-shimmer" style="flex:1"></div>
+        <div class="sk-col-hdr sk-shimmer" style="flex:1"></div>
+        <div class="sk-col-hdr sk-shimmer" style="flex:1"></div>
+      </div>
+      <div class="sk-grid-body">
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:55%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:38%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:70%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:42%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:61%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:30%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:48%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:65%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:44%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:72%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:35%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:58%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:50%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:40%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:67%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:33%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:53%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:46%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:78%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:39%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:62%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:45%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:57%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:36%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+        <div class="sk-grid-row"><div class="sk-row-icon sk-shimmer"></div><div class="sk-row-name sk-shimmer" style="width:69%"></div><div class="sk-row-meta sk-shimmer"></div><div class="sk-row-meta sk-shimmer"></div></div>
+      </div>
+    </div>
   </div>
 
   <!-- Renderer logic (ES6 modules enabled) -->

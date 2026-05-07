@@ -37,6 +37,7 @@ import * as sidebarTodos from './modules/sidebarTodos.js';
 import * as sidebarReminders from './modules/sidebarReminders.js';
 import * as terminal from './modules/terminal.js';
 import { openDragTrayForActivePanel } from './modules/dragdrop.js';
+import * as clipboard from './modules/clipboard.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, attachFvWidgetHeaderListeners, openNotesViewerForPath, cancelFileViewerEdit, getFileViewerHost } from './modules/notes.js';
@@ -356,8 +357,16 @@ async function initialize() {
 
     const startupOverlay = document.getElementById('startup-overlay');
     if (startupOverlay) {
-      startupOverlay.style.opacity = '0';
-      startupOverlay.addEventListener('transitionend', () => startupOverlay.remove(), { once: true });
+      // Keep the skeleton visible for at least n ms so the shimmer is
+      // perceptible even on fast machines. Adjust or remove as desired.
+      // note: added for testing
+      const MIN_OVERLAY_MS = 0;
+      const elapsed = performance.now();
+      const remaining = Math.max(0, MIN_OVERLAY_MS - elapsed);
+      setTimeout(() => {
+        startupOverlay.style.opacity = '0';
+        startupOverlay.addEventListener('transitionend', () => startupOverlay.remove(), { once: true });
+      }, remaining);
     }
 
     panels.setActivePanelId(1);
@@ -424,7 +433,10 @@ export async function loadHotkeysFromStorage() {
       enter_path: normalizeHotkeyCombo('Enter'),
       cancel_path: normalizeHotkeyCombo('Escape'),
       edit_file: normalizeHotkeyCombo('F2'),
-      save_file: normalizeHotkeyCombo('Ctrl+S')
+      save_file: normalizeHotkeyCombo('Ctrl+S'),
+      copy_items: normalizeHotkeyCombo('Ctrl+c'),
+      cut_items: normalizeHotkeyCombo('Ctrl+x'),
+      paste_items: normalizeHotkeyCombo('Ctrl+v'),
     };
   }
 }
@@ -813,6 +825,7 @@ function attachEventListeners() {
           panels.setActivePanelId(next);
           // Auto-focus the grid so arrow keys work immediately
           panels.setGridFocusedPanelId(next);
+          clipboard.updateClipboardFooter(next);
         }
         return;
       }
@@ -957,6 +970,56 @@ function attachEventListeners() {
     event.stopPropagation();
     openDragTrayForActivePanel({ panelState, activePanelId });
   }, true);
+
+  // Capture-phase handler for Ctrl+C / Ctrl+X / Ctrl+V (clipboard operations).
+  // Must run in capture phase so it fires before w2ui / browser defaults.
+  document.addEventListener('keydown', function (event) {
+    if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+    const key = event.key.toLowerCase();
+    if (key !== 'c' && key !== 'x' && key !== 'v') return;
+
+    // Don't intercept when a real text input has focus.
+    const tgt = event.target;
+    const isRealInput = tgt && (
+      tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+      tgt.contentEditable === 'true' ||
+      (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0)
+    );
+    if (isRealInput) return;
+
+    const viewType = panels.getPanelViewType(activePanelId);
+    if (viewType !== 'grid' && viewType !== 'gallery') return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (key === 'c' || key === 'x') {
+      const type = key === 'c' ? 'copy' : 'cut';
+      // Gather selected records from grid or gallery.
+      let selectedRecords = [];
+      if (viewType === 'grid') {
+        const grid = panelState[activePanelId]?.w2uiGrid;
+        if (grid) {
+          const selectedIds = grid.getSelection();
+          selectedRecords = selectedIds.map(id => grid.get(id)).filter(Boolean);
+        }
+      } else {
+        const state = panelState[activePanelId];
+        if (state && state.galleryRecords && state.gallerySelectedRecids) {
+          selectedRecords = state.galleryRecords.filter(r => state.gallerySelectedRecids.has(r.recid));
+        }
+      }
+      const clippable = selectedRecords.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..');
+      if (clippable.length > 0) {
+        clipboard.setClipboard(type, clippable, activePanelId, panelState);
+      }
+    } else if (key === 'v') {
+      const targetDir = panelState[activePanelId]?.currentPath;
+      if (!targetDir) return;
+      clipboard.pasteFromAnywhere(targetDir, activePanelId, panelState, panels.navigateToDirectory);
+    }
+  }, true);
+
   $(document).keydown(async function (event) {
     if (event.key === 'Escape' && panels.handleTransientEscape()) {
       return;
@@ -1014,6 +1077,35 @@ function attachEventListeners() {
     if (event.key === 'Escape' && $('#new-folder-modal').is(':visible')) {
       closeNewFolderModal();
       return;
+    }
+
+    // Escape key: close paste text modal if open
+    if (event.key === 'Escape' && $('#paste-text-modal').is(':visible')) {
+      clipboard.closePasteTextModal();
+      return;
+    }
+
+    // Escape key: close paste image modal if open
+    if (event.key === 'Escape' && $('#paste-image-modal').is(':visible')) {
+      clipboard.closePasteImageModal();
+      return;
+    }
+
+    // Escape key: clear clipboard state (when grid or gallery is focused)
+    if (event.key === 'Escape' && clipboard.clipboardState.items.length > 0) {
+      const tgt = event.target;
+      const inInput = tgt && (
+        tgt.tagName === 'INPUT' || tgt.tagName === 'SELECT' ||
+        tgt.contentEditable === 'true' ||
+        (tgt.tagName === 'TEXTAREA' && $(tgt).closest('.panel-grid').length === 0)
+      );
+      if (!inInput) {
+        const vt = panels.getPanelViewType(activePanelId);
+        if (vt === 'grid' || vt === 'gallery') {
+          clipboard.clearClipboard(panelState);
+          return;
+        }
+      }
     }
 
     const hotkeyCombo = getHotKeyCombo(event);
@@ -1323,6 +1415,10 @@ function attachEventListeners() {
   $('#btn-settings-close').click(function () {
     settings.hideSettingsModal();
   });
+
+  // Clipboard paste modals (text + image)
+  clipboard.initPasteModals();
+  clipboard.initClipboardFocusSync(panelState);
 
   // Sidebar toolbar: Settings
   $('#btn-sidebar-settings-toolbar').click(function () {

@@ -131,6 +131,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyItems: (items, targetDirPath, onCollision) => ipcRenderer.invoke('copy-items', { items, targetDirPath, onCollision }),
   checkCollisions: (items, targetDirPath) => ipcRenderer.invoke('check-collisions', { items, targetDirPath }),
 
+  // Clipboard (external OS clipboard read/write, image save)
+  readSystemClipboard: () => ipcRenderer.invoke('read-system-clipboard'),
+  setFileClipboard: (paths) => ipcRenderer.invoke('set-file-clipboard', { paths }),
+  saveImageToDir: ({ dir, filename, base64 }) => ipcRenderer.invoke('save-image-to-dir', { dir, filename, base64 }),
+
   /**
    * Cross-app drag IN: turn a renderer-side `File` object (from
    * `event.dataTransfer.files`) into the absolute filesystem path. Newer

@@ -115,5 +115,22 @@
       "default": "ArrowDown",
       "locked": true
     }
+  },
+  "Clipboard": {
+    "copy_items": {
+      "label": "Copy",
+      "key": "Ctrl+c",
+      "default": "Ctrl+c"
+    },
+    "cut_items": {
+      "label": "Cut",
+      "key": "Ctrl+x",
+      "default": "Ctrl+x"
+    },
+    "paste_items": {
+      "label": "Paste",
+      "key": "Ctrl+v",
+      "default": "Ctrl+v"
+    }
   }
 }

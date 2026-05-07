@@ -65,6 +65,15 @@ Standard Electron split:
 
 Aggregation (TODOs, REMINDERs from notes files) *must* live on the backend (`src/`) because it has to read filesystem files and report a single dataset.
 
+### `fs` vs `fsSync` in `main/main.js`
+
+`main/main.js` imports two distinct file-system modules — **do not confuse them**:
+
+- `const fsSync = require('fs')` — the standard Node.js `fs` module. Use `fsSync.promises.*` for async file I/O in IPC handlers (`fsSync.promises.writeFile`, `fsSync.promises.mkdir`, etc.).
+- `const fs = require('../src/filesystem')` — the app's bespoke **`FilesystemService`** class (`src/filesystem.js`). This is **not `fs-extra`** and does **not** have `outputFile`, `ensureDir`, or any `fs-extra` methods. It provides Atlas-specific operations (scanning, moving, copying, etc.).
+
+**When writing files in IPC handlers, always use `fsSync.promises.writeFile` + `fsSync.promises.mkdir({ recursive: true })`. Never call `fs.outputFile` or similar `fs-extra` methods on the `fs` object.**
+
 See the [Module Map](modules.md) for what each file owns.
 
 ## Known issues (as of 2026-05)

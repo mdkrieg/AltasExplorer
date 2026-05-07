@@ -22,6 +22,7 @@ import * as sidebar from './sidebar.js';
 import * as utils from './utils.js';
 import * as terminal from './terminal.js';
 import { attachDragDropForPanel, attachDragDropForGallery } from './dragdrop.js';
+import * as clipboard from './clipboard.js';
 import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip, w2popup } from './vendor/w2ui.es6.min.js';
 import * as autoLabels from './auto-labels.js';
 import { getPathSuggestions } from './path-autocomplete.js';
@@ -3465,6 +3466,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			renderPanelToolbar(panelId, 'detail');
 
 			await populateFileGrid(entries, category, panelId);
+			setTimeout(() => { clipboard.updateClipboardFooter(panelId); clipboard.reapplyClipboardClasses(panelId, panelState); }, 0);
 			updatePanelHeader(panelId, normalizedPath);
 
 			const gridToResize = panelState[panelId].w2uiGrid;
@@ -3618,6 +3620,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			await scanDirectoryTreeStreaming(normalizedPath, depth, panelId);
 		} else {
 			await populateFileGrid(entries, category, panelId);
+			setTimeout(() => { clipboard.updateClipboardFooter(panelId); clipboard.reapplyClipboardClasses(panelId, panelState); }, 0);
 		}
 
 		// Apply per-directory saved grid layout (columns, sort) for grid views.
@@ -3750,6 +3753,7 @@ function showPanelLoading(panelId, dirPath) {
 	$panel.find('.panel-grid').hide();
 	$panel.find('.panel-gallery').removeClass('active');
 	$panel.find('.panel-landing-page').hide();
+	$panel.find('.panel-welcome-view').hide();
 	$panel.find('.panel-file-view').hide();
 	$panel.find('.panel-history-view').hide();
 	hideHistoryView(panelId);
@@ -4230,6 +4234,16 @@ export async function initializeGridForPanel(panelId) {
 		}
 	});
 	panelState[panelId].w2uiGrid = w2ui[gridName];
+
+	// Override getFooterHTML so the clipboard text is baked into every w2ui
+	// footer re-render (sort, select, scroll, etc.) rather than being wiped.
+	w2ui[gridName].getFooterHTML = function () {
+		const text = clipboard.getClipboardFooterText(panelId);
+		const safe = text ? text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
+		return `<div><div class="w2ui-footer-left">${safe}</div><div class="w2ui-footer-right"></div><div class="w2ui-footer-center"></div></div>`;
+	};
+	// Suppress w2ui's "Record ID: X" / "N selected" writes to footer-left.
+	w2ui[gridName].status = function () {};
 
 	const $gridContainer = $(`#panel-${panelId} .panel-grid`);
 	w2ui[gridName].render($gridContainer[0]);
@@ -4882,6 +4896,7 @@ async function populateGalleryView(entries, currentDirCategory, panelId = active
 	} catch (err) {
 		console.warn('attachDragDropForGallery failed for panel', panelId, err);
 	}
+	setTimeout(() => { clipboard.updateClipboardFooter(panelId); clipboard.reapplyClipboardClasses(panelId, panelState); }, 0);
 }
 
 function renderGallery(panelId, tagDefs) {
@@ -5529,6 +5544,7 @@ export function matchFileType(filename) {
 
 export function setActivePanelId(panelId) {
 	if (panelId >= 1 && panelId <= 4) {
+		const previous = activePanelId;
 		activePanelId = panelId;
 		syncRendererActivePanelId(panelId);
 		setSidebarFocus(false);
@@ -5538,6 +5554,11 @@ export function setActivePanelId(panelId) {
 		}
 		$(`#panel-${panelId} .panel-number`).addClass('panel-number-selected');
 		$(`#panel-${panelId}`).addClass('panel-active');
+		// Move clipboard footer text to the newly focused panel.
+		if (previous !== panelId) {
+			clipboard.updateClipboardFooter(previous);
+			clipboard.updateClipboardFooter(panelId);
+		}
 	}
 }
 

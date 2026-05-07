@@ -17,6 +17,7 @@
 import * as panels from './panels.js';
 import * as sidebar from './sidebar.js';
 import * as terminal from './terminal.js';
+import * as clipboard from './clipboard.js';
 import { w2utils } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
@@ -381,6 +382,27 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		addSeparator(contextMenu);
 		const copyPathLabel = isMultiSelect ? `Copy ${selectedRecords.length} Paths` : 'Copy as Path';
 		contextMenu.push({ id: 'copy-as-path', text: copyPathLabel, icon: 'fa fa-copy' });
+	}
+
+	// Clipboard — Copy / Cut / Paste
+	{
+		const clippableRecords = selectedRecords.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..');
+		if (clippableRecords.length > 0) {
+			addSeparator(contextMenu);
+			const copyLabel = clippableRecords.length > 1 ? `Copy (${clippableRecords.length} items)` : 'Copy';
+			const cutLabel  = clippableRecords.length > 1 ? `Cut (${clippableRecords.length} items)` : 'Cut';
+			contextMenu.push({ id: 'clipboard-copy', text: copyLabel, icon: 'fa fa-files-o' });
+			contextMenu.push({ id: 'clipboard-cut',  text: cutLabel,  icon: 'fa fa-scissors' });
+		}
+		{
+			const hasClipboard = clipboard.clipboardState.items.length > 0;
+			contextMenu.push({
+				id: 'clipboard-paste',
+				text: 'Paste',
+				icon: 'fa fa-clipboard',
+				disabled: !hasClipboard,
+			});
+		}
 	}
 
 	// Delete
@@ -751,6 +773,21 @@ async function handleContextMenuClick(event, panelId) {
 		} catch (err) {
 			console.error('Failed to copy path to clipboard:', err);
 			w2utils.notify('Failed to copy path to clipboard', { error: true, timeout: 2500 });
+		}
+	}
+
+	if (menuItemId === 'clipboard-copy' || menuItemId === 'clipboard-cut') {
+		const type = menuItemId === 'clipboard-copy' ? 'copy' : 'cut';
+		const clippable = selectedRecords.filter(r => r.filenameRaw !== '.' && r.filenameRaw !== '..');
+		if (clippable.length > 0) {
+			clipboard.setClipboard(type, clippable, panelId, panelState);
+		}
+	}
+
+	if (menuItemId === 'clipboard-paste') {
+		const targetDir = panelState[panelId]?.currentPath;
+		if (targetDir) {
+			await clipboard.pasteFromAnywhere(targetDir, panelId, panelState, panels.navigateToDirectory);
 		}
 	}
 
