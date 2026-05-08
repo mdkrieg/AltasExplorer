@@ -38,6 +38,12 @@ console.error = (...args) => {
   });
 };
 
+// Per-panel IPC listener wrappers for deep-search push events.
+// Keyed by panelId so stale listeners can be replaced without leaking.
+// Must live outside the exposeInMainWorld object because contextBridge
+// cannot return functions from preload to renderer.
+const deepSearchListeners = new Map();
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // File system operations
   readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
@@ -339,5 +345,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateError: (callback) => ipcRenderer.on('update-error', (_, msg) => callback(msg)),
 
   // Video thumbnail extraction
-  getVideoThumbnail: (filePath) => ipcRenderer.invoke('get-video-thumbnail', filePath)
+  getVideoThumbnail: (filePath) => ipcRenderer.invoke('get-video-thumbnail', filePath),
+
+  // Deep Search — recursive filesystem search with fuzzy scoring.
+  // Results stream back via 'deep-search-batch' push events.
+  startDeepSearch: (panelId, rootPath, query) =>
+    ipcRenderer.invoke('start-deep-search', panelId, rootPath, query),
+  cancelDeepSearch: (panelId) =>
+    ipcRenderer.invoke('cancel-deep-search', panelId),
+  /**
+   * Register a per-panel callback for 'deep-search-batch' push events.
+   * Automatically replaces any previously registered listener for the same
+   * panelId so stale handlers can never accumulate.
+   * NOTE: contextBridge cannot return functions to the renderer, so we keep
+   * the wrapper map inside the preload and key it by panelId.
+   */
+  onDeepSearchBatch: (panelId, callback) => {
+    // Remove any existing listener for this panel first.
+    const existing = deepSearchListeners.get(panelId);
+    if (existing) ipcRenderer.removeListener('deep-search-batch', existing);
+    const wrapper = (_event, data) => callback(data);
+    deepSearchListeners.set(panelId, wrapper);
+    ipcRenderer.on('deep-search-batch', wrapper);
+  },
+  offDeepSearchBatch: (panelId) => {
+    const wrapper = deepSearchListeners.get(panelId);
+    if (wrapper) {
+      ipcRenderer.removeListener('deep-search-batch', wrapper);
+      deepSearchListeners.delete(panelId);
+    }
+  }
 });

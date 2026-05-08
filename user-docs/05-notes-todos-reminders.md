@@ -16,6 +16,12 @@ Every directory can have a `notes.txt` file containing free-form Markdown. Atlas
 
 Because it's a plain text file, you can also read and edit it in any text editor, on another machine, or on a phone. Atlas picks up the changes the next time you browse that directory.
 
+### Pasting Screenshots into Notes
+
+When the notes editor is focused, you can **paste an image** (e.g. a screenshot from the clipboard) directly into the editor. Atlas automatically saves the image as a file inside a `notes_files/` subfolder of the current directory and inserts a Markdown image link at the cursor position. The image is rendered inline in the notes preview.
+
+When a pasted image appears inside a **TODO item**, it is displayed as a thumbnail link rather than an inline image to keep the TODO list compact. Hovering the link shows a tooltip preview of the image.
+
 ### Markdown rendering notes
 
 - A **single line break** in `notes.txt` is rendered as a line break (not collapsed into a paragraph)

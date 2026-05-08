@@ -27,10 +27,8 @@ Philosophy:
 * Customizable context menu actions for launching scripts
 
 ### BUGS:
-[x] If I set an alert to ANY/ANY - File Added. I get alerts when I first browse a folder. INITIAL events should always be considered a separate thing
-[x] Galery View
-  [x] the parent (..) folder shows the incorrect styling, seeing current folder style instead of parent style
-  [x] Not seeing the toolbar (no search or refresh) on the gallery view (should gallery view have a depth feature?)
+[ ] Adding a favorite by right click causes LOCAL FAVORITES to expand if it is open
+[ ] Navigating to a favorite (possibly any dir) should clear the search bar, currently the view gets insta-filtered
 [ ] Still getting erroneous title bar when opening a new panel with Ctrl+T
 [ ] selectable list attrs need a clear option
 [ ] drag-out of app not working (need to hold Alt but still does nothing)
@@ -42,6 +40,14 @@ Philosophy:
 ### ROADMAP:
 [ ] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
 [ ] Search bar should eagerly search the visible fields when changed - submitting the search bar will eventually become a deeper search including invisible columns and contents of text files (contents' names of zip files too?)
+[ ] OneDrive states - on PC in cloud - syncing - whatever we can get
+[ ] Renameable favorites
+[ ] Ctrl+Enter should save in any active editor (notes, others)
+[ ] double click on notes.txt should open in the internal editor
+[ ] make cache-first an option for categories - where loading the directory pulls from the DB for extra speed but highlights the refresh button to signal that the display is from cache. Clicking on the refresh button scans the dir fully and removes the highlighting
+[ ] Favorites - tooltip shows name, make it show the category for dirs followed by the full path
+[ ] TODO aggregator, have some kind of button to show crossed off items, for clarity but also so that they can be unchecked easily
+[ ] LOCAL FAVORITES - is it reorderable? as in can I make the group appear higher or lower in the list? it would make sense for me to be able
 [ ] Any way to show metric of path's latency / bandwidth? For a heads up that we are browsing a slow source filesystem
 [ ] Browsing zip files - do we want guard against slow locations?
 [ ] I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
@@ -51,6 +57,12 @@ Philosophy:
 [ ] Diffing between files
 [ ] Icons for context menu (Do I really want icons on every menu item? seems too cluttered)
 [ ] exif GPS data aggregated to map (need to get some photos with GPS data to test)
+[ ] Show sample icon when creating a category or tag
+[ ] When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
+[ ] TODO modal, refine how CTRL+Enter works (currently seems to cancel edits?)
+[ ] Make a setting on Categories for LOCAL FAVORITES to inherit down to subdirs
+[ ] The auto update feature refers to closing the application as "Restart" - I think this could easily be confused with restarting your PC - instead refer to it as "Close"
+[ ] SIDEBAR - Change the icon for the local links (shortcuts) to a chain link icon. If the existing icon is for anything it should be to represent items that will open in a modal.
 
 Gallery View:
 [ ] Support coordinate organizing, like the old windows desktops
@@ -71,20 +83,6 @@ Possible other tab (Tag Summary?), to consider...
 
 TODO Feature:
 * Would be nice to have a timestamp on all todos and all comments but there is no good way to maintain continuity if the user edits them in the notes.txt file directly. Perhaps we add some uuid to the file on save but I'm not sure how I feel about this. I Think the least intrusive way would be to have a line with just {uuid} that obeys indenting rules appended after the todo/reminder/item/comment/reply and this would link to timestamp + metadata in the db.
-
-Saved Layouts:
-* nothing new
-
-General:
-[ ] Show sample icon when creating a category or tag
-[ ] When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
-[ ] CHECK IF THIS IS IN THE DOCS! - Make Notes and TODOs support screenshots, uploading automatically to notes_files when pasted in (like github) - then if they are in a TODO, to save space just have a link that opens the photo, and a tooltip like this one (https://w2ui.com/web/demos/#/tooltip/8)
-[ ] TODO modal, refine how CTRL+Enter works (currently seems to cancel edits?)
-[ ] Make a setting on Categories for LOCAL FAVORITES to inherit down to subdirs
-[ ] The auto update feature refers to closing the application as "Restart" - I think this could easily be confused with restarting your PC - instead refer to it as "Close"
-
-Sidebar:
-[ ] Change the icon for the local links (shortcuts) to a chain link icon. If the existing icon is for anything it should be to represent items that will open in a modal.
   
 Server Version:
 * Circle back and check parity later

@@ -23,9 +23,9 @@ import * as utils from './utils.js';
 import * as terminal from './terminal.js';
 import { attachDragDropForPanel, attachDragDropForGallery } from './dragdrop.js';
 import * as clipboard from './clipboard.js';
-import { w2grid, w2ui, w2confirm, w2alert, w2field, w2tooltip, w2popup } from './vendor/w2ui.es6.min.js';
+import { w2grid, w2ui, w2utils, w2confirm, w2alert, w2field, w2tooltip, w2popup } from './vendor/w2ui.es6.min.js';
 import * as autoLabels from './auto-labels.js';
-import { getPathSuggestions } from './path-autocomplete.js';
+import { getPathSuggestions, scoreCandidate } from './path-autocomplete.js';
 import {
 	panelState,
 	selectedItemState,
@@ -1396,19 +1396,44 @@ function attachPanelToolbarEventListeners(panelId) {
 		navigateToDirectory(buildNavUri(state.currentBasePath, newParams), panelId);
 	});
 
-	$tb.find('.panel-tb-search').off('keydown blur').on('keydown', function (e) {
+	let liveFilterTimer = null;
+	$tb.find('.panel-tb-search').off('keydown blur input').on('keydown', function (e) {
 		if (e.key === 'Enter') {
 			e.preventDefault();
-			applyPanelToolbarSearch(panelId, this.value);
+			clearTimeout(liveFilterTimer);
+			const val = this.value.trim();
+			const state = panelState[panelId];
+			if (val && state && state.currentPath) {
+				// Start a deep search. Spaces are passed raw in Electron IPC (safe);
+				// see the TODO(serveable) comment in navigateToDirectory for HTTP notes.
+				state.toolbarSearch = val;
+				navigateToDirectory(`${state.currentPath}?search=${val}`, panelId, false);
+			} else if (!val && state && state.deepSearchQuery) {
+				// Empty Enter while in deep search — exit back to plain directory.
+				state.toolbarSearch = '';
+				navigateToDirectory(state.currentPath, panelId, false);
+			} else {
+				applyPanelToolbarSearch(panelId, val);
+			}
 			this.blur();
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
 			e.stopPropagation();
+			clearTimeout(liveFilterTimer);
 			this.value = panelState[panelId].toolbarSearch || '';
 			this.blur();
 		}
 	}).on('blur', function () {
-		this.value = panelState[panelId].toolbarSearch || '';
+		clearTimeout(liveFilterTimer);
+		const committed = panelState[panelId].toolbarSearch || '';
+		this.value = committed;
+		applyLivePanelFilter(panelId, committed);
+	}).on('input', function () {
+		clearTimeout(liveFilterTimer);
+		const val = this.value;
+		liveFilterTimer = setTimeout(() => {
+			applyLivePanelFilter(panelId, val);
+		}, 120);
 	});
 
 	$(`#btn-toolbar-save-${panelId}`).off('click').on('click', function (e) {
@@ -1426,25 +1451,657 @@ export function applyPanelToolbarSearch(panelId, value) {
 	if (!state) return;
 	const query = String(value || '').trim();
 	state.toolbarSearch = query;
-	const grid = state.w2uiGrid;
-	if (grid) {
-		if (query) {
-			grid.search('filename', query);
-		} else {
-			grid.searchReset();
-		}
-	}
-	filterGalleryByName(panelId, query);
+	applyLivePanelFilter(panelId, query);
 }
 
-function filterGalleryByName(panelId, value) {
+// Per-panel timer for deferred fuzzy marker application after grid.refresh().
+const _liveSearchMarkerTimers = {};
+
+/**
+ * Apply a live (eager) filter to the panel grid and gallery using a
+ * forgiving match: exact/contains matches are shown and highlighted with
+ * w2ui's standard marker; fuzzy (DL-distance ≤ 1) matches are shown and
+ * highlighted with a distinct 'w2ui-marker-fuzzy' class. Tag names are
+ * also considered when no filename match is found.
+ *
+ * @param {number} panelId
+ * @param {string} query  — the raw (un-trimmed) search value
+ */
+export function applyLivePanelFilter(panelId, query) {
+	const state = panelState[panelId];
+	if (!state) return;
+	// During a deep search the grid contents are managed by the deep-search
+	// pipeline; live filtering would discard search results.
+	if (state.deepSearchQuery) return;
+	const q = String(query || '').trim();
+	const grid = state.w2uiGrid;
+
+	clearTimeout(_liveSearchMarkerTimers[panelId]);
+
+	if (grid) {
+		if (!q) {
+			grid.searchData = [];
+			grid.last.searchIds = [];
+			grid.total = grid.records.length;
+			grid.refresh();
+		} else {
+			const words = q.split(/\s+/).filter(Boolean);
+			const isMultiWord = words.length > 1;
+
+			const exactFileIndices    = [];
+			const exactTagIndices     = [];
+			const fuzzyFileIndices    = [];
+			const fuzzyTagIndices     = [];
+			const wbFuzzyFileIdxs     = []; // [{idx, matchedWord}] — word-break fuzzy filename
+			const partialWordFileIdxs = []; // [{idx, matchedWords}]
+			const partialWordTagIdxs  = []; // [{idx, tagWordMatches: [{tag, words}]}]
+
+			for (let i = 0; i < grid.records.length; i++) {
+				const rec = grid.records[i];
+				const { score: fnScore, matchedWord: fnWord } = _scoreFilenameWordBreak(q, rec.filename || '');
+
+				if (fnScore === 0 || fnScore === 2) {
+					// q is literally a substring of the filename — w2ui markSearch handles highlight.
+					exactFileIndices.push(i);
+					continue;
+				}
+
+				const tagNames = parseTagNames(rec.tagsRaw);
+				let tagExactMatch = false;
+				let tagFuzzyMatch = false;
+				for (const tn of tagNames) {
+					const ts = scoreCandidate(q, tn);
+					if (ts === 0 || ts === 2) { tagExactMatch = true; break; }
+					if (ts === 1) tagFuzzyMatch = true;
+				}
+
+				if (tagExactMatch) {
+					exactTagIndices.push(i);
+					continue;
+				}
+
+				if (fnScore === 1 && fnWord === null) {
+					// Full-name prefix fuzzy match.
+					fuzzyFileIndices.push(i);
+					continue;
+				}
+
+				if (tagFuzzyMatch) {
+					fuzzyTagIndices.push(i);
+					continue;
+				}
+
+				if (fnScore === 1 && fnWord !== null) {
+					// Fuzzy match on a word inside the filename (not the prefix of the full name).
+					wbFuzzyFileIdxs.push({ idx: i, matchedWord: fnWord });
+					continue;
+				}
+
+				// Partial word matching — only meaningful for multi-word queries.
+				if (isMultiWord) {
+					const matchedFileWords = words.filter(w => {
+						const s = scoreCandidate(w, rec.filename || '');
+						return s === 0 || s === 2;
+					});
+					if (matchedFileWords.length > 0) {
+						partialWordFileIdxs.push({ idx: i, matchedWords: matchedFileWords });
+						continue;
+					}
+
+					const tagWordMatches = [];
+					for (const tn of tagNames) {
+						const mw = words.filter(w => {
+							const s = scoreCandidate(w, tn);
+							return s === 0 || s === 2;
+						});
+						if (mw.length > 0) tagWordMatches.push({ tag: tn, words: mw });
+					}
+					if (tagWordMatches.length > 0) {
+						partialWordTagIdxs.push({ idx: i, tagWordMatches });
+					}
+				}
+			}
+
+			// Sort order:
+			//   1. exact/contains filename    2. exact/contains tag
+			//   3. fuzzy filename (prefix)    4. fuzzy tag
+			//   5. fuzzy filename (word-break) 6. partial-word filename  7. partial-word tag
+			const allIds = [
+				...exactFileIndices,
+				...exactTagIndices,
+				...fuzzyFileIndices,
+				...fuzzyTagIndices,
+				...wbFuzzyFileIdxs.map(x => x.idx),
+				...partialWordFileIdxs.map(x => x.idx),
+				...partialWordTagIdxs.map(x => x.idx),
+			];
+
+			// searchData drives w2ui's built-in markSearch() for exact filename matches.
+			grid.searchData = [{ field: 'filename', operator: 'contains', value: q }];
+			grid.last.searchIds = allIds;
+			grid.total = allIds.length;
+			grid.refresh();
+
+			// markSearch fires at 50 ms inside w2ui; our custom pass runs at 100 ms.
+			_liveSearchMarkerTimers[panelId] = setTimeout(() => {
+				_applyLiveSearchMarkers(
+					grid,
+					exactTagIndices,
+					fuzzyFileIndices,
+					fuzzyTagIndices,
+					wbFuzzyFileIdxs,
+					partialWordFileIdxs,
+					partialWordTagIdxs,
+					q,
+				);
+			}, 100);
+		}
+	}
+
+	filterGalleryByNameFuzzy(panelId, q);
+}
+
+/**
+ * Score `q` against the full filename first; if that returns null, try each
+ * word in the filename (split on spaces, hyphens, underscores, dots).
+ * Returns { score, matchedWord } where matchedWord is null for full-name
+ * matches and the specific word string for word-break matches.
+ * When the word-break score is 0 or 2, q IS a literal substring of the name,
+ * so w2ui's markSearch will highlight it automatically.
+ */
+function _scoreFilenameWordBreak(q, filename) {
+	const full = scoreCandidate(q, filename);
+	if (full !== null) return { score: full, matchedWord: null };
+	const parts = filename.split(/[\s\-_.]+/).filter(w => w.length > 0);
+	let bestScore = null;
+	let bestWord  = null;
+	for (const word of parts) {
+		const s = scoreCandidate(q, word);
+		if (s !== null && (bestScore === null || s < bestScore)) {
+			bestScore = s;
+			bestWord  = word;
+		}
+	}
+	return { score: bestScore, matchedWord: bestWord };
+}
+
+/**
+ * Post-render pass that handles all highlighting that w2ui's built-in
+ * markSearch can't cover:
+ *   - exact tag matches: mark the query in matching tag badges
+ *   - fuzzy filename matches: fuzzy-orange prefix marker on cell
+ *   - fuzzy tag matches: fuzzy-orange prefix marker on tag badges
+ *   - word-break fuzzy filename: fuzzy-orange prefix marker on the matched word
+ *   - partial word file/tag matches: direct marker for each matched word
+ */
+function _applyLiveSearchMarkers(
+	grid,
+	exactTagIndices,
+	fuzzyFileIndices,
+	fuzzyTagIndices,
+	wbFuzzyFileIdxs,
+	partialWordFileIdxs,
+	partialWordTagIdxs,
+	q,
+) {
+	const filenameColIndex = grid.getColumn('filename', true);
+	const tagsColIndex     = grid.getColumn('tags', true);
+
+	// Exact tag matches: mark the query string in matching tag badges.
+	if (tagsColIndex >= 0) {
+		for (const idx of exactTagIndices) {
+			const rec = grid.records[idx];
+			if (!rec) continue;
+			const tagsTd = document.querySelector(
+				`#grid_${grid.name}_rec_${w2utils.escapeId(rec.recid)} td[col="${tagsColIndex}"]`
+			);
+			if (!tagsTd) continue;
+			for (const span of tagsTd.querySelectorAll('.tag-badge')) {
+				const score = scoreCandidate(q, span.textContent || '');
+				if (score === 0 || score === 2) w2utils.marker(span, q);
+			}
+		}
+	}
+
+	// Fuzzy filename matches (full-name prefix): orange marker on first N chars.
+	for (const idx of fuzzyFileIndices) {
+		const rec = grid.records[idx];
+		if (!rec) continue;
+		const tdEl = document.querySelector(
+			`#grid_${grid.name}_rec_${w2utils.escapeId(rec.recid)} td[col="${filenameColIndex}"]`
+		);
+		if (tdEl && !tdEl.querySelector('.w2ui-marker')) {
+			_applyFuzzyMarkerToCell(tdEl, q.length, 'w2ui-marker-fuzzy');
+		}
+	}
+
+	// Fuzzy tag matches: orange prefix marker on the matching badge.
+	if (tagsColIndex >= 0) {
+		for (const idx of fuzzyTagIndices) {
+			const rec = grid.records[idx];
+			if (!rec) continue;
+			const tagsTd = document.querySelector(
+				`#grid_${grid.name}_rec_${w2utils.escapeId(rec.recid)} td[col="${tagsColIndex}"]`
+			);
+			if (!tagsTd) continue;
+			for (const span of tagsTd.querySelectorAll('.tag-badge')) {
+				const score = scoreCandidate(q, span.textContent || '');
+				if (score === null) continue;
+				if (score === 1) {
+					_applyFuzzyMarkerToCell(span, q.length, 'w2ui-marker-fuzzy');
+				} else {
+					w2utils.marker(span, q);
+				}
+			}
+		}
+	}
+
+	// Word-break fuzzy filename matches: orange prefix marker on the matched word.
+	for (const { idx, matchedWord } of wbFuzzyFileIdxs) {
+		const rec = grid.records[idx];
+		if (!rec) continue;
+		const tdEl = document.querySelector(
+			`#grid_${grid.name}_rec_${w2utils.escapeId(rec.recid)} td[col="${filenameColIndex}"]`
+		);
+		if (tdEl && !tdEl.querySelector('.w2ui-marker, .w2ui-marker-fuzzy')) {
+			_applyFuzzyMarkerToWord(tdEl, matchedWord, q.length);
+		}
+	}
+
+	// Partial word filename matches: mark each matched word with direct style.
+	for (const { idx, matchedWords } of partialWordFileIdxs) {
+		const rec = grid.records[idx];
+		if (!rec) continue;
+		const tdEl = document.querySelector(
+			`#grid_${grid.name}_rec_${w2utils.escapeId(rec.recid)} td[col="${filenameColIndex}"]`
+		);
+		if (tdEl && !tdEl.querySelector('.w2ui-marker')) {
+			w2utils.marker(tdEl, matchedWords);
+		}
+	}
+
+	// Partial word tag matches: mark matched words on the relevant badges.
+	if (tagsColIndex >= 0) {
+		for (const { idx, tagWordMatches } of partialWordTagIdxs) {
+			const rec = grid.records[idx];
+			if (!rec) continue;
+			const tagsTd = document.querySelector(
+				`#grid_${grid.name}_rec_${w2utils.escapeId(rec.recid)} td[col="${tagsColIndex}"]`
+			);
+			if (!tagsTd) continue;
+			for (const { tag, words: matchedWords } of tagWordMatches) {
+				for (const span of tagsTd.querySelectorAll('.tag-badge')) {
+					if ((span.textContent || '').toLowerCase() === tag.toLowerCase()) {
+						w2utils.marker(span, matchedWords);
+					}
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Wrap the first `prefixLen` characters of the first text node found in
+ * `el` with a span bearing `markerClass`. Used for fuzzy-match highlighting.
+ */
+function _applyFuzzyMarkerToCell(el, prefixLen, markerClass) {
+	const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+	const textNode = walker.nextNode();
+	if (!textNode || !textNode.nodeValue) return;
+	const text = textNode.nodeValue;
+	const wrapLen = Math.min(prefixLen, text.length);
+	if (wrapLen < 1) return;
+	const span = document.createElement('span');
+	span.className = markerClass;
+	span.textContent = text.slice(0, wrapLen);
+	const rest = document.createTextNode(text.slice(wrapLen));
+	const parent = textNode.parentNode;
+	parent.insertBefore(span, textNode);
+	parent.insertBefore(rest, textNode);
+	parent.removeChild(textNode);
+}
+
+/**
+ * Find the first occurrence of `word` (case-insensitive) within the text
+ * nodes of `el`, then wrap its first `markerLen` characters with a fuzzy
+ * marker span. Used for word-break fuzzy highlighting.
+ */
+function _applyFuzzyMarkerToWord(el, word, markerLen) {
+	if (!word) return;
+	const wLower = word.toLowerCase();
+	const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+	let textNode;
+	while ((textNode = walker.nextNode())) {
+		const text = textNode.nodeValue || '';
+		const pos  = text.toLowerCase().indexOf(wLower);
+		if (pos < 0) continue;
+		const wrapLen = Math.min(markerLen, word.length);
+		if (wrapLen < 1) return;
+		const span = document.createElement('span');
+		span.className = 'w2ui-marker-fuzzy';
+		const before = document.createTextNode(text.slice(0, pos));
+		span.textContent = text.slice(pos, pos + wrapLen);
+		const after = document.createTextNode(text.slice(pos + wrapLen));
+		const parent = textNode.parentNode;
+		parent.insertBefore(before, textNode);
+		parent.insertBefore(span, textNode);
+		parent.insertBefore(after, textNode);
+		parent.removeChild(textNode);
+		return;
+	}
+}
+
+function filterGalleryByNameFuzzy(panelId, query) {
 	const $gallery = $(`#panel-${panelId} .panel-gallery`);
 	if ($gallery.length === 0) return;
-	const q = String(value || '').trim().toLowerCase();
+	const q = String(query || '').trim();
+	const words = q.split(/\s+/).filter(Boolean);
+	const isMultiWord = words.length > 1;
+
 	$gallery.find('.gallery-item').each(function () {
-		const name = ($(this).find('.gallery-item-name').text() || '').toLowerCase();
-		this.style.display = (!q || name.includes(q)) ? '' : 'none';
+		const nameEl = $(this).find('.gallery-item-name').get(0);
+		if (!nameEl) {
+			this.style.display = '';
+			return;
+		}
+		// Reset any previous markers so we work with clean text.
+		if (nameEl.querySelector('.w2ui-marker, .w2ui-marker-fuzzy')) {
+			nameEl.textContent = nameEl.textContent;
+		}
+		const name = nameEl.textContent || '';
+		if (!q) {
+			this.style.display = '';
+			return;
+		}
+		const { score, matchedWord } = _scoreFilenameWordBreak(q, name);
+		if (score !== null) {
+			this.style.display = '';
+			if (score === 0 || score === 2) {
+				w2utils.marker(nameEl, q);
+			} else if (matchedWord === null) {
+				// Full-name prefix fuzzy.
+				_applyFuzzyMarkerToCell(nameEl, q.length, 'w2ui-marker-fuzzy');
+			} else {
+				// Word-break fuzzy — mark the matched word's prefix.
+				_applyFuzzyMarkerToWord(nameEl, matchedWord, q.length);
+			}
+		} else if (isMultiWord) {
+			const matchedWords = words.filter(w => {
+				const s = scoreCandidate(w, name);
+				return s === 0 || s === 2;
+			});
+			if (matchedWords.length > 0) {
+				this.style.display = '';
+				w2utils.marker(nameEl, matchedWords);
+			} else {
+				this.style.display = 'none';
+			}
+		} else {
+			this.style.display = 'none';
+		}
 	});
+}
+
+// ─── Deep Search Pipeline ─────────────────────────────────────────────────────
+//
+// Deep search is triggered by navigating to "basePath?search=query".
+// The main process runs a BFS and pushes result batches every ~200ms via
+// the 'deep-search-batch' push IPC event. The renderer accumulates batches
+// and flushes them to the grid every 2 seconds:
+//
+//   • No active sort → new items append at the end in score-desc order
+//     (grid.add appends; no re-sort is applied).
+//   • Active sort → grid.add + grid.refresh sorts everything in place (the
+//     user opted-in by activating a sort column).
+//
+// Blue text ("new-search-result") is applied to incoming row DOM elements
+// and removed after 2 seconds to indicate freshly-arrived results.
+
+/**
+ * Start a deep search for `panelId`, cancelling any in-progress search first.
+ * Called by `navigateToDirectory` after detecting a `?search=` URI param.
+ */
+function startDeepSearchForPanel(panelId, rootPath, query) {
+	console.warn('[deepSearch] startDeepSearchForPanel', panelId, query);
+	const state = panelState[panelId];
+	if (!state) return;
+
+	// Cancel any prior search for this panel (both IPC and local timers).
+	stopDeepSearch(panelId);
+
+	const grid = state.w2uiGrid;
+	if (grid) {
+		grid.clear();
+		// Reset any live-filter search state left over from the user typing in
+		// the search box before pressing Enter. If searchData / last.searchIds
+		// are still populated from the live filter, w2ui will apply them to the
+		// new records and show nothing (the old IDs no longer exist).
+		grid.searchData = [];
+		if (grid.last) { grid.last.searchIds = []; }
+		try { grid.showColumn('score');   } catch (_) { /* col may not exist yet */ }
+		try { grid.showColumn('relPath'); } catch (_) {}
+	}
+	state.sourceRecords        = [];
+	state.recidCounter         = 1;   // reset so new records start from recid 1
+	state.deepSearchBuffer     = [];
+	state.deepSearchInProgress = true;
+	state.deepSearchStartTime  = Date.now();
+	state.deepSearchScoreSort  = 'nosort';
+
+	// Register the push-event listener BEFORE starting the IPC call so no
+	// batches are missed if the first batch arrives very quickly.
+	window.electronAPI.onDeepSearchBatch(panelId, data => {
+		handleDeepSearchBatch(data, panelId);
+	});
+
+	// Flush to grid every 2 seconds.
+	state.deepSearchFlushTimer = setInterval(() => {
+		flushDeepSearchBatch(panelId, false);
+	}, 2000);
+
+	// Fire the search.
+	window.electronAPI.startDeepSearch(panelId, rootPath, query).catch(err => {
+		console.error(`[deepSearch] IPC error for panelId=${panelId}:`, err);
+	});
+}
+
+/**
+ * Handle a 'deep-search-batch' push event for `panelId`.
+ * Accumulates entries in the buffer; triggers an immediate flush when the
+ * search completes in under 2 seconds (so the overlay hides promptly).
+ */
+function handleDeepSearchBatch(data, panelId) {
+	console.warn('[deepSearch] batch received', (data.batch||[]).length, 'done:', data.done);
+	const state = panelState[panelId];
+	if (!state) return;
+
+	if (data.batch && data.batch.length > 0) {
+		state.deepSearchBuffer.push(...data.batch);
+	}
+
+	if (data.done) {
+		state.deepSearchInProgress = false;
+		const elapsed = Date.now() - state.deepSearchStartTime;
+		if (elapsed < 2000) {
+			// Search finished quickly — flush and hide overlay immediately
+			// rather than waiting for the 2-second interval.
+			flushDeepSearchBatch(panelId, true);
+		}
+		// If elapsed >= 2000 the interval will flush and clean up on its next tick.
+	}
+}
+
+/**
+ * Flush the accumulated deep-search buffer to the grid.
+ * Builds lightweight grid records (no icon generation, no DB enrichment),
+ * appends them, applies blue "new-search-result" flash for 2 seconds.
+ *
+ * @param {number}  panelId
+ * @param {boolean} forceFinish  When true, also tears down the timer and IPC
+ *                               listener and hides the loading overlay.
+ */
+function flushDeepSearchBatch(panelId, forceFinish) {
+	const state = panelState[panelId];
+	if (!state) return;
+
+	const batch = state.deepSearchBuffer.splice(0);
+	console.warn('[deepSearch] flush', panelId, 'batchSize:', batch.length, 'forceFinish:', forceFinish, 'inProgress:', state.deepSearchInProgress);
+
+	// Determine whether the search is complete (so we can clean up after flush).
+	const isDone = forceFinish || !state.deepSearchInProgress;
+
+	if (batch.length > 0) {
+		// Pre-sort the incoming batch by score desc so that in "no sort" mode
+		// (append order) better matches appear first within this batch.
+		batch.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+		const grid = state.w2uiGrid;
+		const query = state.deepSearchQuery || '';
+		const tagDefs = getTagDefinitionMap();
+		const records = batch.map(entry => {
+			const recid = state.recidCounter++;
+			const iconSrc = entry.isDirectory
+				? 'assets/icons/folder.svg'
+				: 'assets/icons/user-file.png';
+			// tags array from deepSearch engine → populate tagsRaw for rendering
+			const entryTagsArr = Array.isArray(entry.tags) ? entry.tags : [];
+			const tagsRaw      = entryTagsArr.length > 0 ? JSON.stringify(entryTagsArr) : null;
+			return {
+				recid,
+				icon:          `<img src="${iconSrc}" style="width:20px;height:20px;object-fit:contain;">`,
+				filename:      entry.filename,
+				filenameRaw:   entry.filename,
+				filenameText:  entry.filename,
+				relPath:       entry.relPath || '',
+				score:         entry.score,
+				type:          '',
+				size:          entry.size != null ? entry.size : '-',
+				sizeBytes:     entry.size || null,
+				dateModified:  entry.dateModified ? new Date(entry.dateModified).toLocaleString() : '-',
+				modified:      entry.dateModified ? -entry.dateModified : null,
+				dateCreated:   '-',
+				perms:         '',
+				permsText:     '',
+				checksum:      '—',
+				checksumValue: null,
+				tags:          renderTagBadges(tagsRaw, tagDefs),
+				tagsRaw,
+				tagsText:      entryTagsArr.join(' '),
+				notes:         '',
+				hasNotes:      false,
+				todo:          null,
+				isFolder:      !!entry.isDirectory,
+				path:          entry.path,
+				changeState:   null,
+				inode:         null,
+				dir_id:        null,
+				orphan_id:     null,
+				orphan_type:   null,
+				new_dir_id:    null,
+			};
+		});
+
+		const newRecids = records.map(r => r.recid);
+
+		// appendPanelSourceRecords calls grid.add, which appends and re-renders.
+		appendPanelSourceRecords(panelId, records);
+
+		// After the next paint: apply row flash and highlight matching text.
+		if (grid) {
+			requestAnimationFrame(() => {
+				const filenameColIdx = grid.getColumn('filename', true);
+				const tagsColIdx     = grid.getColumn('tags', true);
+				for (const record of records) {
+					const recid = record.recid;
+					const rowEl = document.querySelector(
+						`#grid_${grid.name}_rec_${w2utils.escapeId(recid)}`
+					);
+					if (rowEl) {
+						rowEl.classList.add('new-search-result');
+						setTimeout(() => rowEl.classList.remove('new-search-result'), 2000);
+					}
+					if (!query) continue;
+					// --- filename highlighting ---
+					if (filenameColIdx >= 0) {
+						const td = document.querySelector(
+							`#grid_${grid.name}_rec_${w2utils.escapeId(recid)} td[col="${filenameColIdx}"]`
+						);
+						if (td && !td.querySelector('.w2ui-marker, .w2ui-marker-fuzzy')) {
+							const { score: fnScore, matchedWord } = _scoreFilenameWordBreak(query, record.filename || '');
+							if (fnScore === 0 || fnScore === 2) {
+								w2utils.marker(td, query);
+							} else if (fnScore === 1 && matchedWord === null) {
+								_applyFuzzyMarkerToCell(td, query.length, 'w2ui-marker-fuzzy');
+							} else if (fnScore === 1 && matchedWord !== null) {
+								_applyFuzzyMarkerToWord(td, matchedWord, query.length);
+							}
+						}
+					}
+					// --- tag highlighting ---
+					if (tagsColIdx >= 0) {
+						const tagsTd = document.querySelector(
+							`#grid_${grid.name}_rec_${w2utils.escapeId(recid)} td[col="${tagsColIdx}"]`
+						);
+						if (tagsTd) {
+							for (const span of tagsTd.querySelectorAll('.tag-badge')) {
+								const s = scoreCandidate(query, span.textContent || '');
+								if (s === 0 || s === 2) {
+									w2utils.marker(span, query);
+								} else if (s === 1) {
+									_applyFuzzyMarkerToCell(span, query.length, 'w2ui-marker-fuzzy');
+								}
+							}
+						}
+					}
+				}
+			});
+		}
+	}
+
+	// On the first flush (2s mark) always hide the loading overlay —
+	// the grid has content now (or the search finished).
+	hidePanelLoading(panelId);
+	const $panel = $(`#panel-${panelId}`);
+	$panel.find('.panel-grid').show();
+	$panel.find('.panel-gallery').removeClass('active');
+	$panel.find('.panel-landing-page').hide();
+
+	if (isDone) {
+		clearInterval(state.deepSearchFlushTimer);
+		state.deepSearchFlushTimer = null;
+		window.electronAPI.offDeepSearchBatch(panelId);
+	}
+}
+
+/**
+ * Cancel any in-progress deep search for `panelId` and clean up all state.
+ * Safe to call even when no search is active.
+ */
+function stopDeepSearch(panelId) {
+	const state = panelState[panelId];
+	if (!state) return;
+
+	if (state.deepSearchFlushTimer) {
+		clearInterval(state.deepSearchFlushTimer);
+		state.deepSearchFlushTimer = null;
+	}
+	if (state.deepSearchBatchListener) {
+		window.electronAPI.offDeepSearchBatch(panelId);
+		state.deepSearchBatchListener = null;
+	}
+	if (state.deepSearchInProgress) {
+		window.electronAPI.cancelDeepSearch(panelId).catch(() => {});
+		state.deepSearchInProgress = false;
+	}
+	state.deepSearchBuffer = [];
+	hidePanelLoading(panelId);
+
+	// Hide score / relPath columns when leaving search mode.
+	const grid = state.w2uiGrid;
+	if (grid) {
+		try { grid.hideColumn('score');   } catch (_) {}
+		try { grid.hideColumn('relPath'); } catch (_) {}
+	}
 }
 
 function getRelativePathFromRoot(rootPath, entryPath) {
@@ -3369,6 +4026,9 @@ async function handleAtlasUri(uri, panelId, addToHistory) {
 }
 
 export async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
+	// Set to true when the deep search pipeline takes ownership of the overlay
+	// lifecycle, so the finally block does not prematurely hide the overlay.
+	let deepSearchOwnsOverlay = false;
 	try {
 		if (!dirPath || typeof dirPath !== 'string') {
 			throw new Error('Path must be a non-empty string');
@@ -3430,6 +4090,37 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		// without instant feedback users cannot tell whether their click
 		// registered.
 		showPanelLoading(panelId, normalizedPath);
+
+		// ---- Deep search branch ----
+		// URI: "C:\some\path?search=query"
+		// Triggers a recursive BFS search rather than a normal directory scan.
+		// TODO(serveable): the search query is passed raw (spaces allowed) via
+		// Electron IPC, which is not an HTTP transport. In the serveable version,
+		// encode the query value with encodeURIComponent before building the URL
+		// and decode it server-side — see architecture.md for details.
+		const searchQuery = paramValues.get('search') ?? null;
+		if (searchQuery !== null) {
+			const trimmedQuery = searchQuery.trim();
+			state.deepSearchQuery = trimmedQuery;
+			state.toolbarSearch   = trimmedQuery;
+			// Update the loading overlay label from "Scanning…" to "Searching…"
+			const panelEl = document.getElementById(`panel-${panelId}`);
+			if (panelEl) {
+				const labelEl = panelEl.querySelector('.panel-loading-overlay__label');
+				if (labelEl) labelEl.textContent = 'Searching…';
+			}
+			updatePanelHeader(panelId, rawInput);
+			renderPanelToolbar(panelId, 'detail');
+			deepSearchOwnsOverlay = true;
+			startDeepSearchForPanel(panelId, normalizedPath, trimmedQuery);
+			return;
+		}
+
+		// If we're transitioning away from a deep search, cancel it.
+		if (state.deepSearchQuery) {
+			stopDeepSearch(panelId);
+			state.deepSearchQuery = '';
+		}
 
 		if (isVirtualView) {
 			// ---- Virtual view branch ----
@@ -3677,7 +4368,9 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		console.error('Error navigating to directory:', err);
 		alert('Error accessing directory: ' + err.message);
 	} finally {
-		hidePanelLoading(panelId);
+		// Deep search manages its own overlay lifecycle via flushDeepSearchBatch /
+		// stopDeepSearch — do NOT hide it here or the panel goes blank mid-search.
+		if (!deepSearchOwnsOverlay) hidePanelLoading(panelId);
 	}
 }
 
@@ -3711,7 +4404,7 @@ function setPanelPathValidity(panelId, isValid) {
  * @param {number|string} panelId
  * @param {string} dirPath  Full path being navigated to (shown to user)
  */
-function showPanelLoading(panelId, dirPath) {
+function showPanelLoading(panelId, dirPath, label = 'Scanning…') {
 	const panelEl = document.getElementById(`panel-${panelId}`);
 	if (!panelEl) return;
 
@@ -3744,6 +4437,9 @@ function showPanelLoading(panelId, dirPath) {
 		`;
 		container.appendChild(overlay);
 	}
+
+	const labelEl = overlay.querySelector('.panel-loading-overlay__label');
+	if (labelEl) labelEl.textContent = label;
 
 	const pathEl = overlay.querySelector('.panel-loading-overlay__path');
 	if (pathEl) pathEl.textContent = dirPath || '';
@@ -3805,6 +4501,11 @@ export async function initializeGridForPanel(panelId) {
 	const columns = [
 		{ field: 'icon', headerLabel: '', text: getColumnHeaderText(panelId, 'icon', ''), size: '30px', resizable: false, sortable: false, hideable: false },
 		{ field: 'filename', headerLabel: 'Name', text: getColumnHeaderText(panelId, 'filename', 'Name'), size: '50%', resizable: true, sortable: true, hideable: false },
+		{
+			field: 'score', headerLabel: 'Score', text: getColumnHeaderText(panelId, 'score', 'Score'), size: '55px', resizable: true, sortable: true, hidden: true,
+			render: (record) => record.score != null ? String(record.score) : ''
+		},
+		{ field: 'relPath', headerLabel: 'Path', text: getColumnHeaderText(panelId, 'relPath', 'Path'), size: '200px', resizable: true, sortable: true, hidden: true },
 		{ field: 'type', headerLabel: 'Type', text: getColumnHeaderText(panelId, 'type', 'Type'), size: '80px', resizable: true, sortable: true },
 		{ field: 'size', headerLabel: 'Size', text: getColumnHeaderText(panelId, 'size', 'Size'), size: '60px', resizable: true, sortable: true, align: 'right' },
 		{ field: 'dateModified', headerLabel: 'Date Modified', text: getColumnHeaderText(panelId, 'dateModified', 'Date Modified'), size: '150px', resizable: true, sortable: true, hidden: true },
@@ -4096,6 +4797,20 @@ export async function initializeGridForPanel(panelId) {
 			};
 		},
 		onSort: function (event) {
+			// Score column: cycle desc ↔ no-sort only (never asc).
+			// "No sort" means batches append in arrival order; any other active sort
+			// causes new deep-search batches to be inserted in sorted order.
+			if (event.detail && event.detail.field === 'score') {
+				event.preventDefault();
+				const state = panelState[panelId];
+				const cur = (state.deepSearchScoreSort || 'nosort');
+				const next = cur === 'desc' ? 'nosort' : 'desc';
+				state.deepSearchScoreSort = next;
+				this.sortData = next === 'desc' ? [{ field: 'score', direction: 'desc' }] : [];
+				this.refresh();
+				snapshotSessionDirLayout(panelId);
+				return;
+			}
 			const grid = this;
 			const previousOnComplete = event.onComplete;
 			event.onComplete = () => {
@@ -6113,7 +6828,15 @@ function clearPanelState(panelId) {
 		galleryRecords: [],
 		gallerySelectedRecids: new Set(),
 		autoLabelCount: 0,
-		autoLabelSuggestions: []
+		autoLabelSuggestions: [],
+		// Deep search state
+		deepSearchQuery: '',
+		deepSearchBuffer: [],
+		deepSearchInProgress: false,
+		deepSearchStartTime: 0,
+		deepSearchFlushTimer: null,
+		deepSearchBatchListener: null,
+		deepSearchScoreSort: 'nosort'
 	};
 
 	window.electronAPI.unregisterWatchedPath(panelId);

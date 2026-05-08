@@ -78,4 +78,13 @@ See the [Module Map](modules.md) for what each file owns.
 
 ## Known issues (as of 2026-05)
 
+## Tech debt
+
+### Search URI encoding (deep search)
+
+The deep search URI `basePath?search=query` passes the query value **raw** (spaces allowed, not percent-encoded), e.g. `C:\Users\foo?search=my file`. This is safe in Electron because path resolution travels through Node IPC — not an HTTP parser — so spaces are not ambiguous.
+
+In the **serveable version**, the query value **must** be encoded with `encodeURIComponent` before constructing the URL, and decoded server-side (`decodeURIComponent`) before passing it to the search engine. The encoding call is marked with `// TODO(serveable):` comments in `panels.js` (Enter handler) and in `navigateToDirectory`.
+
+
 - Setting an alert to ANY/ANY - File Added triggers alerts on initial folder browse. INITIAL events should be treated separately.

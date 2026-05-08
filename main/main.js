@@ -106,6 +106,12 @@ const {
   doScanDirectoryWithComparison: _doScan,
 } = scanner;
 
+const deepSearch = require('../src/deepSearch');
+
+// Active deep searches keyed by panelId. Each entry is { cancelled: boolean }.
+// Set .cancelled = true to abort the BFS loop in deepSearch.startDeepSearch.
+const activeDeepSearches = new Map();
+
 // Wrap with Electron-aware notify (push to renderer via mainWindow)
 function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBackgroundRefresh = false, options = {}) {
   return _doScan(dirPath, isManualNavigation, isBackgroundRefresh, options, (event) => {
@@ -3945,6 +3951,46 @@ ipcMain.handle('unregister-watched-path', (event, { panelId }) => {
  */
 ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNavigation = true) => {
   return doScanDirectoryWithComparison(dirPath, isManualNavigation);
+});
+
+/**
+ * Deep Search: start a recursive BFS search from rootPath.
+ * Results are pushed to the renderer via 'deep-search-batch' events.
+ */
+ipcMain.handle('start-deep-search', (event, panelId, rootPath, query) => {
+  logger.info(`[deepSearch] start-deep-search IPC: panelId=${panelId} query="${query}" root="${rootPath}"`);
+  // Cancel any existing search for this panel.
+  const prev = activeDeepSearches.get(panelId);
+  if (prev) prev.cancelled = true;
+
+  const ref = { cancelled: false };
+  activeDeepSearches.set(panelId, ref);
+
+  // Fire-and-forget — results stream back via push events.
+  deepSearch.startDeepSearch(rootPath, query, (batch, done) => {
+    if (ref.cancelled) return;
+    try {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('deep-search-batch', { panelId, batch, done });
+      }
+    } catch (_) { /* renderer may have been destroyed */ }
+  }, ref).catch(err => {
+    logger.error(`[deep-search] Error in panelId=${panelId}: ${err.message}`);
+  });
+
+  return { started: true };
+});
+
+/**
+ * Deep Search: cancel a running search for a given panel.
+ */
+ipcMain.handle('cancel-deep-search', (event, panelId) => {
+  const ref = activeDeepSearches.get(panelId);
+  if (ref) {
+    ref.cancelled = true;
+    activeDeepSearches.delete(panelId);
+  }
+  return { cancelled: true };
 });
 
 /**

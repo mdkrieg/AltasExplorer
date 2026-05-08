@@ -245,6 +245,18 @@ button:active {
   border-color: #2196F3;
 }
 
+/* Search highlight markers */
+.w2ui-marker-fuzzy {
+  background-color: rgba(255, 165, 0, 0.45);
+  border-bottom: 1px solid rgba(200, 100, 0, 0.6);
+}
+
+/* Deep search: highlight rows that arrived in the most recent batch.
+   The class is added after each 2-second flush and removed after another 2s. */
+.new-search-result td {
+  color: #1a6bbf;
+}
+
 .panel-tb-depth {
   display: inline-flex;
   align-items: center;
