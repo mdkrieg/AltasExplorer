@@ -3967,11 +3967,11 @@ ipcMain.handle('start-deep-search', (event, panelId, rootPath, query) => {
   activeDeepSearches.set(panelId, ref);
 
   // Fire-and-forget — results stream back via push events.
-  deepSearch.startDeepSearch(rootPath, query, (batch, done) => {
+  deepSearch.startDeepSearch(rootPath, query, (batch, done, phase, orphans) => {
     if (ref.cancelled) return;
     try {
       if (!event.sender.isDestroyed()) {
-        event.sender.send('deep-search-batch', { panelId, batch, done });
+        event.sender.send('deep-search-batch', { panelId, batch, done, phase: phase || 2, orphans: orphans || null });
       }
     } catch (_) { /* renderer may have been destroyed */ }
   }, ref).catch(err => {

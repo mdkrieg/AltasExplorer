@@ -1297,7 +1297,8 @@ function getPanelToolbarElement(panelId) {
 export function renderPanelToolbar(panelId, mode = 'detail') {
 	const container = getPanelToolbarElement(panelId);
 	if (!container) return;
-	const showDepth = mode !== 'gallery';
+	const isDeepSearch = !!(panelState[panelId]?.deepSearchQuery);
+	const showDepth = mode !== 'gallery' && !isDeepSearch;
 	const depth = panelState[panelId]?.depth || 0;
 	const searchValue = panelState[panelId]?.toolbarSearch || '';
 	const state = panelState[panelId] || {};
@@ -1407,11 +1408,11 @@ function attachPanelToolbarEventListeners(panelId) {
 				// Start a deep search. Spaces are passed raw in Electron IPC (safe);
 				// see the TODO(serveable) comment in navigateToDirectory for HTTP notes.
 				state.toolbarSearch = val;
-				navigateToDirectory(`${state.currentPath}?search=${val}`, panelId, false);
+				navigateToDirectory(`${state.currentPath}?search=${val}`, panelId, true);
 			} else if (!val && state && state.deepSearchQuery) {
 				// Empty Enter while in deep search — exit back to plain directory.
 				state.toolbarSearch = '';
-				navigateToDirectory(state.currentPath, panelId, false);
+				navigateToDirectory(state.currentPath, panelId, true);
 			} else {
 				applyPanelToolbarSearch(panelId, val);
 			}
@@ -1791,6 +1792,137 @@ function _applyFuzzyMarkerToWord(el, word, markerLen) {
 	}
 }
 
+/**
+ * Mark ALL occurrences of `text` (case-insensitive) inside `el` with the
+ * standard `w2ui-marker` (purple) style. Uses direct TreeWalker DOM
+ * manipulation instead of w2utils.marker's innerHTML approach, which can
+ * silently fail when called on td elements during grid rendering.
+ */
+function _applySubstringMarker(el, text) {
+	if (!text) return;
+	const lowerText = text.toLowerCase();
+	// Collect all text nodes first (walking while mutating is unsafe).
+	const textNodes = [];
+	const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+	let node;
+	while ((node = walker.nextNode())) textNodes.push(node);
+
+	for (const textNode of textNodes) {
+		const raw = textNode.nodeValue || '';
+		const rawLower = raw.toLowerCase();
+		let pos = 0;
+		let matched = false;
+		const fragment = document.createDocumentFragment();
+		while (true) {
+			const idx = rawLower.indexOf(lowerText, pos);
+			if (idx < 0) {
+				fragment.appendChild(document.createTextNode(raw.slice(pos)));
+				break;
+			}
+			matched = true;
+			if (idx > pos) fragment.appendChild(document.createTextNode(raw.slice(pos, idx)));
+			const span = document.createElement('span');
+			span.className = 'w2ui-marker';
+			span.textContent = raw.slice(idx, idx + text.length);
+			fragment.appendChild(span);
+			pos = idx + text.length;
+		}
+		if (!matched) continue;
+		textNode.parentNode.replaceChild(fragment, textNode);
+	}
+}
+
+/**
+ * Build HTML for a filename cell with marker spans already embedded.
+ * Baking marks into record.filename means they survive every grid.refresh()
+ * call (which rebuilds cell innerHTML from record data, wiping DOM marks).
+ *
+ * The filename is HTML-escaped; only the marker span tags are injected.
+ */
+function _buildMarkedFilenameHtml(filename, query) {
+	if (!filename || !query) return utils.escapeHtml(filename || '');
+	const { score: fnScore, matchedWord } = _scoreFilenameWordBreak(query, filename);
+	if (fnScore === null) return utils.escapeHtml(filename);
+
+	const esc = s => utils.escapeHtml(s);
+
+	if (fnScore === 0 || fnScore === 2) {
+		// Mark all occurrences of query as a case-insensitive substring.
+		const lowerFn = filename.toLowerCase();
+		const lowerQ  = query.toLowerCase();
+		let result = '', pos = 0;
+		while (true) {
+			const idx = lowerFn.indexOf(lowerQ, pos);
+			if (idx < 0) { result += esc(filename.slice(pos)); break; }
+			if (idx > pos) result += esc(filename.slice(pos, idx));
+			result += `<span class="w2ui-marker">${esc(filename.slice(idx, idx + query.length))}</span>`;
+			pos = idx + query.length;
+		}
+		return result;
+	}
+
+	if (fnScore === 1 && matchedWord === null) {
+		// Fuzzy prefix — mark the first query.length characters.
+		const wrapLen = Math.min(query.length, filename.length);
+		return `<span class="w2ui-marker-fuzzy">${esc(filename.slice(0, wrapLen))}</span>${esc(filename.slice(wrapLen))}`;
+	}
+
+	if (fnScore === 1 && matchedWord !== null) {
+		// Word-break fuzzy — mark the first query.length chars of the matched word.
+		const lowerFn = filename.toLowerCase();
+		const wordPos = lowerFn.indexOf(matchedWord.toLowerCase());
+		if (wordPos < 0) return esc(filename);
+		const wrapLen = Math.min(query.length, matchedWord.length);
+		return esc(filename.slice(0, wordPos)) +
+		       `<span class="w2ui-marker-fuzzy">${esc(filename.slice(wordPos, wordPos + wrapLen))}</span>` +
+		       esc(filename.slice(wordPos + wrapLen));
+	}
+
+	return esc(filename);
+}
+
+/**
+ * Build HTML for a tags cell with marker spans baked into matching badge names.
+ * Mirrors renderTagBadges() but injects marks so they survive grid.refresh().
+ */
+function _buildMarkedTagBadgesHtml(tagsJson, tagDefs, query) {
+	const names = parseTagNames(tagsJson);
+	if (names.length === 0) return '';
+	const lowerQ = query ? query.toLowerCase() : '';
+	const badges = names.map(name => {
+		const def = tagDefs[name];
+		const bg  = def ? def.bgColor   : '#888';
+		const fg  = def ? def.textColor : '#fff';
+		let inner;
+		if (lowerQ) {
+			const s = scoreCandidate(query, name);
+			if (s === 0 || s === 2) {
+				// Mark all occurrences of query within the badge name.
+				const lowerName = name.toLowerCase();
+				let result = '', pos = 0;
+				while (true) {
+					const idx = lowerName.indexOf(lowerQ, pos);
+					if (idx < 0) { result += utils.escapeHtml(name.slice(pos)); break; }
+					if (idx > pos) result += utils.escapeHtml(name.slice(pos, idx));
+					result += `<span class="w2ui-marker">${utils.escapeHtml(name.slice(idx, idx + query.length))}</span>`;
+					pos = idx + query.length;
+				}
+				inner = result;
+			} else if (s === 1) {
+				// Fuzzy prefix mark.
+				const wrapLen = Math.min(query.length, name.length);
+				inner = `<span class="w2ui-marker-fuzzy">${utils.escapeHtml(name.slice(0, wrapLen))}</span>${utils.escapeHtml(name.slice(wrapLen))}`;
+			} else {
+				inner = utils.escapeHtml(name);
+			}
+		} else {
+			inner = utils.escapeHtml(name);
+		}
+		return `<span class="tag-badge" style="background:${bg};color:${fg}">${inner}</span>`;
+	});
+	return `<div class="tag-badge-container">${badges.join('')}</div>`;
+}
+
 function filterGalleryByNameFuzzy(panelId, query) {
 	const $gallery = $(`#panel-${panelId} .panel-gallery`);
 	if ($gallery.length === 0) return;
@@ -1862,7 +1994,6 @@ function filterGalleryByNameFuzzy(panelId, query) {
  * Called by `navigateToDirectory` after detecting a `?search=` URI param.
  */
 function startDeepSearchForPanel(panelId, rootPath, query) {
-	console.warn('[deepSearch] startDeepSearchForPanel', panelId, query);
 	const state = panelState[panelId];
 	if (!state) return;
 
@@ -1881,12 +2012,15 @@ function startDeepSearchForPanel(panelId, rootPath, query) {
 		try { grid.showColumn('score');   } catch (_) { /* col may not exist yet */ }
 		try { grid.showColumn('relPath'); } catch (_) {}
 	}
-	state.sourceRecords        = [];
-	state.recidCounter         = 1;   // reset so new records start from recid 1
-	state.deepSearchBuffer     = [];
-	state.deepSearchInProgress = true;
-	state.deepSearchStartTime  = Date.now();
-	state.deepSearchScoreSort  = 'nosort';
+	state.sourceRecords             = [];
+	state.recidCounter              = 1;   // reset so new records start from recid 1
+	state.deepSearchBuffer          = [];
+	state.deepSearchInProgress      = true;
+	state.deepSearchStartTime       = Date.now();
+	state.deepSearchScoreSort       = 'nosort';
+	state.deepSearchFlushing        = false;
+	state.deepSearchIconCache       = new Map();
+	state.deepSearchCategoryCache   = new Map();
 
 	// Register the push-event listener BEFORE starting the IPC call so no
 	// batches are missed if the first batch arrives very quickly.
@@ -1907,16 +2041,30 @@ function startDeepSearchForPanel(panelId, rootPath, query) {
 
 /**
  * Handle a 'deep-search-batch' push event for `panelId`.
- * Accumulates entries in the buffer; triggers an immediate flush when the
- * search completes in under 2 seconds (so the overlay hides promptly).
+ * Accumulates entries in the buffer; triggers an immediate flush for Phase 1
+ * results (fast DB hits) and when the search completes.
  */
 function handleDeepSearchBatch(data, panelId) {
-	console.warn('[deepSearch] batch received', (data.batch||[]).length, 'done:', data.done);
 	const state = panelState[panelId];
 	if (!state) return;
 
 	if (data.batch && data.batch.length > 0) {
+		// Tag each entry with its phase so flushDeepSearchBatch can apply
+		// the blue flash only to Phase 2 new-discovery items.
+		const phase = data.phase || 2;
+		for (const entry of data.batch) {
+			entry._phase = phase;
+		}
 		state.deepSearchBuffer.push(...data.batch);
+	}
+
+	if (data.phase === 1 && data.batch && data.batch.length > 0) {
+		// Phase 1 DB results arrived — flush immediately for fast first display.
+		flushDeepSearchBatch(panelId, false);
+	}
+
+	if (data.orphans && data.orphans.length > 0) {
+		handleDeepSearchOrphans(data.orphans, panelId);
 	}
 
 	if (data.done) {
@@ -1933,143 +2081,129 @@ function handleDeepSearchBatch(data, panelId) {
 
 /**
  * Flush the accumulated deep-search buffer to the grid.
- * Builds lightweight grid records (no icon generation, no DB enrichment),
- * appends them, applies blue "new-search-result" flash for 2 seconds.
+ * Calls buildGridRecords for proper icons, tags, file-type icons, and
+ * attributes.  Applies the blue "new-search-result" flash only to Phase 2
+ * entries (new filesystem discoveries not in the DB).
  *
  * @param {number}  panelId
  * @param {boolean} forceFinish  When true, also tears down the timer and IPC
  *                               listener and hides the loading overlay.
  */
-function flushDeepSearchBatch(panelId, forceFinish) {
+async function flushDeepSearchBatch(panelId, forceFinish) {
 	const state = panelState[panelId];
 	if (!state) return;
 
-	const batch = state.deepSearchBuffer.splice(0);
-	console.warn('[deepSearch] flush', panelId, 'batchSize:', batch.length, 'forceFinish:', forceFinish, 'inProgress:', state.deepSearchInProgress);
+	// Prevent concurrent flushes — the async buildGridRecords can take a moment.
+	if (state.deepSearchFlushing) return;
+	state.deepSearchFlushing = true;
 
-	// Determine whether the search is complete (so we can clean up after flush).
-	const isDone = forceFinish || !state.deepSearchInProgress;
+	try {
+		const batch  = state.deepSearchBuffer.splice(0);
+		const isDone = forceFinish || !state.deepSearchInProgress;
 
-	if (batch.length > 0) {
-		// Pre-sort the incoming batch by score desc so that in "no sort" mode
-		// (append order) better matches appear first within this batch.
-		batch.sort((a, b) => (b.score || 0) - (a.score || 0));
+		if (batch.length > 0) {
+			// Pre-sort the incoming batch by score desc.
+			batch.sort((a, b) => (b.score || 0) - (a.score || 0));
 
-		const grid = state.w2uiGrid;
-		const query = state.deepSearchQuery || '';
-		const tagDefs = getTagDefinitionMap();
-		const records = batch.map(entry => {
-			const recid = state.recidCounter++;
-			const iconSrc = entry.isDirectory
-				? 'assets/icons/folder.svg'
-				: 'assets/icons/user-file.png';
-			// tags array from deepSearch engine → populate tagsRaw for rendering
-			const entryTagsArr = Array.isArray(entry.tags) ? entry.tags : [];
-			const tagsRaw      = entryTagsArr.length > 0 ? JSON.stringify(entryTagsArr) : null;
-			return {
-				recid,
-				icon:          `<img src="${iconSrc}" style="width:20px;height:20px;object-fit:contain;">`,
-				filename:      entry.filename,
-				filenameRaw:   entry.filename,
-				filenameText:  entry.filename,
-				relPath:       entry.relPath || '',
-				score:         entry.score,
-				type:          '',
-				size:          entry.size != null ? entry.size : '-',
-				sizeBytes:     entry.size || null,
-				dateModified:  entry.dateModified ? new Date(entry.dateModified).toLocaleString() : '-',
-				modified:      entry.dateModified ? -entry.dateModified : null,
-				dateCreated:   '-',
-				perms:         '',
-				permsText:     '',
-				checksum:      '—',
-				checksumValue: null,
-				tags:          renderTagBadges(tagsRaw, tagDefs),
-				tagsRaw,
-				tagsText:      entryTagsArr.join(' '),
-				notes:         '',
-				hasNotes:      false,
-				todo:          null,
-				isFolder:      !!entry.isDirectory,
-				path:          entry.path,
-				changeState:   null,
-				inode:         null,
-				dir_id:        null,
-				orphan_id:     null,
-				orphan_type:   null,
-				new_dir_id:    null,
-			};
-		});
+			const tagDefs       = getTagDefinitionMap();
+			const iconCache     = state.deepSearchIconCache     || (state.deepSearchIconCache     = new Map());
+			const categoryCache = state.deepSearchCategoryCache || (state.deepSearchCategoryCache = new Map());
 
-		const newRecids = records.map(r => r.recid);
+			// buildGridRecords processes folders first, then files — mirror that
+			// order so we can map records[i] back to the original entry[i].
+			const folderEntries = batch.filter(e => e.isDirectory);
+			const fileEntries   = batch.filter(e => !e.isDirectory);
+			const orderedBatch  = [...folderEntries, ...fileEntries];
 
-		// appendPanelSourceRecords calls grid.add, which appends and re-renders.
-		appendPanelSourceRecords(panelId, records);
+			const records = await buildGridRecords(orderedBatch, panelId, iconCache, categoryCache, tagDefs);
 
-		// After the next paint: apply row flash and highlight matching text.
-		if (grid) {
-			requestAnimationFrame(() => {
-				const filenameColIdx = grid.getColumn('filename', true);
-				const tagsColIdx     = grid.getColumn('tags', true);
-				for (const record of records) {
-					const recid = record.recid;
-					const rowEl = document.querySelector(
-						`#grid_${grid.name}_rec_${w2utils.escapeId(recid)}`
-					);
-					if (rowEl) {
-						rowEl.classList.add('new-search-result');
-						setTimeout(() => rowEl.classList.remove('new-search-result'), 2000);
-					}
-					if (!query) continue;
-					// --- filename highlighting ---
-					if (filenameColIdx >= 0) {
-						const td = document.querySelector(
-							`#grid_${grid.name}_rec_${w2utils.escapeId(recid)} td[col="${filenameColIdx}"]`
-						);
-						if (td && !td.querySelector('.w2ui-marker, .w2ui-marker-fuzzy')) {
-							const { score: fnScore, matchedWord } = _scoreFilenameWordBreak(query, record.filename || '');
-							if (fnScore === 0 || fnScore === 2) {
-								w2utils.marker(td, query);
-							} else if (fnScore === 1 && matchedWord === null) {
-								_applyFuzzyMarkerToCell(td, query.length, 'w2ui-marker-fuzzy');
-							} else if (fnScore === 1 && matchedWord !== null) {
-								_applyFuzzyMarkerToWord(td, matchedWord, query.length);
-							}
-						}
-					}
-					// --- tag highlighting ---
-					if (tagsColIdx >= 0) {
-						const tagsTd = document.querySelector(
-							`#grid_${grid.name}_rec_${w2utils.escapeId(recid)} td[col="${tagsColIdx}"]`
-						);
-						if (tagsTd) {
-							for (const span of tagsTd.querySelectorAll('.tag-badge')) {
-								const s = scoreCandidate(query, span.textContent || '');
-								if (s === 0 || s === 2) {
-									w2utils.marker(span, query);
-								} else if (s === 1) {
-									_applyFuzzyMarkerToCell(span, query.length, 'w2ui-marker-fuzzy');
-								}
-							}
-						}
-					}
+			const grid  = state.w2uiGrid;
+			const query = state.deepSearchQuery || '';
+
+			// Augment each record with search-specific fields not produced by buildGridRecords.
+			// Bake filename highlight markup into record.filename so marks survive every
+			// subsequent grid.refresh() which rebuilds cell innerHTML from record data.
+			records.forEach((rec, i) => {
+				const entry = orderedBatch[i];
+				if (!entry) return;
+				rec.score   = entry.score != null ? entry.score : null;
+				rec.relPath = entry.relPath || '';
+				rec._phase  = entry._phase || 2;
+				rec._notesMatch = entry.notesMatch || false;
+				if (query && rec.filenameRaw) {
+					rec.filename = _buildMarkedFilenameHtml(rec.filenameRaw, query);
+				}
+				if (query && rec.tagsRaw) {
+					rec.tags = _buildMarkedTagBadgesHtml(rec.tagsRaw, tagDefs, query);
 				}
 			});
+
+			appendPanelSourceRecords(panelId, records);
+
+			// After the next paint: apply flash and highlighting.
+			if (grid) {
+				requestAnimationFrame(() => {
+					const filenameColIdx = grid.getColumn('filename', true);
+					const tagsColIdx     = grid.getColumn('tags', true);
+					for (const record of records) {
+						const recid  = record.recid;
+						const rowEl  = document.querySelector(
+							`#grid_${grid.name}_rec_${w2utils.escapeId(recid)}`
+						);
+						if (!rowEl) continue;
+
+						// Blue flash only for Phase 2 new filesystem discoveries.
+						if (record._phase === 2) {
+							rowEl.classList.add('new-search-result');
+							setTimeout(() => rowEl.classList.remove('new-search-result'), 2000);
+						}
+
+						if (!query) continue;
+
+						// Filename marks are baked into record.filename before grid.add() —
+						// they survive every grid.refresh(). No DOM pass needed here.
+
+						// Tag marks are baked into record.tags before grid.add() —
+						// they survive every grid.refresh(). No DOM pass needed here.
+					}
+				});
+			}
 		}
+
+		// Always show the grid and hide the overlay on any flush.
+		hidePanelLoading(panelId);
+		const $panel = $(`#panel-${panelId}`);
+		$panel.find('.panel-grid').show();
+		$panel.find('.panel-gallery').removeClass('active');
+		$panel.find('.panel-landing-page').hide();
+
+		if (isDone) {
+			clearInterval(state.deepSearchFlushTimer);
+			state.deepSearchFlushTimer = null;
+			window.electronAPI.offDeepSearchBatch(panelId);
+		}
+	} finally {
+		state.deepSearchFlushing = false;
 	}
+}
 
-	// On the first flush (2s mark) always hide the loading overlay —
-	// the grid has content now (or the search finished).
-	hidePanelLoading(panelId);
-	const $panel = $(`#panel-${panelId}`);
-	$panel.find('.panel-grid').show();
-	$panel.find('.panel-gallery').removeClass('active');
-	$panel.find('.panel-landing-page').hide();
-
-	if (isDone) {
-		clearInterval(state.deepSearchFlushTimer);
-		state.deepSearchFlushTimer = null;
-		window.electronAPI.offDeepSearchBatch(panelId);
+/**
+ * Mark Phase 1 DB entries as orphans when the filesystem walk confirms they
+ * no longer exist on disk.  Finds each matching record in the grid and adds
+ * the 'row-orphan' CSS class so it renders with the standard orphan style.
+ */
+function handleDeepSearchOrphans(orphanPaths, panelId) {
+	const state = panelState[panelId];
+	if (!state || !state.w2uiGrid) return;
+	const grid = state.w2uiGrid;
+	const pathSet = new Set(orphanPaths);
+	for (const record of (state.sourceRecords || [])) {
+		if (!pathSet.has(record.path)) continue;
+		record.changeState = 'orphan';
+		const rowEl = document.querySelector(
+			`#grid_${grid.name}_rec_${w2utils.escapeId(record.recid)}`
+		);
+		if (rowEl) rowEl.classList.add('row-orphan');
 	}
 }
 
@@ -2093,7 +2227,10 @@ function stopDeepSearch(panelId) {
 		window.electronAPI.cancelDeepSearch(panelId).catch(() => {});
 		state.deepSearchInProgress = false;
 	}
-	state.deepSearchBuffer = [];
+	state.deepSearchBuffer        = [];
+	state.deepSearchFlushing      = false;
+	state.deepSearchIconCache     = null;
+	state.deepSearchCategoryCache = null;
 	hidePanelLoading(panelId);
 
 	// Hide score / relPath columns when leaving search mode.
@@ -3617,6 +3754,15 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			hasNotes: folder.hasNotes || false,
 			todo: folder.todoCounts || null
 		});
+
+		if (folder.attributes) {
+			let attrObj = {};
+			try { attrObj = typeof folder.attributes === 'string' ? JSON.parse(folder.attributes) : folder.attributes; } catch (_) { }
+			const lastRecord = records[records.length - 1];
+			for (const [key, value] of Object.entries(attrObj)) {
+				lastRecord[`attr_${key}`] = value !== null && value !== undefined ? String(value) : '';
+			}
+		}
 	}
 
 	for (const file of files) {
@@ -4121,6 +4267,9 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			stopDeepSearch(panelId);
 			state.deepSearchQuery = '';
 		}
+		// Reset the search/filter term when navigating to a new directory so the
+		// toolbar input doesn't show a stale query from a previous location.
+		state.toolbarSearch = '';
 
 		if (isVirtualView) {
 			// ---- Virtual view branch ----
@@ -4325,9 +4474,8 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			}
 		}
 
-		if (panelState[panelId].toolbarSearch) {
-			applyPanelToolbarSearch(panelId, panelState[panelId].toolbarSearch);
-		}
+		// (toolbarSearch was already cleared when entering this branch —
+		//  nothing to re-apply for a normal directory navigation.)
 
 		updatePanelHeader(panelId, normalizedPath);
 		const gridToResize = panelState[panelId].w2uiGrid;
@@ -4529,19 +4677,21 @@ export async function initializeGridForPanel(panelId) {
 		},
 		{
 			field: 'notes', headerLabel: 'Notes', text: getColumnHeaderText(panelId, 'notes', 'Notes'), size: '32px', resizable: false, sortable: false, render: (record) => {
+				const matchCls = record._notesMatch ? ' search-match-cell' : '';
 				return record.hasNotes
-					? `<span class="notes-cell-icon notes-cell-icon-view" title="Open Notes" data-notes-icon="true"><img src="assets/icons/note-book-icon.svg"></span>`
-					: '<span class="notes-cell-icon notes-cell-icon-add" title="Add Notes" data-notes-icon="true"><img src="assets/icons/add-notes.png"></span>';
+					? `<span class="notes-cell-icon notes-cell-icon-view${matchCls}" title="Open Notes" data-notes-icon="true"><img src="assets/icons/note-book-icon.svg"></span>`
+					: `<span class="notes-cell-icon notes-cell-icon-add${matchCls}" title="Add Notes" data-notes-icon="true"><img src="assets/icons/add-notes.png"></span>`;
 			}
 		},
 		{
 			field: 'todo', headerLabel: 'TODO', text: getColumnHeaderText(panelId, 'todo', 'TODO'), size: '60px', resizable: true, sortable: false, render: (record) => {
+				const matchCls = record._notesMatch ? ' search-match-cell' : '';
 				if (!record.todo || record.todo.total === 0) {
-					return `<span class="notes-cell-icon notes-cell-icon-add" title="Add TODO" data-todo-add-icon="true"><img src="assets/icons/add-notes.png"></span>`;
+					return `<span class="notes-cell-icon notes-cell-icon-add${matchCls}" title="Add TODO" data-todo-add-icon="true"><img src="assets/icons/add-notes.png"></span>`;
 				}
 				const { completed, total } = record.todo;
 				const cls = completed === total ? 'todo-count todo-count-complete' : 'todo-count todo-count-partial';
-				return `<span class="${cls}" style="cursor:pointer;" data-todo-cell="true">${completed}/${total}</span>`;
+				return `<span class="${cls}${matchCls}" style="cursor:pointer;" data-todo-cell="true">${completed}/${total}</span>`;
 			}
 		}
 	];
@@ -6836,7 +6986,10 @@ function clearPanelState(panelId) {
 		deepSearchStartTime: 0,
 		deepSearchFlushTimer: null,
 		deepSearchBatchListener: null,
-		deepSearchScoreSort: 'nosort'
+		deepSearchScoreSort: 'nosort',
+		deepSearchFlushing: false,
+		deepSearchIconCache: null,
+		deepSearchCategoryCache: null,
 	};
 
 	window.electronAPI.unregisterWatchedPath(panelId);

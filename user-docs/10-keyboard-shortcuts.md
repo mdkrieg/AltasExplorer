@@ -16,6 +16,14 @@ All hotkeys (except locked system bindings) can be rebound in **Settings → Hot
 | Focus Path Bar           | `Ctrl+L`       |
 | Cycle Panel Focus        | `Tab`          |
 
+## Search
+
+| Action                              | Default   |
+|-------------------------------------|-----------|
+| Focus search bar                    | (click toolbar search box) |
+| Start deep search (commit query)    | `Enter`   |
+| Clear search / return to directory  | navigate to any path |
+
 ## Panels
 
 | Action                    | Default         |

@@ -30,6 +30,56 @@ The default directory view. Files and folders are listed in a sortable, filterab
 
 Directories can be browsed at depth > 0 to show the contents of subdirectories inline. Configure the depth in the toolbar.
 
+## Deep Search
+
+Deep Search lets you find files and folders anywhere inside a directory tree in one step. To start a search, focus the toolbar search box and press **Enter** (or click the search icon). While a deep search is active the depth control is hidden and two extra columns appear:
+
+| Column | Description |
+|--------|-------------|
+| **Score** | Relevance score (0–100). Higher means a closer match. |
+| **Path** | Path of the result relative to the search root. |
+
+### How it works — two phases
+
+**Phase 1 — database** (instant): The app queries the SQLite index for everything under the current directory that matches the search term in the **filename**, **tags**, or **custom attributes**. Results appear immediately before the filesystem walk begins.
+
+**Phase 2 — filesystem walk** (progressive): A breadth-first scan of the directory tree finds any files or folders that are new or not yet indexed. New discoveries are highlighted in **blue** briefly as they arrive. Items found in Phase 1 are not duplicated.
+
+At the end of the walk, any Phase 1 result whose path no longer exists on disk is flagged as an **orphan** — its row is styled distinctly to indicate the file has moved or been deleted.
+
+### What is matched
+
+| Source | Highlighted? |
+|--------|-------------|
+| Filename | Yes — matching characters are marked in the Name column |
+| Tags | Yes — matching tag badges are highlighted |
+| Notes content | Yes — the Notes cell is tinted when the query hit notes text |
+| TODO content | Yes — the TODO cell is tinted when the query hit TODO text |
+| Custom attributes | Values are shown as in normal browse; the attribute column is only present if the search root's known items use it |
+
+### Scoring
+
+Matches are ranked by score. The scoring tiers for filename matches are:
+
+| Score | Meaning |
+|-------|---------|
+| 100 | Exact match (case-insensitive) |
+| 90 | Prefix match — filename starts with the query |
+| 80 | Contains — filename contains the query as a substring |
+| 60 | Fuzzy full-name — Damerau-Levenshtein distance ≤ 1 |
+| 50 | Word-break — query matches the start of any word in the filename |
+| 40 | Word-break fuzzy — fuzzy match against a word in the filename |
+| 25–35 | Tag, attribute, or notes-only match |
+
+Bonus points are added when multiple sources (filename + tags + notes) all match.
+
+### Navigation with Deep Search
+
+- **Back / Forward** work across search results — pressing back after double-clicking into a subfolder returns you to the search.
+- Navigating to a new directory (via the path bar, double-click, sidebar, or favorite) **exits** the search and resets the search bar.
+- Re-pressing back from a directory you navigated to **restores** the search results.
+- To stop a search without navigating away, click the **×** (stop) button that appears in the toolbar while searching.
+
 ## Gallery View
 
 A thumbnail-based view for image-heavy directories. Enable it per category in **Settings → Categories**. The gallery view supports the same search/filter toolbar as the grid.

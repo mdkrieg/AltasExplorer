@@ -257,6 +257,12 @@ button:active {
   color: #1a6bbf;
 }
 
+/* Deep search: notes/todo cell when the query hit was in notes content */
+.search-match-cell {
+  background-color: rgba(255, 220, 80, 0.3);
+  border-radius: 3px;
+}
+
 .panel-tb-depth {
   display: inline-flex;
   align-items: center;

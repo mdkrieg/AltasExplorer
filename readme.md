@@ -36,13 +36,21 @@ Philosophy:
 [ ] Category changes on directories not working correctly in history events (category in below form doesn't update and the comment should be what says it was an auto-label event)
 [ ] Orange badge highlighting for indicating where a favorite will target should revert after navigation is successful
 [ ] Panel title path input should not wordwrap but instead overflow hidden
+[ ] reminders sidebar should refresh slowly on its own, maybe once a minute
+[ ] If there is one subdirectory which demands a particular custom attribute in the grid the column correctly shows, but incorrectly offers it as an editable entry for all. The entry should be disabled unless it is demanded by that particular item and others should show light grey "---" in the field to show it does not apply
+* Style for pasted-in files from Explorer, not working on the version in my work laptop, did we do this?
 
 ### ROADMAP:
 [ ] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
 [ ] Search bar should eagerly search the visible fields when changed - submitting the search bar will eventually become a deeper search including invisible columns and contents of text files (contents' names of zip files too?)
 [ ] OneDrive states - on PC in cloud - syncing - whatever we can get
 [ ] Renameable favorites
+[ ] Need to be able to drag groups in favorites - should collapse on drag start to prevent dragging into itself
+[ ] Favorites make edit mode more obvious with some styling - also the icons and group names are shifting a little bit when edit mode starts
+[ ] Drag and drop from grid into favorites
+[ ] Any way to get default icons for files? This would be great for anyone first using the app, the loss of familiarity is adding friction
 [ ] Ctrl+Enter should save in any active editor (notes, others)
+[ ] Give Abandon/Save/Cancel confirmation on any modal input 
 [ ] double click on notes.txt should open in the internal editor
 [ ] make cache-first an option for categories - where loading the directory pulls from the DB for extra speed but highlights the refresh button to signal that the display is from cache. Clicking on the refresh button scans the dir fully and removes the highlighting
 [ ] Favorites - tooltip shows name, make it show the category for dirs followed by the full path
@@ -51,6 +59,7 @@ Philosophy:
 [ ] Any way to show metric of path's latency / bandwidth? For a heads up that we are browsing a slow source filesystem
 [ ] Browsing zip files - do we want guard against slow locations?
 [ ] I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
+[ ] Column size - make a 
 [ ] un-forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)
 [ ] Make some kind of mark for tags that came from notes (maybe a notes icon that is clickable to open the source notes file?)
 [ ] Backup Macros (need to use the app more in practice to think about what this should be like)

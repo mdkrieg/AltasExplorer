@@ -123,66 +123,274 @@ function readNotesSections(dirPath) {
 }
 
 /**
- * Fetch a map of filename → string[] tags for a single directory.
- * Returns an empty object when the directory isn't in the DB yet.
+ * Fetch all DB-enrichment data for a directory in one pass.
+ * Returns:
+ *   dirId        – integer DB id, or null if directory not yet scanned
+ *   fileRows     – map of filename → { inode, tags, attributes, checksumStatus, checksumValue, dateCreated }
+ *   dirInitials  – resolved initials for the directory itself (for folder icon), or null
  */
-function getTagsForDir(dirPath) {
+function getEnrichmentForDir(dirPath) {
+	if (!db.db) return { dirId: null, fileRows: {}, dirInitials: null };
 	try {
-		if (!db.db) return {};
-		const dirRow = db.db.prepare('SELECT id FROM dirs WHERE dirname = ?').get(dirPath);
-		if (!dirRow) return {};
+		const dirRow = db.db.prepare('SELECT id, initials FROM dirs WHERE dirname = ?').get(dirPath);
+		if (!dirRow) return { dirId: null, fileRows: {}, dirInitials: null };
+
 		const rows = db.db.prepare(
-			'SELECT filename, tags FROM files WHERE dir_id = ? AND tags IS NOT NULL'
+			`SELECT inode, filename, tags, attributes, checksumStatus, checksumValue, dateCreated
+			 FROM files WHERE dir_id = ?`
 		).all(dirRow.id);
-		const map = {};
+
+		const fileRows = {};
 		for (const row of rows) {
-			try {
-				const parsed = JSON.parse(row.tags);
-				if (Array.isArray(parsed) && parsed.length > 0) map[row.filename] = parsed;
-			} catch { /* malformed JSON, skip */ }
+			fileRows[row.filename] = {
+				inode:          row.inode,
+				tags:           row.tags || null,
+				attributes:     row.attributes || null,
+				checksumStatus: row.checksumStatus || null,
+				checksumValue:  row.checksumValue || null,
+				dateCreated:    row.dateCreated || null,
+			};
 		}
-		return map;
+
+		// Resolve initials for the directory itself (used for folder icon in renderer)
+		let dirInitials = null;
+		try { dirInitials = db.resolveDirectoryInitials(dirPath).value || null; } catch { /* ignore */ }
+
+		return { dirId: dirRow.id, fileRows, dirInitials };
 	} catch {
-		return {};
+		return { dirId: null, fileRows: {}, dirInitials: null };
 	}
+}
+
+// ─── Phase 1 helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Parse a tags JSON string (stored in the DB) into an array of tag name strings.
+ * Returns [] on null input or parse error.
+ */
+function parseTags(tagsJson) {
+	if (!tagsJson) return [];
+	try {
+		const parsed = JSON.parse(tagsJson);
+		return Array.isArray(parsed) ? parsed.filter(t => typeof t === 'string') : [];
+	} catch { return []; }
+}
+
+/**
+ * Compute a search score for a DB entry, incorporating filename, tag, and attribute matches.
+ * Returns an integer 0–100 or null (exclude from results).
+ */
+function scoreDbEntry(query, filename, tagsJson, attributesJson) {
+	const qLower = query.toLowerCase();
+	const baseScore = scoreFilename(query, filename);
+	const tags = parseTags(tagsJson);
+	const tagMatches = tags.some(t => scoreCandidate(query, t) !== null);
+	const attrMatches = !!attributesJson && attributesJson.toLowerCase().includes(qLower);
+
+	if (baseScore !== null) {
+		let score = baseScore;
+		if (tagMatches)  score = Math.min(100, score + 10);
+		if (attrMatches) score = Math.min(100, score + 5);
+		return score;
+	} else if (tagMatches) {
+		return attrMatches ? Math.min(100, 35 + 5) : 35;
+	} else if (attrMatches) {
+		return 30;
+	}
+	return null;
+}
+
+/**
+ * Query the DB for all files and directories under rootPath that match query.
+ * Searches filename, tags JSON, and attributes JSON.
+ * Returns an array of enriched entry objects shaped for buildGridRecords.
+ */
+function queryDbPhase1(rootPath, query) {
+	if (!db.db) return [];
+
+	const results = [];
+	const qLower   = query.toLowerCase();
+	const likePat  = `%${qLower}%`;
+	const rootLike = rootPath + path.sep + '%';
+
+	// ── Files ─────────────────────────────────────────────────────────────────
+	try {
+		const fileRows = db.db.prepare(`
+			SELECT f.inode, f.filename, f.dateModified, f.dateCreated, f.size,
+			       f.tags, f.attributes, f.checksumValue, f.checksumStatus,
+			       d.id AS dir_id, d.dirname
+			FROM files f
+			JOIN dirs d ON f.dir_id = d.id
+			WHERE f.filename != '.'
+			  AND (d.dirname = ? OR d.dirname LIKE ?)
+			  AND (
+			    LOWER(f.filename) LIKE ?
+			    OR (f.tags IS NOT NULL AND LOWER(f.tags) LIKE ?)
+			    OR (f.attributes IS NOT NULL AND LOWER(f.attributes) LIKE ?)
+			  )
+		`).all(rootPath, rootLike, likePat, likePat, likePat);
+
+		for (const row of fileRows) {
+			const score = scoreDbEntry(query, row.filename, row.tags, row.attributes);
+			if (score === null) continue;
+
+			results.push({
+				filename:      row.filename,
+				path:          path.join(row.dirname, row.filename),
+				relPath:       path.relative(rootPath, row.dirname),
+				isDirectory:   false,
+				score,
+				inode:         row.inode,
+				dir_id:        row.dir_id,
+				tags:          row.tags   || null,
+				attributes:    row.attributes || null,
+				checksumStatus: row.checksumStatus || null,
+				checksumValue:  row.checksumValue  || null,
+				dateCreated:   row.dateCreated   || null,
+				dateModified:  row.dateModified  || null,
+				size:          row.size || null,
+				initials:      null,
+				hasNotes:      false,
+				todoCounts:    null,
+				changeState:   null,
+				perms:         null,
+			});
+		}
+	} catch (err) {
+		logger.warn(`[deepSearch] Phase 1 files query error: ${err.message}`);
+	}
+
+	// ── Directories ───────────────────────────────────────────────────────────
+	// Fetch all dirs under rootPath, filter by basename score in JS.
+	// Directory tags/attributes are stored with filename='.' in the files table.
+	try {
+		const dirRows = db.db.prepare(`
+			SELECT d.id, d.dirname, d.inode, d.initials,
+			       f.tags, f.attributes
+			FROM dirs d
+			LEFT JOIN files f ON f.dir_id = d.id AND f.filename = '.'
+			WHERE (d.dirname = ? OR d.dirname LIKE ?)
+			  AND d.parent_id IS NOT NULL
+		`).all(rootPath, rootLike);
+
+		for (const row of dirRows) {
+			const basename = path.basename(row.dirname);
+			const score = scoreDbEntry(query, basename, row.tags, row.attributes);
+			if (score === null) continue;
+
+			let initials = row.initials || null;
+			try {
+				const resolved = db.resolveDirectoryInitials(row.dirname);
+				if (resolved && resolved.value) initials = resolved.value;
+			} catch { /* ignore */ }
+
+			results.push({
+				filename:      basename,
+				path:          row.dirname,
+				relPath:       path.relative(rootPath, path.dirname(row.dirname)),
+				isDirectory:   true,
+				score,
+				inode:         row.inode || null,
+				dir_id:        row.id,
+				tags:          row.tags   || null,
+				attributes:    row.attributes || null,
+				checksumStatus: null,
+				checksumValue:  null,
+				dateCreated:   null,
+				dateModified:  null,
+				size:          null,
+				initials,
+				hasNotes:      false,
+				todoCounts:    null,
+				changeState:   null,
+				perms:         null,
+			});
+		}
+	} catch (err) {
+		logger.warn(`[deepSearch] Phase 1 dirs query error: ${err.message}`);
+	}
+
+	// ── Notes enrichment ───────────────────────────────────────────────────────
+	// hasNotes, todoCounts, and notesMatch come from notes.txt flat files — not
+	// stored in SQLite — so they are computed in a post-query pass over results.
+	// Reads are cached per directory to avoid redundant I/O.
+	const dirNotesCache = {};
+	const getNotesForDir = (dirPath) => {
+		if (!dirNotesCache[dirPath]) {
+			dirNotesCache[dirPath] = readNotesSections(dirPath) || {};
+		}
+		return dirNotesCache[dirPath];
+	};
+
+	for (const result of results) {
+		if (result.isDirectory) {
+			// Dir notes live in the dir's OWN notes.txt under the __dir__ section.
+			const sections    = getNotesForDir(result.path);
+			const dirSec      = sections['__dir__'] || '';
+			result.hasNotes   = dirSec.trim().length > 0;
+			const counts      = notesParser.countTodoItems(dirSec);
+			result.todoCounts = counts.total > 0 ? counts : null;
+			result.notesMatch = dirSec.toLowerCase().includes(qLower);
+		} else {
+			// File notes live in the PARENT dir's notes.txt under @filename.
+			const sections    = getNotesForDir(path.dirname(result.path));
+			const fileSec     = sections[result.filename] || '';
+			result.hasNotes   = fileSec.trim().length > 0;
+			const counts      = notesParser.countTodoItems(fileSec);
+			result.todoCounts = counts.total > 0 ? counts : null;
+			result.notesMatch = fileSec.toLowerCase().includes(qLower);
+		}
+	}
+
+	return results;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Start an async breadth-first deep search.
+ * Start a 2-phase deep search:
  *
- * Yields between directory iterations (via `setImmediate`) so the main
- * process event loop stays responsive. Results are batched: `onBatch` is
- * called whenever 50 matches accumulate OR 200 ms have elapsed without a
- * flush, whichever comes first.  When the BFS is complete (or cancelled)
- * `onBatch([], true)` is called once as a sentinel.
+ *   Phase 1 — synchronous DB query for files/dirs that match query on
+ *              filename, tags, or attributes.  Sends one batch immediately
+ *              with phase=1 so the renderer can show results without waiting
+ *              for the filesystem walk.
+ *
+ *   Phase 2 — async BFS filesystem walk.  Emits entries NOT found in Phase 1
+ *              (new/unscanned files) as batches with phase=2.  After the walk
+ *              completes, any Phase 1 entry whose path was never seen on disk
+ *              is reported as an orphan candidate in the final done callback.
  *
  * @param {string}   rootPath       Directory to search recursively.
  * @param {string}   query          Search term (raw, not pre-lowercased).
- * @param {Function} onBatch        Callback `(batch: Array, done: boolean)`.
+ * @param {Function} onBatch        Callback `(batch, done, phase, orphans)`.
  * @param {{ cancelled: boolean }} cancellationRef
- *   Shared mutable reference.  Set `.cancelled = true` to abort the search;
- *   the loop checks this flag between directories.
- *
- * Each item in `batch` has the shape:
- *   { filename, path, relPath, isDirectory, score, tags, size, dateModified }
- * where `relPath` is the directory path relative to `rootPath` (empty string
- * for items directly inside rootPath), and `tags` is an array of tag name strings.
  */
 async function startDeepSearch(rootPath, query, onBatch, cancellationRef) {
 	if (!query || !query.trim()) {
-		onBatch([], true);
+		onBatch([], true, 2, []);
 		return;
 	}
 
-	const q = query.trim();
+	const q      = query.trim();
 	const qLower = q.toLowerCase();
-	const queue = [rootPath];
-	const pendingBatch = [];
-	let lastFlushTime = Date.now();
+
+	// ── Phase 1: DB query ────────────────────────────────────────────────────
+	const phase1Entries = queryDbPhase1(rootPath, q);
+	const phase1Paths   = new Set(phase1Entries.map(e => e.path));
+	if (phase1Entries.length > 0) {
+		onBatch(phase1Entries, false, 1, null);
+	}
+
+	// ── Phase 2: filesystem BFS walk ─────────────────────────────────────────
+	// Only emits items NOT already covered by Phase 1.
+	// Tracks all paths seen on disk to detect DB entries that have gone missing.
+	const visitedPaths  = new Set();
+	visitedPaths.add(rootPath); // rootPath itself may appear in Phase 1 results
+	const queue         = [rootPath];
+	const pendingBatch  = [];
+	let lastFlushTime   = Date.now();
 	const BATCH_INTERVAL_MS = 200;
-	const BATCH_SIZE = 50;
+	const BATCH_SIZE        = 50;
 
 	while (queue.length > 0) {
 		if (cancellationRef.cancelled) break;
@@ -198,80 +406,104 @@ async function startDeepSearch(rootPath, query, onBatch, cancellationRef) {
 		}
 
 		const notesSections = readNotesSections(dirPath);
-		const tagsMap = getTagsForDir(dirPath);
+		const enrichment    = getEnrichmentForDir(dirPath);
 
 		for (const entry of entries) {
 			if (cancellationRef.cancelled) break;
 
-			// Always enqueue subdirectories for BFS even if they don't match.
-			if (entry.isDirectory) {
-				queue.push(entry.path);
-			}
+			// Track every filesystem path so we can compute orphans afterward.
+			visitedPaths.add(entry.path);
 
-			const entryTags = tagsMap[entry.filename] || [];
+			// Always enqueue subdirectories for BFS.
+			if (entry.isDirectory) queue.push(entry.path);
+
+			// Already returned in Phase 1 — don't duplicate.
+			if (phase1Paths.has(entry.path)) continue;
+
+			const fileRow = enrichment.fileRows[entry.filename];
+			const tagsJson = entry.isDirectory ? null : (fileRow ? fileRow.tags : null);
 			const baseScore = scoreFilename(q, entry.filename);
-
-			// Check whether any tag matches the query.
-			let tagMatches = false;
-			for (const tag of entryTags) {
-				if (scoreCandidate(q, tag) !== null) { tagMatches = true; break; }
-			}
-
-			// Check whether the file's notes section contains the query.
+			const tags = parseTags(tagsJson);
+			const tagMatches = tags.some(t => scoreCandidate(q, t) !== null);
 			const noteSectionContent = (notesSections && notesSections[entry.filename]) || '';
 			const notesMatches = noteSectionContent.toLowerCase().includes(qLower);
 
-			// Skip if nothing matches at all.
 			if (baseScore === null && !tagMatches && !notesMatches) continue;
 
-			// Determine final score.
-			// Filename match is the primary signal; tags/notes add bonuses or
-			// act as a floor when the filename alone doesn't match.
 			let score;
 			if (baseScore !== null) {
 				score = baseScore;
-				if (tagMatches)  score = Math.min(100, score + 10);
+				if (tagMatches)   score = Math.min(100, score + 10);
 				if (notesMatches) score = Math.min(100, score + 10);
 			} else if (tagMatches) {
 				score = 35;
 				if (notesMatches) score = Math.min(100, score + 10);
 			} else {
-				// notes-only match
-				score = 25;
+				score = 25; // notes-only match
 			}
 
 			pendingBatch.push({
-				filename: entry.filename,
-				path: entry.path,
-				relPath: path.relative(rootPath, path.dirname(entry.path)),
-				isDirectory: entry.isDirectory,
+				filename:       entry.filename,
+				path:           entry.path,
+				relPath:        path.relative(rootPath, path.dirname(entry.path)),
+				isDirectory:    entry.isDirectory,
 				score,
-				tags: entryTags,
-				size: entry.size,
-				dateModified: entry.dateModified,
+				inode:          (fileRow ? fileRow.inode : null) || entry.inode || null,
+				dir_id:         entry.isDirectory ? null : (enrichment.dirId || null),
+				tags:           tagsJson,
+				attributes:     entry.isDirectory ? null : (fileRow ? fileRow.attributes : null),
+				checksumStatus: entry.isDirectory ? null : (fileRow ? fileRow.checksumStatus : null),
+				checksumValue:  entry.isDirectory ? null : (fileRow ? fileRow.checksumValue  : null),
+				dateCreated:    (fileRow ? fileRow.dateCreated : null) || entry.dateCreated || null,
+				dateModified:   entry.dateModified,
+				size:           entry.size || null,
+				initials:       entry.isDirectory ? (enrichment.dirInitials || null) : null,
+				hasNotes:       entry.isDirectory ? false : !!(noteSectionContent),
+				todoCounts:     null,  // computed below
+				notesMatch:     notesMatches,
+				changeState:    null,
+				perms:          null,
 			});
+
+			// Populate todoCounts (and dir hasNotes/notesMatch) which need their own read.
+			const pushed = pendingBatch[pendingBatch.length - 1];
+			if (entry.isDirectory) {
+				// Dir notes live in the dir's OWN notes.txt under __dir__.
+				const dirSections  = readNotesSections(entry.path) || {};
+				const dirSec       = dirSections['__dir__'] || '';
+				pushed.hasNotes    = dirSec.trim().length > 0;
+				const dc           = notesParser.countTodoItems(dirSec);
+				pushed.todoCounts  = dc.total > 0 ? dc : null;
+				pushed.notesMatch  = dirSec.toLowerCase().includes(qLower);
+			} else {
+				const fc           = notesParser.countTodoItems(noteSectionContent);
+				pushed.todoCounts  = fc.total > 0 ? fc : null;
+			}
 		}
 
-		// Flush batch periodically to keep UI responsive.
 		const now = Date.now();
 		if (pendingBatch.length >= BATCH_SIZE || now - lastFlushTime >= BATCH_INTERVAL_MS) {
 			if (pendingBatch.length > 0) {
-				onBatch(pendingBatch.splice(0), false);
+				onBatch(pendingBatch.splice(0), false, 2, null);
 			}
 			lastFlushTime = Date.now();
 		}
 
-		// Yield to main-process event loop between directories.
 		await new Promise(r => setImmediate(r));
 	}
 
-	// Final flush of any remaining accumulated results.
+	// Final flush of remaining Phase 2 results.
 	if (!cancellationRef.cancelled && pendingBatch.length > 0) {
-		onBatch(pendingBatch.splice(0), false);
+		onBatch(pendingBatch.splice(0), false, 2, null);
 	}
 
 	if (!cancellationRef.cancelled) {
-		onBatch([], true);
+		// Orphans: Phase 1 DB entries whose paths were never seen during the walk.
+		const orphanPaths = [];
+		for (const p of phase1Paths) {
+			if (!visitedPaths.has(p)) orphanPaths.push(p);
+		}
+		onBatch([], true, 2, orphanPaths);
 	}
 }
 
