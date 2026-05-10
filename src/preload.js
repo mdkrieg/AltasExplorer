@@ -248,6 +248,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Markdown rendering via IPC
   renderMarkdown: (content, basePath) => ipcRenderer.invoke('render-markdown', basePath ? { content, basePath } : content),
 
+  // OS file type icons (native shell icons, cached by extension)
+  getOsFileIcon: (ext) => ipcRenderer.invoke('get-os-file-icon', ext),
+  clearOsIconCache: () => ipcRenderer.invoke('clear-os-icon-cache'),
+
   // EXIF metadata
   getExifData: (filePath) => ipcRenderer.invoke('get-exif-data', filePath),
   

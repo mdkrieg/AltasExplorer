@@ -54,6 +54,38 @@ A small set of keys are intentionally global — they should fire regardless of 
 
 `Ctrl+W` is the sole exception to the modal-blocking rule: it closes a panel under normal circumstances, but when a modal is open it should **close the modal instead** (prompting for abort-edit confirmation if applicable). This is the correct behaviour because "close what I'm looking at" is the semantic meaning of `Ctrl+W`. *Note: as of May 2026, `Ctrl+W` incorrectly closes the panel behind an open modal rather than the modal itself.*
 
+## Refresh is a deeper look
+
+Normal browse/navigate prioritizes snappiness — caches are used aggressively so repeated visits to the same directory or file types feel instant.
+
+There are two distinct kinds of refresh, and they must never be conflated:
+
+### Explicit Refresh (toolbar button)
+
+The user is explicitly asking for a fresh perspective. This signals intent qualitatively different from just navigating to the same path again. Explicit Refresh should:
+
+- Clear in-memory caches that hold data which could have changed between user actions (e.g. OS file-type icons, which change when apps are installed or uninstalled).
+- Trigger a full re-scan rather than relying on cached results.
+- Show the full loading overlay (same as navigating to the directory fresh).
+
+**Rule for new features:** If you add a cache that holds data sourced from outside the app (OS, shell, external services), hook its invalidation to the Refresh button. The implementation pattern is:
+1. Clear the main-process cache via an IPC call (fire-and-forget, no `await` needed in the click handler).
+2. Clear the renderer-side cache Map directly.
+3. Then proceed with the existing navigate/reload call.
+
+### Background Refresh (automatic timer)
+
+Background refresh is a **soft, passive scan** that runs on a timer while the app is open. Its purpose is to detect filesystem changes silently — it must never be disruptive.
+
+Rules:
+- **Never clear the grid or show a loading overlay.** The geometry of the current view must not change because of a background refresh.
+- **Update in-place.** Modified or removed entries have their row fields updated directly (`grid.refreshRow(recid)`) without moving their position in the list. Scroll position and row order are preserved.
+- **Append new items at the bottom.** New entries are appended after existing rows (`grid.add(records)`), never inserted in the middle.
+- **Show a brief text notification only.** A small dismissing banner (e.g. "Background refresh: 2 modified items detected") fades in over the grid footer and auto-dismisses after ~4 seconds. No modal, no alert, no overlay.
+- **The banner must be `position: absolute`.** It overlays the panel without shifting any flex/grid siblings.
+
+This means background refresh is strictly a DB-comparison pass + in-place UI patch. It does NOT clear any caches (that is the Refresh button's job).
+
 ### Sidebar-owned keys
 
 Some keys appear to act on panels but are actually in service of the currently focused sidebar item. Left/Right arrow keys while a favorites item is keyboard-focused cycle the **target panel** for that item — the action is owned by the sidebar context, not the panels. This means:

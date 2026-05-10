@@ -286,10 +286,10 @@ async function initialize() {
       }, { passive: false, capture: true });
     }
 
-    window.electronAPI.onDirectoryChanged(({ panelId, dirPath }) => {
+    window.electronAPI.onDirectoryChanged(({ panelId, dirPath, entries }) => {
       const state = panelState[panelId];
       if (state && state.currentPath === dirPath) {
-        panels.navigateToDirectory(dirPath, panelId, false).catch(err => {
+        panels.applyBackgroundChanges(entries || [], panelId).catch(err => {
           console.error(`Background refresh failed for panel ${panelId}:`, err);
         });
       }

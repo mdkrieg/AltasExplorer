@@ -87,6 +87,21 @@ export let panelDividerState = {
 	minPanelHeight: 100,
 };
 const labelIconCache = new Map();
+// OS-native file icon cache keyed by lowercase extension (e.g. ".pdf").
+// Module-level so it persists across navigations — cleared by Refresh.
+const osIconCache = new Map();
+
+/**
+ * Returns a data URL for the OS-native icon for the given extension, or null
+ * if the OS cannot supply one. Results are cached at the module level.
+ * @param {string} ext  Lowercase extension including the dot, e.g. ".pdf"
+ */
+async function getOsFileIconUrl(ext) {
+	if (osIconCache.has(ext)) return osIconCache.get(ext);
+	const dataUrl = await window.electronAPI.getOsFileIcon(ext);
+	osIconCache.set(ext, dataUrl); // cache null too — don't retry on every render
+	return dataUrl;
+}
 const INITIAL_LABEL_SUGGESTION_COUNT = 4;
 const LABEL_SUGGESTION_INCREMENT = 3;
 let createTagModalState = {
@@ -1377,6 +1392,10 @@ function attachPanelToolbarEventListeners(panelId) {
 	$tb.find('[data-action="refresh"]').off('click').on('click', function () {
 		setActivePanelId(panelId);
 		if (panelState[panelId]?.currentPath) {
+			// Clear OS icon caches — Refresh is a deeper look and should pick up
+			// any icon changes from newly installed or uninstalled apps.
+			window.electronAPI.clearOsIconCache();
+			osIconCache.clear();
 			navigateToDirectory(panelState[panelId].currentPath, panelId);
 		}
 	});
@@ -3477,6 +3496,110 @@ function buildWindowTitle(dirPath, labels, settings) {
 	return `${resolvedDisplayName} (${folderBasename})`;
 }
 
+function showPanelRefreshBanner(panelId, message) {
+	const panelEl = document.getElementById(`panel-${panelId}`);
+	if (!panelEl) return;
+	const container = panelEl.querySelector(':scope > .panel-content') || panelEl;
+	let banner = container.querySelector('.panel-bg-refresh-banner');
+	if (!banner) {
+		banner = document.createElement('div');
+		banner.className = 'panel-bg-refresh-banner';
+		container.appendChild(banner);
+	}
+	if (banner._dismissTimer) clearTimeout(banner._dismissTimer);
+	banner.textContent = message;
+	banner.classList.add('is-visible');
+	banner._dismissTimer = setTimeout(() => {
+		banner.classList.remove('is-visible');
+	}, 4000);
+}
+
+export async function applyBackgroundChanges(changedEntries, panelId) {
+	const state = panelState[panelId];
+	if (!state || !state.w2uiGrid || !changedEntries || changedEntries.length === 0) return;
+
+	// Only apply to the normal detail grid view — skip gallery, deep search, virtual views
+	const $panel = $(`#panel-${panelId}`);
+	if (!$panel.find('.panel-grid').is(':visible')) return;
+
+	function applyClass(content, className) {
+		if (!className) return content;
+		return `<div class="${className}">${content}</div>`;
+	}
+
+	function stripClass(html) {
+		if (typeof html !== 'string') return html;
+		const match = html.match(/^<div class="[^"]*">([\s\S]*)<\/div>$/);
+		return match ? match[1] : html;
+	}
+
+	const grid = state.w2uiGrid;
+	const newEntries = changedEntries.filter(e => e.changeState === 'new');
+	const updatedEntries = changedEntries.filter(e =>
+		e.changeState === 'dateModified' || e.changeState === 'checksumPending');
+	const orphanedEntries = changedEntries.filter(e =>
+		e.changeState === 'orphan' || e.changeState === 'moved');
+
+	// Update modified/orphaned rows in-place without reordering the grid
+	for (const entry of [...updatedEntries, ...orphanedEntries]) {
+		const record = state.sourceRecords.find(r => r.path === entry.path);
+		if (!record) continue;
+
+		const className = getRowClassName(entry.changeState);
+		record.changeState = entry.changeState;
+
+		// Icon: moved entries get a special icon; others just get a re-wrapped class
+		if (entry.changeState === 'moved') {
+			const movedIconSvg = record.isFolder
+				? '<img src="assets/folder-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">'
+				: '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+			record.icon = applyClass(movedIconSvg, className);
+		} else {
+			record.icon = applyClass(stripClass(record.icon), className);
+		}
+
+		// Text fields: strip old class wrapper and re-apply new one
+		const rawFilename = record.filenameRaw || stripClass(record.filename);
+		record.filename = applyClass(rawFilename, className);
+		record.type = applyClass(stripClass(record.type), className);
+		record.perms = applyClass(stripClass(record.perms), className);
+
+		if (record.isFolder) {
+			record.size = applyClass('-', className);
+		} else {
+			record.size = applyClass(utils.formatBytes(entry.size), className);
+			record.dateModified = getDateModifiedCell(entry, entry.changeState);
+			record.modified = -new Date(entry.dateModified).getTime();
+			record.dateModifiedRaw = entry.dateModified;
+			record.checksum = getChecksumCell(entry, entry.changeState);
+		}
+
+		grid.refreshRow(record.recid);
+	}
+
+	// Append new entries at the bottom without touching existing row positions
+	if (newEntries.length > 0) {
+		const tagDefs = await window.electronAPI.loadTags().catch(() => ({}));
+		const iconCache = new Map();
+		const categoryCache = new Map();
+		// Ensure recidCounter is above all existing recids so new records have unique IDs
+		const maxRecid = state.sourceRecords.reduce((m, r) => Math.max(m, r.recid || 0), 0);
+		state.recidCounter = maxRecid + 1;
+		const newRecords = await buildGridRecords(newEntries, panelId, iconCache, categoryCache, tagDefs);
+		appendPanelSourceRecords(panelId, newRecords);
+	}
+
+	// Show a brief dismissing notification banner (no overlay, no geometry shift)
+	const parts = [];
+	if (newEntries.length) parts.push(`${newEntries.length} new`);
+	if (updatedEntries.length) parts.push(`${updatedEntries.length} modified`);
+	if (orphanedEntries.length) parts.push(`${orphanedEntries.length} removed`);
+	if (parts.length > 0) {
+		const total = changedEntries.length;
+		showPanelRefreshBanner(panelId, `Background refresh: ${parts.join(', ')} ${total === 1 ? 'item' : 'items'} detected`);
+	}
+}
+
 export async function maybeRefreshPanel1TitleAndIcon() {
 	const panel1Path = panelState[1]?.currentPath;
 	if (!panel1Path) return;
@@ -3810,9 +3933,29 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 		const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
 		const ftType = matchedFt ? matchedFt.type : '';
 		const permsText = formatPerms(file.perms);
-		const iconSvg = file.changeState === 'moved'
-			? '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">'
-			: `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
+
+		let iconSvg;
+		if (file.changeState === 'moved') {
+			iconSvg = '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+		} else if (ftIconFile === 'user-file.png') {
+			const dotIdx = file.filename.lastIndexOf('.');
+			const ext = dotIdx > 0 ? file.filename.slice(dotIdx).toLowerCase() : null;
+			let osIconDataUrl = null;
+			if (ext) {
+				const cacheKey = 'os:' + ext;
+				if (iconCache.has(cacheKey)) {
+					osIconDataUrl = iconCache.get(cacheKey);
+				} else {
+					osIconDataUrl = await getOsFileIconUrl(ext);
+					iconCache.set(cacheKey, osIconDataUrl);
+				}
+			}
+			iconSvg = osIconDataUrl
+				? `<img src="${osIconDataUrl}" style="width: 20px; height: 20px; object-fit: contain;">`
+				: '<img src="assets/icons/user-file.png" style="width: 20px; height: 20px; object-fit: contain;">';
+		} else {
+			iconSvg = `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
+		}
 
 		records.push({
 			recid: state.recidCounter++,
@@ -5572,9 +5715,20 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 		const ftIconFile = (matchedFt && matchedFt.icon) ? matchedFt.icon : 'user-file.png';
 		const ftType = matchedFt ? matchedFt.type : '';
 		const permsText = formatPerms(file.perms);
-		const iconSvg = file.changeState === 'moved'
-			? '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">'
-			: `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
+
+		let iconSvg;
+		if (file.changeState === 'moved') {
+			iconSvg = '<img src="assets/icons/file-moved.svg" style="width: 20px; height: 20px; object-fit: contain;">';
+		} else if (ftIconFile === 'user-file.png') {
+			const dotIdx = file.filename.lastIndexOf('.');
+			const ext = dotIdx > 0 ? file.filename.slice(dotIdx).toLowerCase() : null;
+			const osIconDataUrl = ext ? await getOsFileIconUrl(ext) : null;
+			iconSvg = osIconDataUrl
+				? `<img src="${osIconDataUrl}" style="width: 20px; height: 20px; object-fit: contain;">`
+				: '<img src="assets/icons/user-file.png" style="width: 20px; height: 20px; object-fit: contain;">';
+		} else {
+			iconSvg = `<img src="assets/icons/${ftIconFile}" style="width: 20px; height: 20px; object-fit: contain;">`;
+		}
 
 		records.push({
 			recid: recordId++,

@@ -57,7 +57,9 @@ Philosophy:
 [ ] TODO aggregator, have some kind of button to show crossed off items, for clarity but also so that they can be unchecked easily
 [ ] LOCAL FAVORITES - is it reorderable? as in can I make the group appear higher or lower in the list? it would make sense for me to be able
 [ ] Any way to show metric of path's latency / bandwidth? For a heads up that we are browsing a slow source filesystem
-[ ] Browsing zip files - do we want guard against slow locations?
+[ ] Browsing zip files add functionality bue consider if we want guard against slow locations?
+[ ] CMD prompt noticed oddities with formatting when pushing to panel that already had contents, and then the app hung for a few seconds when I tried to close it
+  * I think best to give the Terminal its own URI, perhaps atlas://terminal/n - where n is the terminal ID and we consider if we want the ability to leave them open in the background / to be restored later (via the sidebar terminal button)
 [ ] I think that instead of having checksum be a straight option on categories it should be moved to Alerts and Monitoring where it obeys rules based on category + tags
 [ ] Column size - make a 
 [ ] un-forced manual assignment should not change the directory category unless there is an auto-assigned category. Currently goes back to Default (or maybe previously assigned category?)

@@ -4637,6 +4637,30 @@ hr {
   100% { transform: translateX(350%); }
 }
 
+/* Background-refresh notification banner
+   - position: absolute so it never shifts the grid geometry
+   - floats above the w2ui footer, centred horizontally
+   - fades in/out via opacity transition                              */
+.panel-bg-refresh-banner {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 30, 30, 0.82);
+  color: #fff;
+  padding: 5px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.panel-bg-refresh-banner.is-visible {
+  opacity: 1;
+}
+
 /* =====================================================================
    TODO feature — count badges and modal
    ===================================================================== */

@@ -54,6 +54,29 @@ Users must be able to work *outside* Atlas Explorer and have their work persist:
 
 Atlas reconciles when the user returns. **This is non-negotiable.** Do not introduce features that hide data inside the app, use proprietary blob formats, or break the user's ability to work outside the app.
 
+## In-memory caching
+
+Some data is cheap enough to fetch on demand but expensive enough to avoid re-fetching on every render. The pattern for this is **extension-keyed in-memory Maps** in both the main process and the renderer.
+
+### Two-level cache pattern
+
+| Level | Scope | Lives in | Purpose |
+|---|---|---|---|
+| Main process | Session — survives renderer reloads | `main/main.js` (e.g. `osIconCache`) | Avoids round-trips to the OS or other slow system calls |
+| Renderer | Module — survives panel navigations | `public/js/modules/*.js` (e.g. `osIconCache` in `panels.js`) | Avoids IPC overhead for data already fetched this session |
+
+Both levels cache `null` for misses so failed lookups are not retried on every render.
+
+### When to use disk (SQLite) vs. in-memory
+
+Use **SQLite caching** only when the computation is genuinely expensive and the result is worth persisting across app restarts — the canonical example is video thumbnails (ffmpeg extraction takes real time).
+
+Use **in-memory caching** when the source of truth is the OS or another external service that is fast to query but should not be hit on every render. OS file-type icon lookup (`app.getFileIcon`) is the canonical example — ~2 ms per call, no benefit to persisting across restarts.
+
+### Refresh = deeper look (see [Design Principles](design-principles.md))
+
+In-memory caches that hold data which could change between user sessions (e.g. OS icons that change when an app is installed or uninstalled) should be cleared when the user explicitly presses the Refresh toolbar button. This is the contract: normal browse uses caches for snappiness; Refresh signals the user wants a fresh look.
+
 ## `main/` vs `public/` (Electron split)
 
 Standard Electron split:

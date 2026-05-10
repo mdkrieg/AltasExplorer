@@ -112,6 +112,10 @@ const deepSearch = require('../src/deepSearch');
 // Set .cancelled = true to abort the BFS loop in deepSearch.startDeepSearch.
 const activeDeepSearches = new Map();
 
+// OS file icon cache keyed by lowercase extension (e.g. ".pdf").
+// Session-persistent: survives renderer reloads, cleared on explicit Refresh.
+const osIconCache = new Map();
+
 // Wrap with Electron-aware notify (push to renderer via mainWindow)
 function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBackgroundRefresh = false, options = {}) {
   return _doScan(dirPath, isManualNavigation, isBackgroundRefresh, options, (event) => {
@@ -2015,6 +2019,36 @@ ipcMain.handle('generate-tag-icon', async (event, { bgColor, textColor }) => {
 });
 
 /**
+ * Get the OS-native icon for a file extension.
+ * Cached by lowercase extension for the duration of the session.
+ * Returns a data URL string, or null if unavailable.
+ */
+ipcMain.handle('get-os-file-icon', async (event, ext) => {
+  if (typeof ext !== 'string' || !/^\.[a-zA-Z0-9]+$/.test(ext)) return null;
+  const key = ext.toLowerCase();
+  if (osIconCache.has(key)) return osIconCache.get(key);
+  try {
+    const dummyPath = path.join(os.tmpdir(), 'atlas-icon-probe' + key);
+    const nimg = await app.getFileIcon(dummyPath, { size: 'normal' });
+    const dataUrl = nimg.toDataURL();
+    osIconCache.set(key, dataUrl);
+    return dataUrl;
+  } catch (err) {
+    logger.warn(`Could not get OS icon for extension "${key}": ${err.message}`);
+    osIconCache.set(key, null); // cache the miss so we don't retry each render
+    return null;
+  }
+});
+
+/**
+ * Clear the OS file icon cache (called by the Refresh button so a deeper
+ * look picks up any icon changes from newly-installed/uninstalled apps).
+ */
+ipcMain.handle('clear-os-icon-cache', () => {
+  osIconCache.clear();
+});
+
+/**
  * Directory Initials: Get initials for a directory
  */
 ipcMain.handle('get-directory-initials', (event, dirPath) => {
@@ -3910,7 +3944,7 @@ function startBackgroundRefresh(enabled, interval) {
               mainWindow.webContents.send('alert-count-updated', { count: newCount });
             }
             if (result.hasChanges) {
-              mainWindow.webContents.send('directory-changed', { panelId, dirPath });
+              mainWindow.webContents.send('directory-changed', { panelId, dirPath, entries: result.entries || [] });
             }
           }
         } catch (err) {
