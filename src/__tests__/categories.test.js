@@ -476,3 +476,145 @@ describe('CategoryService - auto-assign categories', () => {
     loadCategoriesSpy.mockRestore();
   });
 });
+
+/**
+ * TEST SUITE 5: ensureHotkeysFile()
+ *
+ * Verifies that hotkeys.json is always created on first run, regardless of
+ * whether the assets source file exists.
+ */
+describe('CategoryService - ensureHotkeysFile()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should copy assets/hotkeys.json to user dir when user file is missing and source exists', () => {
+    // User file absent, source file present
+    fs.existsSync.mockImplementation(p => p.includes('assets'));
+    fs.readFileSync.mockReturnValue(JSON.stringify({ 'Panel Navigation': {} }));
+    fs.writeFileSync.mockImplementation(() => {});
+
+    CategoryService.ensureHotkeysFile();
+
+    // Should have written the user file
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('hotkeys.json'),
+      expect.any(String)
+    );
+  });
+
+  it('should write embedded DEFAULT_HOTKEYS when user file and source file are both missing', () => {
+    // Both files absent
+    fs.existsSync.mockReturnValue(false);
+    fs.writeFileSync.mockImplementation(() => {});
+
+    CategoryService.ensureHotkeysFile();
+
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('hotkeys.json'),
+      expect.any(String)
+    );
+
+    const written = JSON.parse(fs.writeFileSync.mock.calls[0][1]);
+    // Must include all 6 contexts from DEFAULT_HOTKEYS
+    expect(written['Panel Navigation']).toBeDefined();
+    expect(written['File']).toBeDefined();
+    expect(written['Drag']).toBeDefined();
+    expect(written['Layouts']).toBeDefined();
+    expect(written['Grid Navigation']).toBeDefined();
+    expect(written['Clipboard']).toBeDefined();
+  });
+
+  it('should not write anything when user file already exists', () => {
+    // Both user file and source exist — user file wins (no overwrite)
+    fs.existsSync.mockReturnValue(true);
+    fs.writeFileSync.mockImplementation(() => {});
+
+    CategoryService.ensureHotkeysFile();
+
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * TEST SUITE 6: getHotkeys()
+ *
+ * Verifies fallback behaviour and the merge-in-new-defaults path.
+ */
+describe('CategoryService - getHotkeys()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should return DEFAULT_HOTKEYS and write to disk when user file cannot be read', () => {
+    fs.readFileSync.mockImplementation(p => {
+      if (p.includes('.atlasexplorer')) throw new Error('ENOENT');
+      throw new Error('ENOENT'); // source also unavailable in this scenario
+    });
+    fs.existsSync.mockReturnValue(false);
+    fs.writeFileSync.mockImplementation(() => {});
+
+    const result = CategoryService.getHotkeys();
+
+    // Returns full defaults, not the old 8-action stub
+    expect(result['Panel Navigation']).toBeDefined();
+    expect(result['File']).toBeDefined();
+    expect(result['Drag']).toBeDefined();
+    expect(result['Layouts']).toBeDefined();
+    expect(result['Grid Navigation']).toBeDefined();
+    expect(result['Clipboard']).toBeDefined();
+
+    // Should also persist to disk so the next start auto-heals
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('hotkeys.json'),
+      expect.any(String)
+    );
+  });
+
+  it('should merge new actions from source into existing user file', () => {
+    const userHotkeys = { 'Panel Navigation': { navigate_back: { label: 'Navigate Back', key: 'Alt+Left', default: 'Alt+Left' } } };
+    const sourceHotkeys = {
+      'Panel Navigation': {
+        navigate_back: { label: 'Navigate Back', key: 'Alt+Left', default: 'Alt+Left' },
+        new_action:    { label: 'New Action',    key: 'Ctrl+k',   default: 'Ctrl+k' }
+      },
+      'Clipboard': {
+        copy_items: { label: 'Copy', key: 'Ctrl+c', default: 'Ctrl+c' }
+      }
+    };
+
+    fs.readFileSync.mockImplementation(p => {
+      if (p.includes('.atlasexplorer')) return JSON.stringify(userHotkeys);
+      return JSON.stringify(sourceHotkeys);
+    });
+    fs.existsSync.mockReturnValue(true);
+    fs.writeFileSync.mockImplementation(() => {});
+
+    const result = CategoryService.getHotkeys();
+
+    // New actions from source merged in
+    expect(result['Panel Navigation'].new_action).toBeDefined();
+    expect(result['Clipboard']).toBeDefined();
+
+    // Merged file written back to disk
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('hotkeys.json'),
+      expect.any(String)
+    );
+  });
+
+  it('should not write to disk when user file already has all actions', () => {
+    const fullHotkeys = {
+      'Panel Navigation': { navigate_back: { label: 'Navigate Back', key: 'Alt+Left', default: 'Alt+Left' } }
+    };
+
+    fs.readFileSync.mockReturnValue(JSON.stringify(fullHotkeys));
+    fs.existsSync.mockReturnValue(true);
+    fs.writeFileSync.mockImplementation(() => {});
+
+    CategoryService.getHotkeys();
+
+    // No new actions to merge → no write
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
+  });
+});

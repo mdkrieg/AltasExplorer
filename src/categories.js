@@ -9,6 +9,48 @@ const SETTINGS_PATH = path.join(os.homedir(), '.atlasexplorer', 'settings.json')
 const HOTKEYS_PATH = path.join(os.homedir(), '.atlasexplorer', 'hotkeys.json');
 const SOURCE_HOTKEYS_PATH = path.join(__dirname, '..', 'assets', 'hotkeys.json');
 
+// Embedded defaults used when assets/hotkeys.json is unavailable (e.g. packaged builds
+// where the assets directory isn't alongside the asar, or a race during first install).
+// Keys mirror the `default` values in assets/hotkeys.json — never user customisations.
+const DEFAULT_HOTKEYS = {
+  'Panel Navigation': {
+    navigate_back:    { label: 'Navigate Back',              key: 'Alt+Left',      default: 'Alt+Left' },
+    navigate_forward: { label: 'Navigate Forward',           key: 'Alt+Right',     default: 'Alt+Right' },
+    navigate_up:      { label: 'Go to Parent',               key: 'Alt+Up',        default: 'Alt+Up' },
+    add_panel:        { label: 'Add Panel',                  key: 'Ctrl+t',        default: 'Ctrl+t' },
+    open_terminal:    { label: 'Open Terminal Panel',        key: 'Ctrl+j',        default: 'Ctrl+j' },
+    close_panel:      { label: 'Close Active Panel',         key: 'Ctrl+w',        default: 'Ctrl+w' },
+    reopen_panel:     { label: 'Reopen Last Closed Panel',   key: 'Ctrl+Shift+t',  default: 'Ctrl+Shift+t' },
+    open_item:        { label: 'Open Item',                  key: 'Ctrl+Enter',    default: 'Ctrl+Enter' },
+    cycle_panel:      { label: 'Cycle Panel Focus',          key: 'Tab',           default: 'Tab' },
+    focus_path_bar:   { label: 'Focus Path Bar',             key: 'Ctrl+l',        default: 'Ctrl+l' },
+    enter_path:       { label: 'Enter Path',                 key: 'Enter',         default: 'Enter' },
+    cancel_path:      { label: 'Cancel Path',                key: 'Escape',        default: 'Escape' }
+  },
+  'File': {
+    edit_file:   { label: 'Edit File',   key: 'F2',            default: 'F2' },
+    save_file:   { label: 'Save File',   key: 'Ctrl+s',        default: 'Ctrl+s' },
+    new_folder:  { label: 'New Folder',  key: 'Ctrl+Shift+n',  default: 'Ctrl+Shift+n' },
+    rename_item: { label: 'Rename Item', key: 'F2',            default: 'F2' }
+  },
+  'Drag': {
+    open_drag_tray: { label: 'Open Drag Tray', key: 'Ctrl+d', default: 'Ctrl+d' }
+  },
+  'Layouts': {
+    save_layout: { label: 'Save Layout', key: 'Ctrl+Shift+s', default: 'Ctrl+Shift+s' },
+    load_layout: { label: 'Load Layout', key: 'Ctrl+Shift+l', default: 'Ctrl+Shift+l' }
+  },
+  'Grid Navigation': {
+    grid_row_up:   { label: 'Navigate Row Up',   key: 'ArrowUp',   default: 'ArrowUp',   locked: true },
+    grid_row_down: { label: 'Navigate Row Down', key: 'ArrowDown', default: 'ArrowDown', locked: true }
+  },
+  'Clipboard': {
+    copy_items:  { label: 'Copy',  key: 'Ctrl+c', default: 'Ctrl+c' },
+    cut_items:   { label: 'Cut',   key: 'Ctrl+x', default: 'Ctrl+x' },
+    paste_items: { label: 'Paste', key: 'Ctrl+v', default: 'Ctrl+v' }
+  }
+};
+
 class CategoryService {
   constructor() {
     this.ensureDirectories();
@@ -21,16 +63,19 @@ class CategoryService {
   ensureHotkeysFile() {
     if (!fs.existsSync(HOTKEYS_PATH)) {
       try {
-        // Try to read from the source hotkeys file in assets
+        // Prefer copying the source file from assets so any future additions are picked up.
+        // Fall back to the embedded DEFAULT_HOTKEYS constant when the source file is absent
+        // (e.g. packaged builds or first-install race conditions).
         if (fs.existsSync(SOURCE_HOTKEYS_PATH)) {
           const hotkeyContent = fs.readFileSync(SOURCE_HOTKEYS_PATH, 'utf8');
           fs.writeFileSync(HOTKEYS_PATH, hotkeyContent);
           logger.info('Created hotkeys.json from assets');
         } else {
-          logger.warn(`Source hotkeys file not found at ${SOURCE_HOTKEYS_PATH}`);
+          fs.writeFileSync(HOTKEYS_PATH, JSON.stringify(DEFAULT_HOTKEYS, null, 2));
+          logger.warn(`Source hotkeys file not found at ${SOURCE_HOTKEYS_PATH}; wrote embedded defaults instead`);
         }
       } catch (err) {
-        logger.error('Error reading source hotkeys file:', err.message);
+        logger.error('Error creating hotkeys.json:', err.message);
       }
     }
   }
@@ -378,21 +423,13 @@ class CategoryService {
       userHotkeys = JSON.parse(content);
     } catch (err) {
       logger.error('Error loading hotkeys:', err.message);
-      // Return defaults if file cannot be read
-      return {
-        'Panel Navigation': {
-          'navigate_back': { label: 'Navigate Back', key: 'Alt+Left', default: 'Alt+Left' },
-          'navigate_forward': { label: 'Navigate Forward', key: 'Alt+Right', default: 'Alt+Right' },
-          'navigate_up': { label: 'Go to Parent', key: 'Alt+Up', default: 'Alt+Up' },
-          'add_panel': { label: 'Add Panel', key: 'Ctrl+T', default: 'Ctrl+T' },
-          'enter_path': { label: 'Enter Path', key: 'Enter', default: 'Enter' },
-          'cancel_path': { label: 'Cancel Path', key: 'Escape', default: 'Escape' }
-        },
-        'Notes': {
-          'edit_file': { label: 'Edit Notes', key: 'F2', default: 'F2' },
-          'save_file': { label: 'Save Notes', key: 'Ctrl+S', default: 'Ctrl+S' }
-        }
-      };
+      // Write defaults to disk so the next call succeeds rather than hitting the same path.
+      try {
+        fs.writeFileSync(HOTKEYS_PATH, JSON.stringify(DEFAULT_HOTKEYS, null, 2));
+      } catch (writeErr) {
+        logger.error('Error writing default hotkeys:', writeErr.message);
+      }
+      return DEFAULT_HOTKEYS;
     }
 
     // Merge any new actions from the source defaults that aren't in the user file
