@@ -1102,11 +1102,15 @@ function buildLocalFavoritesNodes() {
  * Build the W2UI group node for LOCAL FAVORITES.
  */
 function buildLocalFavoritesGroupNode() {
+  // Preserve the current expanded/collapsed state if the group already exists
+  const currentNode = w2uiFavoritesSidebar?.get('local-favorites');
+  const expanded = currentNode ? currentNode.expanded : true;
+
   return {
     id: 'local-favorites',
     text: 'LOCAL FAVORITES',
     group: true,
-    expanded: true,
+    expanded,
     class: 'local-favorites-group-node',
     isLocalFavorites: true,
     nodes: buildLocalFavoritesNodes()

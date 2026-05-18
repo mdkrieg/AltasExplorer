@@ -27,9 +27,9 @@ Philosophy:
 * Customizable context menu actions for launching scripts
 
 ### BUGS:
-[ ] Adding a favorite by right click causes LOCAL FAVORITES to expand if it is open
-[ ] Navigating to a favorite (possibly any dir) should clear the search bar, currently the view gets insta-filtered
-[ ] Still getting erroneous title bar when opening a new panel with Ctrl+T
+[x] Adding a favorite by right click causes LOCAL FAVORITES to expand if it is closed
+[-] CNR Navigating to a favorite (possibly any dir) should clear the search bar, currently the view gets insta-filtered
+[x] Still getting erroneous title bar when opening a new panel with Ctrl+T
 [ ] selectable list attrs need a clear option
 [ ] drag-out of app not working (need to hold Alt but still does nothing)
 [x] regression, delete key no longer deletes files or folders
@@ -38,6 +38,7 @@ Philosophy:
 [ ] Panel title path input should not wordwrap but instead overflow hidden
 [ ] reminders sidebar should refresh slowly on its own, maybe once a minute
 [ ] If there is one subdirectory which demands a particular custom attribute in the grid the column correctly shows, but incorrectly offers it as an editable entry for all. The entry should be disabled unless it is demanded by that particular item and others should show light grey "---" in the field to show it does not apply
+[ ] 
 * Style for pasted-in files from Explorer, not working on the version in my work laptop, did we do this?
 
 ### ROADMAP:
