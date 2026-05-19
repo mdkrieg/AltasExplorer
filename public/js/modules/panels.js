@@ -1445,9 +1445,7 @@ function attachPanelToolbarEventListeners(panelId) {
 		}
 	}).on('blur', function () {
 		clearTimeout(liveFilterTimer);
-		const committed = panelState[panelId].toolbarSearch || '';
-		this.value = committed;
-		applyLivePanelFilter(panelId, committed);
+		applyLivePanelFilter(panelId, this.value);
 	}).on('input', function () {
 		clearTimeout(liveFilterTimer);
 		const val = this.value;
@@ -3875,7 +3873,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			orphan_type: folder.orphan_id ? 'dir' : null,
 			new_dir_id: folder.new_dir_id || null,
 			hasNotes: folder.hasNotes || false,
-			todo: folder.todoCounts || null
+			todo: folder.todoCounts || null,
+			_demandedAttrs: (cat && cat.attributes) ? [...cat.attributes] : []
 		});
 
 		if (folder.attributes) {
@@ -5652,7 +5651,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			orphan_type: folder.orphan_id ? 'dir' : null,
 			new_dir_id: folder.new_dir_id || null,
 			hasNotes: folder.hasNotes || false,
-			todo: folder.todoCounts || null
+			todo: folder.todoCounts || null,
+			_demandedAttrs: (category && category.attributes) ? [...category.attributes] : []
 		});
 
 		if (folder.attributes) {
@@ -6413,6 +6413,12 @@ function renderGridAttributeCell(record, attrName, attrDefinition) {
 		(appliesTo === 'files' && record.isFolder);
 	if (notApplicable) {
 		return '<div class="grid-attr-copy-cell grid-attr-na"><span class="grid-attr-copy-text grid-attr-na-text">---</span></div>';
+	}
+	// For folder records, only show editable cell if this attribute is demanded by the folder's category
+	if (record.isFolder && !attrDefinition?.global && record._demandedAttrs !== undefined) {
+		if (!record._demandedAttrs.includes(attrName)) {
+			return '<div class="grid-attr-copy-cell grid-attr-na"><span class="grid-attr-copy-text grid-attr-na-text">---</span></div>';
+		}
 	}
 	const rawValue = record[`attr_${attrName}`];
 	const safeAttrName = utils.escapeHtml(attrName);

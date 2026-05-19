@@ -58,6 +58,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
+  overflow: hidden;
 }
 
 /* Scroll Container */
@@ -2376,8 +2377,12 @@ hr {
   border-radius: 15px 0 0 15px !important;
   font-family: inherit;
   flex: 1;
+  min-width: 0;
   width: 100%;
   margin-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-path-input:focus {

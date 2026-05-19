@@ -31,19 +31,18 @@ Philosophy:
 [-] CNR Navigating to a favorite (possibly any dir) should clear the search bar, currently the view gets insta-filtered
 [x] Still getting erroneous title bar when opening a new panel with Ctrl+T
 [ ] selectable list attrs need a clear option
-[ ] drag-out of app not working (need to hold Alt but still does nothing)
+[ ] WOMM drag-out of app not working (need to hold Alt but still does nothing)
 [x] regression, delete key no longer deletes files or folders
 [ ] Category changes on directories not working correctly in history events (category in below form doesn't update and the comment should be what says it was an auto-label event)
 [ ] Orange badge highlighting for indicating where a favorite will target should revert after navigation is successful
-[ ] Panel title path input should not wordwrap but instead overflow hidden
+[x] Panel title path input should not wordwrap but instead overflow hidden
 [ ] reminders sidebar should refresh slowly on its own, maybe once a minute
-[ ] If there is one subdirectory which demands a particular custom attribute in the grid the column correctly shows, but incorrectly offers it as an editable entry for all. The entry should be disabled unless it is demanded by that particular item and others should show light grey "---" in the field to show it does not apply
-[ ] 
+[x] If there is one subdirectory which demands a particular custom attribute in the grid the column correctly shows, but incorrectly offers it as an editable entry for all. The entry should be disabled unless it is demanded by that particular item and others should show light grey "---" in the field to show it does not apply
 * Style for pasted-in files from Explorer, not working on the version in my work laptop, did we do this?
 
 ### ROADMAP:
 [ ] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
-[ ] Search bar should eagerly search the visible fields when changed - submitting the search bar will eventually become a deeper search including invisible columns and contents of text files (contents' names of zip files too?)
+[x] Search bar should eagerly search the visible fields when changed - submitting the search bar will eventually become a deeper search including invisible columns and contents of text files (contents' names of zip files too?)
 [ ] OneDrive states - on PC in cloud - syncing - whatever we can get
 [ ] Renameable favorites
 [ ] Need to be able to drag groups in favorites - should collapse on drag start to prevent dragging into itself
