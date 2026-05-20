@@ -4661,9 +4661,28 @@ hr {
   z-index: 50;
   opacity: 0;
   transition: opacity 0.25s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .panel-bg-refresh-banner.is-visible {
   opacity: 1;
+}
+.panel-bg-refresh-banner.has-action {
+  pointer-events: auto;
+}
+.panel-bg-refresh-banner__show-btn {
+  padding: 2px 10px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 3px;
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.panel-bg-refresh-banner__show-btn:hover {
+  background: rgba(255, 255, 255, 0.32);
 }
 
 /* =====================================================================

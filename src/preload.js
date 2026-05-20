@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVirtualView: (basePath, params, depth = 1) => ipcRenderer.invoke('get-virtual-view', basePath, params, depth),
   getBadgeCounts: (dirPath, depth = 1) => ipcRenderer.invoke('get-badge-counts', dirPath, depth),
   getFilesInDirectory: (dirPath) => ipcRenderer.invoke('get-files-in-directory', dirPath),
+  getCachedDirectoryEntries: (dirPath) => ipcRenderer.invoke('get-cached-directory-entries', dirPath),
 
   // File change detection
   calculateFileChecksum: (filePath, inode, dirId, isManual = false) => 

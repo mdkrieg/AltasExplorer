@@ -925,6 +925,110 @@ ipcMain.handle('get-files-in-directory', (event, dirPath) => {
 });
 
 /**
+ * Cache-Browsing: return a directory snapshot built entirely from the DB,
+ * shaped like a scanDirectoryWithComparison result so the renderer can
+ * populate the grid immediately without hitting the filesystem.
+ *
+ * Returns { success, dirFound, entries, category, categoryData,
+ *           orphanCount, trashCount }
+ * dirFound=false when the directory has never been scanned.
+ */
+ipcMain.handle('get-cached-directory-entries', (event, dirPath) => {
+  try {
+    const normalizedPath = path.normalize(dirPath);
+    const raw = db.getCachedDirectoryEntries(normalizedPath);
+    if (!raw) {
+      return { success: true, dirFound: false, entries: [], category: null, categoryData: null, orphanCount: 0, trashCount: 0 };
+    }
+
+    const { dirRecord, dotEntry, childDirs, files } = raw;
+    const category = categories.getCategoryForDirectory(normalizedPath);
+    const categoryName = category ? category.name : 'Default';
+
+    const entries = [];
+
+    // "." — current directory self-entry (stores its own mtime)
+    if (dotEntry) {
+      entries.push({
+        inode: dotEntry.inode,
+        filename: '.',
+        isDirectory: true,
+        size: 0,
+        dateModified: dotEntry.dateModified || null,
+        dateCreated: dotEntry.dateCreated || null,
+        path: normalizedPath,
+        changeState: 'cached',
+        dir_id: dirRecord.id,
+        initials: dirRecord.initials || null,
+        resolvedInitials: db.resolveDirectoryInitials(normalizedPath).value,
+        displayName: dirRecord.display_name || null,
+        perms: { read: true, write: true },
+        mode: dotEntry.mode ?? null,
+      });
+    }
+
+    // Child subdirectories
+    for (const child of childDirs) {
+      const childName = path.basename(child.dirname);
+      entries.push({
+        inode: child.inode,
+        filename: childName,
+        isDirectory: true,
+        size: 0,
+        dateModified: child.dir_date_modified || null,
+        dateCreated: child.dir_date_created || null,
+        path: child.dirname,
+        changeState: 'cached',
+        dir_id: child.id,
+        initials: child.initials || null,
+        resolvedInitials: db.resolveDirectoryInitials(child.dirname).value,
+        displayName: child.display_name || null,
+        tags: db.getTagsForDirectoryId(child.id),
+        perms: { read: true, write: true },
+        mode: null,
+      });
+    }
+
+    // Files
+    for (const file of files) {
+      entries.push({
+        inode: file.inode,
+        filename: file.filename,
+        isDirectory: false,
+        size: file.size || 0,
+        dateModified: file.dateModified || null,
+        dateCreated: file.dateCreated || null,
+        path: path.join(normalizedPath, file.filename),
+        changeState: 'cached',
+        dir_id: file.dir_id,
+        checksumValue: file.checksumValue || null,
+        checksumStatus: file.checksumStatus || null,
+        tags: file.tags || null,
+        mode: file.mode ?? null,
+        perms: { read: true, write: true },
+      });
+    }
+
+    const orphanCount = db.getOrphanCount(dirRecord.id, 1);
+    const trashCount  = db.getTrashCount(dirRecord.id);
+
+    return {
+      success: true,
+      dirFound: true,
+      neverScanned: !dirRecord.last_observed_at,
+      entries,
+      category: categoryName,
+      categoryData: category,
+      orphanCount,
+      trashCount,
+    };
+  } catch (err) {
+    logger.error('Error getting cached directory entries:', err.message);
+    return { success: false, error: err.message, dirFound: false, entries: [] };
+  }
+});
+
+/**
  * Categories: Load all categories
  */
 ipcMain.handle('load-categories', () => {

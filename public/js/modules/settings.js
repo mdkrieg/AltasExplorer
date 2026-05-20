@@ -264,6 +264,7 @@ export async function initializeBrowserSettingsForm() {
 	const checksumMaxConcurrent = settings.checksum_max_concurrent || 1;
 	const titleDefaultFormat = settings.title_default_format || 'folder-name';
 	const titleDisplayNameFormat = settings.title_display_name_format || 'name-relative-path';
+	const cacheBrowsing = settings.cache_browsing || 'enabled';
 
 	$('#browser-home-directory').val(homeDirectory);
 	$('#browser-notes-format').val(fileFormat);
@@ -277,6 +278,7 @@ export async function initializeBrowserSettingsForm() {
 	$('#browser-checksum-max-concurrent').val(checksumMaxConcurrent);
 	$('#browser-title-default-format').val(titleDefaultFormat);
 	$('#browser-title-display-name-format').val(titleDisplayNameFormat);
+	$('#browser-cache-browsing').val(cacheBrowsing);
 
 	await updateHomeDirectoryWarning(homeDirectory);
 	setupBrowserSettingsEventListeners();
@@ -325,6 +327,7 @@ async function saveBrowserSettings() {
 		let checksumMaxConcurrent = parseInt($('#browser-checksum-max-concurrent').val() || '1');
 		const titleDefaultFormat = $('#browser-title-default-format').val() || 'folder-name';
 		const titleDisplayNameFormat = $('#browser-title-display-name-format').val() || 'name-relative-path';
+		const cacheBrowsing = $('#browser-cache-browsing').val() || 'enabled';
 
 		if (isNaN(recordHeight) || recordHeight < 20) {
 			recordHeight = 20;
@@ -365,6 +368,7 @@ async function saveBrowserSettings() {
 		settings.checksum_max_concurrent = checksumMaxConcurrent;
 		settings.title_default_format = titleDefaultFormat;
 		settings.title_display_name_format = titleDisplayNameFormat;
+		settings.cache_browsing = cacheBrowsing;
 
 		const result = await window.electronAPI.saveSettings(settings);
 		if (!result || result.success === false) {
@@ -377,6 +381,7 @@ async function saveBrowserSettings() {
 		showFormSuccess('browser-settings-status', 'Settings saved.');
 
 		window.electronAPI.startBackgroundRefresh(backgroundRefreshEnabled, backgroundRefreshInterval);
+		panels.setCacheBrowsingMode(cacheBrowsing);
 
 		// Refresh window title immediately with new format settings
 		await panels.maybeRefreshPanel1TitleAndIcon();

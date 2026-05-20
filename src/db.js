@@ -792,6 +792,43 @@ class DatabaseService {
   }
 
   /**
+   * Return the raw DB rows needed to render a cached directory view without
+   * hitting the filesystem.  Returns null when the directory has never been
+   * scanned (i.e. no row in `dirs`).
+   *
+   * Row sets:
+   *   dirRecord   — the dirs row for dirPath
+   *   dotEntry    — the files row with filename='.' (stores the dir's own mtime)
+   *   childDirs   — dirs rows whose parent_id matches, joined with their dot-entry
+   *                 dates so callers don't need N extra queries
+   *   files       — all non-dot file rows in this directory
+   */
+  getCachedDirectoryEntries(dirPath) {
+    const dirRecord = this.getDirectory(dirPath);
+    if (!dirRecord) return null;
+
+    const dotEntry = this.db.prepare(
+      `SELECT * FROM files WHERE dir_id = ? AND filename = '.' AND deleted_at IS NULL`
+    ).get(dirRecord.id);
+
+    const childDirs = this.db.prepare(`
+      SELECT d.*,
+             f.dateModified AS dir_date_modified,
+             f.dateCreated  AS dir_date_created
+      FROM dirs d
+      LEFT JOIN files f ON f.dir_id = d.id AND f.filename = '.' AND f.deleted_at IS NULL
+      WHERE d.parent_id = ? AND d.deleted_at IS NULL
+      ORDER BY d.dirname ASC
+    `).all(dirRecord.id);
+
+    const files = this.db.prepare(
+      `SELECT * FROM files WHERE dir_id = ? AND filename != '.' AND deleted_at IS NULL ORDER BY filename ASC`
+    ).all(dirRecord.id);
+
+    return { dirRecord, dotEntry, childDirs, files };
+  }
+
+  /**
    * Delete all files for a directory (used before re-scanning)
    */
   clearDirectory(dirname) {

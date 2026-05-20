@@ -70,6 +70,12 @@ export let unacknowledgedAlertCount = 0;
 export let panel1SelectedDirectoryPath = null;
 export let panel1SelectedDirectoryName = null;
 export let gridFocusedPanelId = null;
+
+// Cache-Browsing mode — initialised from settings on startup; updated by settings UI.
+// 'enabled'  → show DB cache first, scan in background
+// 'disabled' → current behaviour (block on scan before showing grid)
+let cacheBrowsingMode = 'enabled';
+export function setCacheBrowsingMode(val) { cacheBrowsingMode = val || 'enabled'; }
 const closedPanelStack = [];
 const selectionAnchorRecids = {};
 
@@ -3494,7 +3500,7 @@ function buildWindowTitle(dirPath, labels, settings) {
 	return `${resolvedDisplayName} (${folderBasename})`;
 }
 
-function showPanelRefreshBanner(panelId, message) {
+function showPanelRefreshBanner(panelId, message, onShow = null) {
 	const panelEl = document.getElementById(`panel-${panelId}`);
 	if (!panelEl) return;
 	const container = panelEl.querySelector(':scope > .panel-content') || panelEl;
@@ -3505,11 +3511,33 @@ function showPanelRefreshBanner(panelId, message) {
 		container.appendChild(banner);
 	}
 	if (banner._dismissTimer) clearTimeout(banner._dismissTimer);
-	banner.textContent = message;
+
+	// Rebuild content each time (text + optional Show button)
+	banner.textContent = '';
+	const textSpan = document.createElement('span');
+	textSpan.textContent = message;
+	banner.appendChild(textSpan);
+
+	if (onShow) {
+		const btn = document.createElement('button');
+		btn.className = 'panel-bg-refresh-banner__show-btn';
+		btn.textContent = 'Show';
+		btn.addEventListener('click', () => {
+			banner.classList.remove('is-visible');
+			if (banner._dismissTimer) clearTimeout(banner._dismissTimer);
+			onShow();
+		});
+		banner.appendChild(btn);
+		banner.classList.add('has-action');
+	} else {
+		banner.classList.remove('has-action');
+	}
+
 	banner.classList.add('is-visible');
+	// Auto-dismiss: longer when there's an action button the user may want to click
 	banner._dismissTimer = setTimeout(() => {
 		banner.classList.remove('is-visible');
-	}, 4000);
+	}, onShow ? 12000 : 4000);
 }
 
 export async function applyBackgroundChanges(changedEntries, panelId) {
@@ -4516,6 +4544,159 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			}
 			return;
 		}
+
+		// ---- Cache-Browsing: render DB snapshot instantly, scan in background ----
+		// Only active for plain directory navigation (no URI params, depth = 0, grid view).
+		if (cacheBrowsingMode !== 'disabled' && navParams.size === 0 && (state.depth || 0) === 0) {
+			const cacheResult = await window.electronAPI.getCachedDirectoryEntries(normalizedPath);
+			if (cacheResult && cacheResult.success && cacheResult.dirFound && !cacheResult.neverScanned) {
+				const cacheCategory = cacheResult.categoryData || null;
+				const prevCategory = state.currentCategory;
+				state.currentCategory = cacheCategory;
+
+				// Reinit grid columns if the category's custom attributes changed
+				const prevAttrs = JSON.stringify((prevCategory && prevCategory.attributes) || []);
+				const newAttrs  = JSON.stringify((cacheCategory && cacheCategory.attributes) || []);
+				if (prevAttrs !== newAttrs) {
+					await initializeGridForPanel(panelId);
+				}
+
+				state.orphanCount = cacheResult.orphanCount ?? 0;
+				state.trashCount  = cacheResult.trashCount  ?? 0;
+
+				// Update window icon for panel 1 immediately from cached data
+				if (panelId === 1 && cacheCategory) {
+					const dotEntry = (cacheResult.entries || []).find(e => e.filename === '.' && e.isDirectory);
+					const cachedInitials = dotEntry ? (dotEntry.resolvedInitials || dotEntry.initials || null) : null;
+					window.electronAPI.updateWindowIcon(cacheCategory.name, cachedInitials);
+				}
+
+				// Render the cached grid — no loading overlay needed
+				const cacheEntries = (cacheResult.entries || [])
+					.filter(e => e.changeState !== 'orphan' && e.changeState !== 'moved');
+				hidePanelLoading(panelId);
+				const $panelCache = $(`#panel-${panelId}`);
+				$panelCache.find('.panel-landing-page').hide();
+				$panelCache.find('.panel-gallery').removeClass('active');
+				$panelCache.find('.panel-grid').show();
+				renderPanelToolbar(panelId, 'detail');
+				await populateFileGrid(cacheEntries, cacheCategory, panelId);
+				setTimeout(() => {
+					clipboard.updateClipboardFooter(panelId);
+					clipboard.reapplyClipboardClasses(panelId, panelState);
+				}, 0);
+
+				const sessionLayout = (state.sessionDirLayouts || {})[normalizedPath];
+				if (sessionLayout) {
+					applySessionDirLayout(panelId, sessionLayout);
+				} else {
+					await applyDirGridLayoutIfExists(panelId, normalizedPath);
+				}
+
+				updatePanelHeader(panelId, normalizedPath);
+				const cacheGrid = state.w2uiGrid;
+				if (cacheGrid) {
+					requestAnimationFrame(() => {
+						cacheGrid.resize();
+						const hasSizeCfg = cacheGrid.columns.some(c => c.sizeConfig);
+						if (hasSizeCfg) { applyColumnSizeConfigs(panelId); cacheGrid.refresh(); }
+					});
+				}
+
+				state.hasBeenViewed = true;
+				window.electronAPI.registerWatchedPath(panelId, normalizedPath);
+				autoLabels.refreshAutoLabelCountAndSuggestions(panelId)
+					.then(() => renderPanelToolbar(panelId, 'detail')).catch(() => {});
+				sidebar.updateLocalFavoritesForPanel(panelId, normalizedPath);
+
+				// ---- Background scan ----
+				// Capture path + orphan count so we can detect stale results or
+				// a user-navigation that happened before the scan completed.
+				const bgNavPath         = normalizedPath;
+				const bgCacheOrphanCount = cacheResult.orphanCount ?? 0;
+
+				window.electronAPI.scanDirectoryWithComparison(bgNavPath).then(async bgScan => {
+					// Guard: user may have navigated away while the scan ran
+					if (!bgScan || !bgScan.success) return;
+					if (panelState[panelId]?.currentPath !== bgNavPath) return;
+
+					if (bgScan.alertsCreated) {
+						unacknowledgedAlertCount += bgScan.alertsCreated;
+						updateAlertBadge();
+					}
+
+					// Always update badge counts even if no visible changes
+					panelState[panelId].orphanCount = bgScan.orphanCount ?? 0;
+					panelState[panelId].trashCount  = bgScan.trashCount  ?? 0;
+
+					// Count changes the user can actually see
+					const changedCount = (bgScan.entries || []).filter(
+						e => e.changeState === 'new' ||
+						     e.changeState === 'dateModified' ||
+						     e.changeState === 'modeChanged'
+					).length;
+					const orphanDelta = Math.max(0, (bgScan.orphanCount ?? 0) - bgCacheOrphanCount);
+					const totalChanges = changedCount + orphanDelta;
+
+					if (totalChanges > 0) {
+						// Build a human-readable summary for the banner
+						const parts = [];
+						const newCount      = (bgScan.entries || []).filter(e => e.changeState === 'new').length;
+						const modifiedCount = (bgScan.entries || []).filter(
+							e => e.changeState === 'dateModified' || e.changeState === 'modeChanged'
+						).length;
+						if (newCount      > 0) parts.push(`${newCount} new`);
+						if (modifiedCount > 0) parts.push(`${modifiedCount} modified`);
+						if (orphanDelta   > 0) parts.push(`${orphanDelta} removed`);
+
+						const bgCategory = await window.electronAPI.getCategoryForDirectory(bgNavPath);
+						const freshEntries = (bgScan.entries || [])
+							.filter(e => e.changeState !== 'orphan' && e.changeState !== 'moved');
+
+						showPanelRefreshBanner(panelId, `Changes detected: ${parts.join(', ')}`, () => {
+							// "Show" clicked — apply the scan result to the grid
+							if (panelState[panelId]?.currentPath !== bgNavPath) return;
+
+							const showCategory = bgCategory || panelState[panelId].currentCategory;
+							panelState[panelId].currentCategory = showCategory;
+							panelState[panelId].orphanCount     = bgScan.orphanCount ?? 0;
+							panelState[panelId].trashCount      = bgScan.trashCount  ?? 0;
+
+							populateFileGrid(freshEntries, showCategory, panelId).then(() => {
+								renderPanelToolbar(panelId, 'detail');
+								setTimeout(() => {
+									clipboard.updateClipboardFooter(panelId);
+									clipboard.reapplyClipboardClasses(panelId, panelState);
+								}, 0);
+								// Kick off checksum queue if the category requires it
+								if (showCategory && showCategory.enableChecksum) {
+									const showGrid = panelState[panelId].w2uiGrid;
+									if (showGrid) {
+										const filesToChecksum = showGrid.records.filter(
+											r => !r.isFolder && r.changeState === 'checksumPending'
+										);
+										if (filesToChecksum.length > 0) {
+											const st = panelState[panelId];
+											const queueIdle = !st.checksumQueue || st.checksumCancelled ||
+											                   st.checksumQueueIndex >= st.checksumQueue.length;
+											if (queueIdle) startChecksumQueue(filesToChecksum, panelId, bgNavPath);
+										}
+									}
+								}
+							}).catch(() => {});
+						});
+					} else {
+						// No visible changes — silently refresh toolbar badge counts
+						renderPanelToolbar(panelId, 'detail');
+					}
+				}).catch(err => {
+					console.warn('[cache-browsing] Background scan failed:', err.message || err);
+				});
+
+				return; // cache render complete; background scan is fire-and-forget
+			}
+		}
+
 		const scanResult = await window.electronAPI.scanDirectoryWithComparison(normalizedPath);
 		if (!scanResult.success) {
 			throw new Error(scanResult.error || 'Failed to scan directory');
