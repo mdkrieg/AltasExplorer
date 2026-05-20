@@ -44,6 +44,135 @@ const tagIconCache = new Map();
 let customActionsCache = null;
 export function clearCustomActionsCache() { customActionsCache = null; }
 
+// ── Context Menu Registry ─────────────────────────────────────────────────
+// Stable metadata for every top-level context menu item.
+// `group` is kept for informational purposes; separator placement is now
+// controlled by explicit 'separator-N' entries in the order array.
+export const CONTEXT_MENU_REGISTRY = [
+	{ id: 'open-in', label: 'Open In', group: 1, description: 'Opens the selected folder in a panel of your choice. For .lnk shortcut files, resolves and opens the target path.', conditions: { singleOnly: true, files: false, dirs: true, note: 'Also shown for .lnk shortcut files.' } },
+	{ id: 'open-in-default-app', label: 'Open', group: 1, description: 'Opens the selected file with the system default application. When the default app is known, the app name appears in the label.', conditions: { singleOnly: true, files: true, dirs: false, note: 'Not shown for .lnk shortcut files.' } },
+	{ id: 'view-file', label: 'View / Edit', group: 1, description: 'Opens the file in the built-in viewer. Label adapts to file type: "View Image", "View Hex", "View/Edit", or "View…".', conditions: { singleOnly: true, files: true, dirs: false, note: 'Not shown when no built-in viewer is available (e.g. video files).' } },
+	{ id: 'open-in-terminal-label', label: 'Open in Terminal', group: 1, description: 'Opens a terminal panel for the selected folder. Lists existing terminal panels and a "New Terminal" option.', conditions: { singleOnly: true, files: false, dirs: true } },
+	{ id: 'set-category-label', label: 'Set Category', group: 2, description: 'Assigns a category to the selected folder(s). Shows a submenu of all defined categories.', conditions: { singleOnly: false, files: false, dirs: true } },
+	{ id: 'add-tag-label', label: 'Add Tag', group: 2, description: 'Adds a tag to the selected item(s). Shows a submenu of all defined tags.', conditions: { singleOnly: false, files: true, dirs: true, note: 'Only shown when at least one tag is defined.' } },
+	{ id: 'remove-tag-label', label: 'Remove Tag', group: 2, description: 'Removes an existing tag from the selected item. Shows a submenu of tags currently applied. Shown as disabled when the item has no tags.', conditions: { singleOnly: true, files: true, dirs: true } },
+	{ id: 'add-to-favorites', label: 'Add to Favorites', group: 2, description: 'Adds the selected folder(s) to the Favorites sidebar.', conditions: { singleOnly: false, files: false, dirs: true } },
+	{ id: 'acknowledge-orphan', label: 'Acknowledge & Remove', group: 3, description: 'Removes an orphaned record — a file or folder tracked in the database that no longer exists on disk.', conditions: { singleOnly: false, files: true, dirs: true, note: 'Only shown for orphaned records.' } },
+	{ id: 'view-notes', label: 'Notes', group: 4, description: 'Opens the Notes editor for the selected item.', conditions: { singleOnly: true, files: true, dirs: true } },
+	{ id: 'view-todo', label: 'TODO', group: 4, description: 'Opens the TODO checklist for the selected item. The label shows completion progress when tasks exist.', conditions: { singleOnly: true, files: true, dirs: true } },
+	{ id: 'view-properties', label: 'Properties', group: 4, description: 'Opens the Properties panel for the selected item(s). For multi-select, shows the trigger item with a count of additional items.', conditions: { singleOnly: false, files: true, dirs: true } },
+	{ id: 'calculate-checksum', label: 'Calculate Checksum', group: 5, description: 'Calculates and stores the SHA-256 checksum for the selected file(s). Flags files whose checksum has changed since last recorded.', conditions: { singleOnly: false, files: true, dirs: false } },
+	{ id: 'copy-as-path', label: 'Copy as Path', group: 5, description: 'Copies the full filesystem path(s) of the selected item(s) to the clipboard.', conditions: { singleOnly: false, files: true, dirs: true } },
+	{ id: 'clipboard-copy', label: 'Copy', group: 6, description: 'Stages the selected item(s) for clipboard copy. Items can then be pasted into another directory.', conditions: { singleOnly: false, files: true, dirs: true, note: 'Not available for the . and .. navigation entries.' } },
+	{ id: 'clipboard-cut', label: 'Cut', group: 6, description: 'Stages the selected item(s) for clipboard move. Items are moved when pasted into another directory.', conditions: { singleOnly: false, files: true, dirs: true, note: 'Not available for the . and .. navigation entries.' } },
+	{ id: 'clipboard-paste', label: 'Paste', group: 6, description: 'Pastes clipboard items into the current directory.', conditions: { singleOnly: false, files: true, dirs: true, note: 'Shown as disabled when the clipboard is empty.' } },
+	{ id: 'delete-items', label: 'Delete', group: 7, description: 'Moves the selected item(s) to the system trash. Tracks deletion in the database.', conditions: { singleOnly: false, files: true, dirs: true, note: 'Not available for the . and .. navigation entries.' } },
+	{ id: 'restore-from-trash', label: 'Restore', group: 8, description: 'Restores a previously deleted item from the system trash back to its original location.', conditions: { singleOnly: false, files: true, dirs: false, note: 'Only shown for soft-deleted records that have a known trash path (XDG trash). Not available for legacy Windows deletes.' } },
+	{ id: 'permanently-delete-from-trash', label: 'Delete Permanently', group: 8, description: 'Permanently removes a soft-deleted record and deletes it from the system trash.', conditions: { singleOnly: false, files: true, dirs: false, note: 'Only shown for soft-deleted records.' } },
+	{ id: 'run-custom-action', label: 'Custom Actions', group: 9, description: 'Runs a user-defined custom action on the selected file. Each action is configured in the Custom Actions settings tab with an executable, arguments, and an optional file pattern filter.', conditions: { singleOnly: true, files: true, dirs: false, note: 'Each custom action may further restrict which files it appears for based on file pattern matching.' } },
+];
+
+// Default order: registry item IDs interleaved with explicit 'separator-N' IDs
+// at each natural group boundary. Stored and restored identically to item IDs.
+export const DEFAULT_CONTEXT_MENU_ORDER = [
+	'open-in', 'open-in-default-app', 'view-file', 'open-in-terminal-label',
+	'separator-1',
+	'set-category-label', 'add-tag-label', 'remove-tag-label', 'add-to-favorites',
+	'separator-2',
+	'acknowledge-orphan',
+	'separator-3',
+	'view-notes', 'view-todo', 'view-properties',
+	'separator-4',
+	'calculate-checksum', 'copy-as-path',
+	'separator-5',
+	'clipboard-copy', 'clipboard-cut', 'clipboard-paste',
+	'separator-6',
+	'delete-items',
+	'separator-7',
+	'restore-from-trash', 'permanently-delete-from-trash',
+	'separator-8',
+	'run-custom-action',
+];
+
+// Map special-case IDs to their registry entry.
+const _REGISTRY_ALIASES = {
+	'remove-tag-disabled': 'remove-tag-label',
+	'acknowledge-orphans': 'acknowledge-orphan',
+};
+// Prefix map: ordered longest-first so that more-specific prefixes win.
+const _REGISTRY_PREFIXES = [
+	['acknowledge-orphan-', 'acknowledge-orphan'],
+	['run-custom-action-', 'run-custom-action'],
+];
+
+function _getRegistryEntry(itemId) {
+	const alias = _REGISTRY_ALIASES[itemId];
+	if (alias) return CONTEXT_MENU_REGISTRY.find(e => e.id === alias) || null;
+	const exact = CONTEXT_MENU_REGISTRY.find(e => e.id === itemId);
+	if (exact) return exact;
+	for (const [prefix, regId] of _REGISTRY_PREFIXES) {
+		if (itemId.startsWith(prefix)) return CONTEXT_MENU_REGISTRY.find(e => e.id === regId) || null;
+	}
+	return null;
+}
+
+// Persistent order: array of registry IDs and 'separator-N' IDs.
+let _contextMenuOrder = null;
+export function getContextMenuOrder() { return _contextMenuOrder; }
+export function setContextMenuOrder(order) { _contextMenuOrder = order; }
+export function initContextMenuOrder(order) {
+	_contextMenuOrder = (Array.isArray(order) && order.length > 0)
+		? order
+		: DEFAULT_CONTEXT_MENU_ORDER.slice();
+}
+
+function _sortContextMenuByOrder(items) {
+	if (!_contextMenuOrder || _contextMenuOrder.length === 0) return items;
+
+	// Group built menu items by registry ID so dynamic items (e.g. all
+	// run-custom-action-* entries) are emitted together at their order position.
+	const builtGroups = new Map(); // registryId → [item, ...]
+	const unmapped = [];
+	for (const item of items) {
+		if (item.id.startsWith('sep')) continue; // strip old auto-separators
+		const entry = _getRegistryEntry(item.id);
+		if (entry) {
+			if (!builtGroups.has(entry.id)) builtGroups.set(entry.id, []);
+			builtGroups.get(entry.id).push(item);
+		} else {
+			unmapped.push(item);
+		}
+	}
+
+	const result = [];
+	let lastWasSep = true; // suppress leading separator
+
+	for (const orderId of _contextMenuOrder) {
+		if (orderId.startsWith('separator-')) {
+			if (!lastWasSep) {
+				result.push({ id: `sep${result.length}`, text: '--' });
+				lastWasSep = true;
+			}
+		} else {
+			const group = builtGroups.get(orderId);
+			if (group && group.length > 0) {
+				for (const item of group) result.push(item);
+				builtGroups.delete(orderId);
+				lastWasSep = false;
+			}
+		}
+	}
+
+	// Items not in the saved order (e.g. newly added) appear at the end.
+	for (const group of builtGroups.values()) for (const item of group) result.push(item);
+	for (const item of unmapped) result.push(item);
+
+	// Strip trailing separator
+	while (result.length > 0 && result[result.length - 1].text === '--') result.pop();
+
+	return result;
+}
+
 async function openActionTerminalPanel(filePath, actionLabel) {
 	let targetPanelId = terminal.getFallbackTerminalPanelId(panels.visiblePanels);
 	if (targetPanelId > panels.visiblePanels) {
@@ -459,7 +588,7 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		}
 	} catch (_) { /* custom actions are non-critical */ }
 
-	return { items: contextMenu, pendingDefaultApp, pendingViewMode: panelContextMenuState.pendingViewFileMode || null };
+	return { items: _sortContextMenuByOrder(contextMenu), pendingDefaultApp, pendingViewMode: panelContextMenuState.pendingViewFileMode || null };
 }
 
 async function handleContextMenuClick(event, panelId) {

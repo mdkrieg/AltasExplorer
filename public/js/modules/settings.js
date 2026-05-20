@@ -11,6 +11,7 @@
  */
 
 import * as panels from './panels.js';
+import * as contexts from './contexts.js';
 import { w2ui, w2grid, w2confirm, w2alert, w2field } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
@@ -176,10 +177,16 @@ export function switchSettingsTab(tabName) {
 			initializedSettingsTabs.add('customactions');
 			initializeCustomActionsGrid().then(() => initializeCustomActionsForm()).then(() => setupCustomActionsDivider());
 		}
-	} else if (tabName === 'updates') {
+	} else if (tabName === 'contextmenu') {
 		$tab.css('display', 'flex');
-		if (!initializedSettingsTabs.has('updates')) {
-			initializedSettingsTabs.add('updates');
+		if (!initializedSettingsTabs.has('contextmenu')) {
+			initializedSettingsTabs.add('contextmenu');
+			initializeContextMenuTab().then(() => setupFormDivider('#contextmenu-divider', '#contextmenu-detail-panel'));
+		}
+	} else if (tabName === 'application') {
+		$tab.css('display', 'flex');
+		if (!initializedSettingsTabs.has('application')) {
+			initializedSettingsTabs.add('application');
 			initializeUpdatesTab();
 		}
 	} else {
@@ -2673,6 +2680,257 @@ $(document).on('click.alIconSelClose', function (e) {
 		$('.al-icon-sel .cat-icon-select-options').hide();
 	}
 });
+// ── Context Menu Tab ─────────────────────────────────────────────────────────
+
+let _cmSelectedId = null;
+let _cmActiveFilters = new Set();
+
+export async function initializeContextMenuTab() {
+	const container = document.getElementById('context-menu-order-list');
+	if (!container) return;
+
+	// Ensure order is loaded from settings if not already initialised by renderer
+	if (!contexts.getContextMenuOrder()) {
+		const s = await window.electronAPI.getSettings();
+		contexts.initContextMenuOrder(s.context_menu_order || null);
+	}
+
+	const currentOrder = (contexts.getContextMenuOrder() || contexts.DEFAULT_CONTEXT_MENU_ORDER).slice();
+	_renderContextMenuList(container, currentOrder);
+
+	document.querySelectorAll('#contextmenu-filter-bar .cm-filter-btn').forEach(btn => {
+		const key = btn.dataset.filter;
+		_updateFilterBtn(btn, _cmActiveFilters.has(key));
+		$(btn).off('click.cmfilter').on('click.cmfilter', () => {
+			if (_cmActiveFilters.has(key)) {
+				_cmActiveFilters.delete(key);
+				_updateFilterBtn(btn, false);
+			} else {
+				_cmActiveFilters.add(key);
+				_updateFilterBtn(btn, true);
+			}
+			_applyFilters(container);
+		});
+	});
+
+	$('#btn-contextmenu-reset').off('click.cmreset').on('click.cmreset', async () => {
+		const defaultOrder = contexts.DEFAULT_CONTEXT_MENU_ORDER.slice();
+		contexts.setContextMenuOrder(defaultOrder);
+		_renderContextMenuList(container, defaultOrder);
+		await _saveContextMenuOrder(defaultOrder);
+		showFormSuccess('#contextmenu-status', 'Reset to default order.');
+	});
+}
+
+function _updateFilterBtn(btn, active) {
+	const palette = {
+		multi: { on: { bg: '#1565c0', color: '#fff' }, off: { bg: '#e3f2fd', color: '#1565c0' } },
+		file:  { on: { bg: '#6a1b9a', color: '#fff' }, off: { bg: '#f3e5f5', color: '#6a1b9a' } },
+		dir:   { on: { bg: '#e65100', color: '#fff' }, off: { bg: '#fff8e1', color: '#e65100' } },
+	};
+	const s = (palette[btn.dataset.filter] || {})[active ? 'on' : 'off'] || {};
+	btn.style.cssText = `padding:2px 8px;border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:bold;background:${s.bg};color:${s.color};`;
+	btn.textContent = btn.dataset.filter;
+}
+
+function _applyFilters(container) {
+	const regMap = new Map(contexts.CONTEXT_MENU_REGISTRY.map(e => [e.id, e]));
+	container.querySelectorAll('.cm-order-row').forEach(row => {
+		const id = row.dataset.id;
+		if (id.startsWith('separator-')) return;
+		if (_cmActiveFilters.size === 0) {
+			delete row.dataset.filtered;
+			row.style.cssText = row.dataset.normalCss || '';
+			row.style.background = row.dataset.id === _cmSelectedId ? '#e8f0fe' : '';
+			return;
+		}
+		const entry = regMap.get(id);
+		if (!entry) return;
+		const matches =
+			(_cmActiveFilters.has('multi') && !entry.conditions.singleOnly) ||
+			(_cmActiveFilters.has('file') && entry.conditions.files) ||
+			(_cmActiveFilters.has('dir') && entry.conditions.dirs);
+		if (matches) {
+			delete row.dataset.filtered;
+			row.style.cssText = row.dataset.normalCss || '';
+			row.style.background = row.dataset.id === _cmSelectedId ? '#e8f0fe' : '';
+		} else {
+			row.dataset.filtered = 'true';
+			row.style.cssText = 'height:20px;overflow:hidden;opacity:0.3;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;';
+		}
+	});
+}
+
+function _renderContextMenuList(container, orderIds) {
+	const regMap = new Map(contexts.CONTEXT_MENU_REGISTRY.map(e => [e.id, e]));
+	const items = orderIds.map(id =>
+		id.startsWith('separator-') ? { id, isSeparator: true } : (regMap.get(id) || null)
+	).filter(Boolean);
+
+	container.innerHTML = '';
+	let dragSrcIndex = null;
+
+	const makePill = (text, bg, color) => {
+		const p = document.createElement('span');
+		p.textContent = text;
+		p.style.cssText = `font-size: 9px; padding: 2px 6px; background: ${bg}; color: ${color}; border-radius: 3px; font-weight: bold; white-space: nowrap;`;
+		return p;
+	};
+
+	items.forEach((entry, i) => {
+		const isSep = !!entry.isSeparator;
+		const row = document.createElement('div');
+		row.className = 'cm-order-row';
+		row.draggable = true;
+		row.dataset.id = entry.id;
+
+		if (isSep) {
+			row.style.cssText = 'display:flex;align-items:center;padding:0 12px;height:20px;border-bottom:1px solid #f0f0f0;cursor:default;user-select:none;gap:8px;';
+
+			const handle = document.createElement('span');
+			handle.textContent = '⠿';
+			handle.style.cssText = 'cursor:grab;color:#ddd;font-size:13px;flex-shrink:0;';
+			handle.title = 'Drag to reorder';
+
+			const line = document.createElement('div');
+			line.style.cssText = 'flex:1;height:1px;background:#d0d0d0;';
+
+			row.appendChild(handle);
+			row.appendChild(line);
+		} else {
+			row.style.cssText = `display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer;user-select:none;gap:10px;font-size:12px;background:${entry.id === _cmSelectedId ? '#e8f0fe' : ''}`;
+			row.dataset.normalCss = row.style.cssText;
+
+			const handle = document.createElement('span');
+			handle.textContent = '⠿';
+			handle.style.cssText = 'cursor:grab;color:#ccc;font-size:15px;flex-shrink:0;';
+			handle.title = 'Drag to reorder';
+
+			const label = document.createElement('span');
+			label.textContent = entry.label;
+			label.style.flex = '1';
+
+			const pills = document.createElement('span');
+			pills.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
+			if (!entry.conditions.singleOnly) pills.appendChild(makePill('multi', '#e3f2fd', '#1565c0'));
+			if (entry.conditions.files)       pills.appendChild(makePill('file', '#f3e5f5', '#6a1b9a'));
+			if (entry.conditions.dirs)        pills.appendChild(makePill('dir', '#fff8e1', '#e65100'));
+
+			row.appendChild(handle);
+			row.appendChild(label);
+			row.appendChild(pills);
+
+			row.addEventListener('click', () => {
+				if (row.dataset.filtered === 'true') return;
+				_cmSelectedId = entry.id;
+				container.querySelectorAll('.cm-order-row').forEach(r => {
+					r.style.background = r.dataset.id === entry.id ? '#e8f0fe' : '';
+				});
+				_showContextMenuItemDetail(entry);
+			});
+
+			// Auto-show detail for the previously selected item after re-render
+			if (entry.id === _cmSelectedId) {
+				_showContextMenuItemDetail(entry);
+			}
+		}
+
+		row.addEventListener('dragstart', (e) => {
+			dragSrcIndex = i;
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', String(i));
+			setTimeout(() => { row.style.opacity = '0.4'; }, 0);
+		});
+
+		row.addEventListener('dragend', () => {
+			row.style.opacity = '';
+			container.querySelectorAll('.cm-order-row').forEach(r => { r.style.borderTop = ''; });
+		});
+
+		row.addEventListener('dragover', (e) => {
+			e.preventDefault();
+			e.dataTransfer.dropEffect = 'move';
+			container.querySelectorAll('.cm-order-row').forEach((r, ri) => {
+				r.style.borderTop = ri === i ? '2px solid #2196F3' : '';
+			});
+		});
+
+		row.addEventListener('dragleave', (e) => {
+			if (!container.contains(e.relatedTarget)) {
+				container.querySelectorAll('.cm-order-row').forEach(r => { r.style.borderTop = ''; });
+			}
+		});
+
+		row.addEventListener('drop', async (e) => {
+			e.preventDefault();
+			if (dragSrcIndex === null || dragSrcIndex === i) { dragSrcIndex = null; return; }
+			const newOrder = [...orderIds];
+			const [moved] = newOrder.splice(dragSrcIndex, 1);
+			const insertAt = dragSrcIndex < i ? i - 1 : i;
+			newOrder.splice(insertAt, 0, moved);
+			dragSrcIndex = null;
+			contexts.setContextMenuOrder(newOrder);
+			_renderContextMenuList(container, newOrder);
+			await _saveContextMenuOrder(newOrder);
+		});
+
+		container.appendChild(row);
+	});
+	_applyFilters(container);
+}
+
+function _showContextMenuItemDetail(entry) {
+	$('#contextmenu-no-selection').hide();
+	$('#contextmenu-detail-content').css('display', 'flex');
+	$('#contextmenu-detail-label').text(entry.label);
+	$('#contextmenu-detail-desc').text(entry.description);
+
+	const $conds = $('#contextmenu-detail-conditions');
+	$conds.empty();
+
+	const pill = (text, bg, color) => $('<span>').text(text).css({
+		display: 'inline-block', padding: '3px 8px', borderRadius: '4px',
+		fontSize: '11px', fontWeight: 'bold', background: bg, color,
+	});
+
+	$conds.append(pill(
+		entry.conditions.singleOnly ? 'Single item only' : 'Multi-select supported',
+		entry.conditions.singleOnly ? '#fff3e0' : '#e8f5e9',
+		entry.conditions.singleOnly ? '#e65100' : '#2e7d32'
+	));
+
+	if (entry.conditions.files && entry.conditions.dirs) {
+		$conds.append(pill('Files & Folders', '#f3e5f5', '#6a1b9a'));
+	} else if (entry.conditions.files) {
+		$conds.append(pill('Files only', '#f3e5f5', '#6a1b9a'));
+	} else if (entry.conditions.dirs) {
+		$conds.append(pill('Folders only', '#fff8e1', '#e65100'));
+	}
+
+	const $noteRow = $('#contextmenu-detail-note-row');
+	if (entry.conditions.note) {
+		$('#contextmenu-detail-note').text(entry.conditions.note);
+		$noteRow.show();
+	} else {
+		$noteRow.hide();
+	}
+}
+
+async function _saveContextMenuOrder(order) {
+	try {
+		const settings = await window.electronAPI.getSettings();
+		settings.context_menu_order = order;
+		const result = await window.electronAPI.saveSettings(settings);
+		if (result && result.success === false) {
+			showFormError('#contextmenu-status', 'Failed to save order.');
+		} else {
+			showFormSuccess('#contextmenu-status', 'Order saved.');
+		}
+	} catch (err) {
+		showFormError('#contextmenu-status', 'Error: ' + (err.message || 'Unknown'));
+	}
+}
+
 // ── Updates Tab ─────────────────────────────────────────────────────────────
 
 export async function initializeUpdatesTab() {

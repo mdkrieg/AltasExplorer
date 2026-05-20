@@ -225,6 +225,7 @@ async function initialize() {
     const appSettings = await window.electronAPI.getSettings();
     console.log('Settings loaded:', appSettings);
     panels.setCacheBrowsingMode(appSettings.cache_browsing || 'enabled');
+    contexts.initContextMenuOrder(appSettings.context_menu_order || null);
 
     const homePath = appSettings.home_directory;
 
