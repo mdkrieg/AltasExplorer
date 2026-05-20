@@ -565,7 +565,8 @@ async function saveTodo() {
 
   // 7. Write back to notes.txt
   try {
-    const rawContent = await window.electronAPI.readFileContent(notesFilePath);
+    let rawContent;
+    try { rawContent = await window.electronAPI.readFileContent(notesFilePath); } catch (_) { rawContent = null; }
     const newFullContent = await window.electronAPI.invoke('write-notes-section', {
       existingContent: rawContent || '',
       sectionKey,
@@ -599,6 +600,7 @@ async function saveTodo() {
       const rec = grid.records.find(r => r.recid === record.recid);
       if (rec) {
         rec.todo = newTodoCounts;
+        if (total > 0) rec.hasNotes = true;
         grid.refresh();
       }
     }
