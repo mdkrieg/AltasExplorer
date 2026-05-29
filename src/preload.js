@@ -190,6 +190,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   generateFolderIcon: (bgColor, textColor, initials) =>
     ipcRenderer.invoke('generate-folder-icon', { bgColor, textColor, initials }),
 
+  // Batch fetch category + icon for multiple folders in one IPC round-trip
+  batchGetFolderMetadata: (folders) =>
+    ipcRenderer.invoke('batch-get-folder-metadata', { folders }),
+
   // Generate tag icon
   generateTagIcon: (bgColor, textColor) =>
     ipcRenderer.invoke('generate-tag-icon', { bgColor, textColor }),

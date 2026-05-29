@@ -8,6 +8,7 @@ const USER_ICONS_DIR = path.join(os.homedir(), '.atlasexplorer', 'icons');
 
 class IconService {
   constructor() {
+    this._folderIconCache = new Map(); // key: "bgColor|textColor|initials" → base64 data URL
     this.ensureIconAssets();
   }
 
@@ -111,6 +112,11 @@ class IconService {
    */
   async generateWindowIcon(bgColor, outlineColor, initials = null) {
     try {
+      const cacheKey = `${bgColor}|${outlineColor}|${initials || ''}`;
+      if (this._folderIconCache.has(cacheKey)) {
+        return this._folderIconCache.get(cacheKey);
+      }
+
       const svgSource = path.join(USER_ICONS_DIR, 'folder.svg');
 
       if (!fs.existsSync(svgSource)) {
@@ -172,6 +178,7 @@ class IconService {
         .png()
         .toBuffer();
 
+      this._folderIconCache.set(cacheKey, iconPng);
       return iconPng;
     } catch (err) {
       logger.error('Error generating window icon:', err.message);

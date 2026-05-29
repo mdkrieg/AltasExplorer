@@ -76,6 +76,35 @@ export let gridFocusedPanelId = null;
 // 'disabled' → current behaviour (block on scan before showing grid)
 let cacheBrowsingMode = 'enabled';
 export function setCacheBrowsingMode(val) { cacheBrowsingMode = val || 'enabled'; }
+
+// ---------------------------------------------------------------------------
+// Records cache — in-memory LRU map, keyed by normalised directory path.
+// Populated at the end of every populateFileGrid call so that back/forward
+// navigation (and any revisit) can skip all IPC calls and re-render directly
+// from the cached record objects.  scrollTop is null on creation and written
+// when the user navigates away from a path, so it can be restored on return.
+//   Entry shape:
+//   { records, attrColumns, recidCounter, category, orphanCount, trashCount, scrollTop }
+// ---------------------------------------------------------------------------
+const RECORDS_CACHE_MAX = 20;
+const _recordsCache = new Map();
+
+function _rcPut(path, entry) {
+	_recordsCache.delete(path); // move to most-recently-used position
+	_recordsCache.set(path, entry);
+	if (_recordsCache.size > RECORDS_CACHE_MAX) {
+		_recordsCache.delete(_recordsCache.keys().next().value); // evict LRU
+	}
+}
+
+function _rcGet(path) {
+	const e = _recordsCache.get(path);
+	if (!e) return null;
+	_recordsCache.delete(path); // refresh LRU position
+	_recordsCache.set(path, e);
+	return e;
+}
+
 const closedPanelStack = [];
 const selectionAnchorRecids = {};
 
@@ -4341,7 +4370,7 @@ async function handleAtlasUri(uri, panelId, addToHistory) {
 	}
 }
 
-export async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true) {
+export async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true, restoreScroll = false) {
 	// Set to true when the deep search pipeline takes ownership of the overlay
 	// lifecycle, so the finally block does not prematurely hide the overlay.
 	let deepSearchOwnsOverlay = false;
@@ -4372,6 +4401,17 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		const state = panelState[panelId];
 		ensureFilterState(panelId);
+
+		// Snapshot scroll position for back/forward restoration before we leave.
+		// Must happen before state.currentPath is overwritten below.
+		if (state.currentPath) {
+			const leavingEntry = _recordsCache.get(state.currentPath);
+			if (leavingEntry) {
+				const scrollEl = state.w2uiGrid?.box?.querySelector('.w2ui-grid-records');
+				if (scrollEl) leavingEntry.scrollTop = scrollEl.scrollTop;
+			}
+		}
+
 		if (state.scanInProgress) {
 			state.scanCancelled = true;
 			state.pendingDirs = [];
@@ -4548,6 +4588,145 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		// ---- Cache-Browsing: render DB snapshot instantly, scan in background ----
 		// Only active for plain directory navigation (no URI params, depth = 0, grid view).
 		if (cacheBrowsingMode !== 'disabled' && navParams.size === 0 && (state.depth || 0) === 0) {
+
+			// ---- Level 1: Records cache — in-memory, zero IPC calls ----
+			const rcEntry = _rcGet(normalizedPath);
+			if (rcEntry) {
+				const rcCategory = rcEntry.category || null;
+				const prevRcCategory = state.currentCategory;
+				state.currentCategory = rcCategory;
+				state.orphanCount = rcEntry.orphanCount ?? 0;
+				state.trashCount  = rcEntry.trashCount  ?? 0;
+
+				const prevRcAttrs = JSON.stringify((prevRcCategory && prevRcCategory.attributes) || []);
+				const newRcAttrs  = JSON.stringify((rcCategory && rcCategory.attributes) || []);
+				if (prevRcAttrs !== newRcAttrs) await initializeGridForPanel(panelId);
+
+				state.currentAttrColumns = [...(rcEntry.attrColumns || [])];
+
+				if (panelId === 1 && rcCategory) {
+					window.electronAPI.updateWindowIcon(rcCategory.name, null);
+				}
+
+				hidePanelLoading(panelId);
+				const $panelRc = $(`#panel-${panelId}`);
+				$panelRc.find('.panel-landing-page').hide();
+				$panelRc.find('.panel-gallery').removeClass('active');
+				$panelRc.find('.panel-grid').show();
+				renderPanelToolbar(panelId, 'detail');
+				setPanelSourceRecords(panelId, rcEntry.records);
+				setTimeout(() => {
+					clipboard.updateClipboardFooter(panelId);
+					clipboard.reapplyClipboardClasses(panelId, panelState);
+				}, 0);
+
+				if (restoreScroll && rcEntry.scrollTop != null) {
+					requestAnimationFrame(() => {
+						const scrollEl = state.w2uiGrid?.box?.querySelector('.w2ui-grid-records');
+						if (scrollEl) scrollEl.scrollTop = rcEntry.scrollTop;
+					});
+				}
+
+				const rcSessionLayout = (state.sessionDirLayouts || {})[normalizedPath];
+				if (rcSessionLayout) {
+					applySessionDirLayout(panelId, rcSessionLayout);
+				} else {
+					await applyDirGridLayoutIfExists(panelId, normalizedPath);
+				}
+
+				updatePanelHeader(panelId, normalizedPath);
+				const rcGrid = state.w2uiGrid;
+				if (rcGrid) {
+					requestAnimationFrame(() => {
+						rcGrid.resize();
+						const hasSizeCfg = rcGrid.columns.some(c => c.sizeConfig);
+						if (hasSizeCfg) { applyColumnSizeConfigs(panelId); rcGrid.refresh(); }
+					});
+				}
+
+				state.hasBeenViewed = true;
+				window.electronAPI.registerWatchedPath(panelId, normalizedPath);
+				autoLabels.refreshAutoLabelCountAndSuggestions(panelId)
+					.then(() => renderPanelToolbar(panelId, 'detail')).catch(() => {});
+				sidebar.updateLocalFavoritesForPanel(panelId, normalizedPath);
+
+				// Background scan — verify the cached data is still current
+				const bgRcPath        = normalizedPath;
+				const bgRcOrphanCount = rcEntry.orphanCount ?? 0;
+
+				window.electronAPI.scanDirectoryWithComparison(bgRcPath).then(async bgScan => {
+					if (!bgScan || !bgScan.success) return;
+					if (panelState[panelId]?.currentPath !== bgRcPath) return;
+
+					if (bgScan.alertsCreated) {
+						unacknowledgedAlertCount += bgScan.alertsCreated;
+						updateAlertBadge();
+					}
+
+					panelState[panelId].orphanCount = bgScan.orphanCount ?? 0;
+					panelState[panelId].trashCount  = bgScan.trashCount  ?? 0;
+
+					const changedCount = (bgScan.entries || []).filter(
+						e => e.changeState === 'new' ||
+						     e.changeState === 'dateModified' ||
+						     e.changeState === 'modeChanged'
+					).length;
+					const orphanDelta  = Math.max(0, (bgScan.orphanCount ?? 0) - bgRcOrphanCount);
+					const totalChanges = changedCount + orphanDelta;
+
+					if (totalChanges > 0) {
+						const parts = [];
+						const newCount      = (bgScan.entries || []).filter(e => e.changeState === 'new').length;
+						const modifiedCount = (bgScan.entries || []).filter(
+							e => e.changeState === 'dateModified' || e.changeState === 'modeChanged'
+						).length;
+						if (newCount      > 0) parts.push(`${newCount} new`);
+						if (modifiedCount > 0) parts.push(`${modifiedCount} modified`);
+						if (orphanDelta   > 0) parts.push(`${orphanDelta} removed`);
+
+						const bgRcCategory   = await window.electronAPI.getCategoryForDirectory(bgRcPath);
+						const freshRcEntries = (bgScan.entries || [])
+							.filter(e => e.changeState !== 'orphan' && e.changeState !== 'moved');
+
+						showPanelRefreshBanner(panelId, `Changes detected: ${parts.join(', ')}`, () => {
+							if (panelState[panelId]?.currentPath !== bgRcPath) return;
+							const showCategory = bgRcCategory || panelState[panelId].currentCategory;
+							panelState[panelId].currentCategory = showCategory;
+							panelState[panelId].orphanCount     = bgScan.orphanCount ?? 0;
+							panelState[panelId].trashCount      = bgScan.trashCount  ?? 0;
+							populateFileGrid(freshRcEntries, showCategory, panelId).then(() => {
+								renderPanelToolbar(panelId, 'detail');
+								setTimeout(() => {
+									clipboard.updateClipboardFooter(panelId);
+									clipboard.reapplyClipboardClasses(panelId, panelState);
+								}, 0);
+								if (showCategory && showCategory.enableChecksum) {
+									const showGrid = panelState[panelId].w2uiGrid;
+									if (showGrid) {
+										const filesToChecksum = showGrid.records.filter(
+											r => !r.isFolder && r.changeState === 'checksumPending'
+										);
+										if (filesToChecksum.length > 0) {
+											const st = panelState[panelId];
+											const queueIdle = !st.checksumQueue || st.checksumCancelled ||
+											                   st.checksumQueueIndex >= st.checksumQueue.length;
+											if (queueIdle) startChecksumQueue(filesToChecksum, panelId, bgRcPath);
+										}
+									}
+								}
+							}).catch(() => {});
+						});
+					} else {
+						renderPanelToolbar(panelId, 'detail');
+					}
+				}).catch(err => {
+					console.warn('[records-cache] Background scan failed:', err.message || err);
+				});
+
+				return; // records cache render complete; background scan is fire-and-forget
+			}
+
+			// ---- Level 2: DB cache — one IPC call, no filesystem scan ----
 			const cacheResult = await window.electronAPI.getCachedDirectoryEntries(normalizedPath);
 			if (cacheResult && cacheResult.success && cacheResult.dirFound && !cacheResult.neverScanned) {
 				const cacheCategory = cacheResult.categoryData || null;
@@ -5708,6 +5887,7 @@ function showColumnContextMenuForPanel(panelId, field, mouseEvent) {
 
 async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {
 	const state = panelState[panelId];
+	const cachePath = state.currentPath; // capture before any awaits
 	const [settings, tagDefs, attributeDefs] = await Promise.all([
 		window.electronAPI.getSettings(),
 		window.electronAPI.loadTags(),
@@ -5768,15 +5948,23 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 		for (const attr of state.currentCategory.attributes) attrColSet.add(attr);
 	}
 
+	// Fetch category + icon for all non-moved folders in a single IPC call.
+	const foldersToFetch = folders.filter(f => f.changeState !== 'moved');
+	const folderMetaMap = foldersToFetch.length > 0
+		? await window.electronAPI.batchGetFolderMetadata(
+			foldersToFetch.map(f => ({ path: f.path, initials: f.resolvedInitials || f.initials || null }))
+		)
+		: {};
+
 	for (const folder of folders) {
 		let iconUrl;
 		let category = null;
 		if (folder.changeState === 'moved') {
 			iconUrl = 'assets/folder-moved.svg';
 		} else {
-			category = await window.electronAPI.getCategoryForDirectory(folder.path);
-			const iconInitials = folder.resolvedInitials || folder.initials || null;
-			iconUrl = await window.electronAPI.generateFolderIcon(category.bgColor, category.textColor, iconInitials);
+			const meta = folderMetaMap[folder.path] || {};
+			category = meta.category || null;
+			iconUrl = meta.iconUrl || null;
 			if (category && category.attributes) {
 				for (const attr of category.attributes) attrColSet.add(attr);
 			}
@@ -5967,6 +6155,16 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 	const grid = state.w2uiGrid;
 	if (grid) {
 		setPanelSourceRecords(panelId, records);
+		// Populate the records cache — next visit to this path skips populateFileGrid entirely.
+		_rcPut(cachePath, {
+			records,
+			attrColumns: [...(state.currentAttrColumns || [])],
+			recidCounter: recordId,
+			category: state.currentCategory || null,
+			orphanCount: state.orphanCount ?? 0,
+			trashCount:  state.trashCount  ?? 0,
+			scrollTop: null,
+		});
 	}
 }
 
@@ -6805,7 +7003,7 @@ export function navigateBack() {
 	const state = panelState[activePanelId];
 	if (state.navigationIndex > 0) {
 		state.navigationIndex--;
-		navigateToDirectory(state.navigationHistory[state.navigationIndex], activePanelId, false);
+		navigateToDirectory(state.navigationHistory[state.navigationIndex], activePanelId, false, true);
 	}
 }
 
@@ -6828,7 +7026,7 @@ export function navigateForward() {
 	const state = panelState[activePanelId];
 	if (state.navigationIndex < state.navigationHistory.length - 1) {
 		state.navigationIndex++;
-		navigateToDirectory(state.navigationHistory[state.navigationIndex], activePanelId, false);
+		navigateToDirectory(state.navigationHistory[state.navigationIndex], activePanelId, false, true);
 	}
 }
 

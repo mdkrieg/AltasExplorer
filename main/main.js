@@ -2109,6 +2109,38 @@ ipcMain.handle('generate-folder-icon', async (event, { bgColor, textColor, initi
   }
 });
 
+/**
+ * Batch fetch category + folder icon for an array of folder entries in one IPC round-trip.
+ * Input:  { folders: [{ path, initials }] }
+ * Output: { [path]: { category, iconUrl } }
+ *
+ * Uses the cached icon and category systems internally so repeated calls for the
+ * same category colours are essentially free after the first render.
+ */
+ipcMain.handle('batch-get-folder-metadata', async (event, { folders }) => {
+  const result = {};
+  for (const { path: folderPath, initials } of folders) {
+    try {
+      const category = categories.getCategoryForDirectory(folderPath);
+      const iconBuffer = await icons.generateWindowIcon(
+        category.bgColor,
+        category.textColor,
+        initials || null
+      );
+      result[folderPath] = {
+        category,
+        iconUrl: iconBuffer
+          ? 'data:image/png;base64,' + iconBuffer.toString('base64')
+          : null,
+      };
+    } catch (err) {
+      logger.warn(`batch-get-folder-metadata: error for ${folderPath}: ${err.message}`);
+      result[folderPath] = { category: categories.createDefaultCategory(), iconUrl: null };
+    }
+  }
+  return result;
+});
+
 ipcMain.handle('generate-tag-icon', async (event, { bgColor, textColor }) => {
   try {
     const iconBuffer = await icons.generateTagIcon(bgColor, textColor);

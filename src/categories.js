@@ -9,6 +9,11 @@ const SETTINGS_PATH = path.join(os.homedir(), '.atlasexplorer', 'settings.json')
 const HOTKEYS_PATH = path.join(os.homedir(), '.atlasexplorer', 'hotkeys.json');
 const SOURCE_HOTKEYS_PATH = path.join(__dirname, '..', 'assets', 'hotkeys.json');
 
+// Module-level categories cache — avoids re-reading all category JSON files on every
+// getCategoryForDirectory call.  Invalidated by any write that changes a category file.
+let _categoriesCache = null;
+function _invalidateCategoryCache() { _categoriesCache = null; }
+
 // Embedded defaults used when assets/hotkeys.json is unavailable (e.g. packaged builds
 // where the assets directory isn't alongside the asar, or a race during first install).
 // Keys mirror the `default` values in assets/hotkeys.json — never user customisations.
@@ -146,6 +151,8 @@ class CategoryService {
    * Load all category files from the categories directory
    */
   loadCategories() {
+    if (_categoriesCache) return _categoriesCache;
+
     const categories = {};
 
     try {
@@ -183,6 +190,7 @@ class CategoryService {
       logger.error('Error loading categories:', err.message);
     }
 
+    _categoriesCache = categories;
     return categories;
   }
 
@@ -218,6 +226,7 @@ class CategoryService {
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(category, null, 2));
+    _invalidateCategoryCache();
 
     return category;
   }
@@ -254,6 +263,7 @@ class CategoryService {
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(category, null, 2));
+    _invalidateCategoryCache();
 
     return category;
   }
@@ -278,6 +288,7 @@ class CategoryService {
     }
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
+    _invalidateCategoryCache();
     return existing.defaultGridLayout || null;
   }
 
@@ -301,6 +312,7 @@ class CategoryService {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
+    _invalidateCategoryCache();
 
     // Note: Directories that had this category assigned will remain in the database with that category name.
     // On next scan, if the category doesn't exist in the category files, the directory will fall back
