@@ -606,6 +606,91 @@ export function reapplyClipboardClasses(panelId, panelState) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Build a short human-readable hint describing what the OS clipboard holds.
+ *
+ * @param {{type:string,data?:any}|null} clip  normalized clipboard payload
+ * @returns {string}  e.g. "2 files in clipboard (external)", or '' when empty
+ */
+function _hintForClip(clip) {
+	if (!clip || clip.type === 'empty') return '';
+	if (clip.type === 'files' && Array.isArray(clip.data)) {
+		const n = clip.data.length;
+		return n === 1 ? '1 file in clipboard (external)' : `${n} files in clipboard (external)`;
+	}
+	if (clip.type === 'image') return 'Image in clipboard (external)';
+	if (clip.type === 'text') return 'Text in clipboard (external)';
+	return '';
+}
+
+/**
+ * Reconcile a freshly-observed OS clipboard payload against internal state and
+ * refresh the panel footers. This is the single source of truth used by both
+ * the window-focus poll and the (future) event-driven `clipboard-changed` IPC.
+ *
+ * Rules:
+ *   - Internal items present and OS still holds the same files → no-op (in sync).
+ *   - Internal items present and OS is empty → keep internal state. This guards
+ *     the ~200ms self-write window after setClipboard() where the OS write may
+ *     still be in flight; we must not falsely clear internal cut/copy state.
+ *   - Internal items present and OS holds something different → internal state
+ *     is stale: clear it and show the OS hint.
+ *   - No internal items → mirror whatever the OS holds (including empty, which
+ *     clears any stale hint) into the footer.
+ *
+ * @param {{type:string,data?:any}|null} clip
+ * @param {object} panelState
+ */
+export function handleClipboardChanged(clip, panelState) {
+	const hintText = _hintForClip(clip);
+	const isEmpty = !clip || clip.type === 'empty';
+
+	if (clipboardState.items.length > 0) {
+		// Internal clipboard is non-empty. Check whether the OS still holds the
+		// same files we wrote (setClipboard writes to OS via PowerShell).
+		if (clip && clip.type === 'files' && Array.isArray(clip.data)) {
+			const osNorm = clip.data.map(normalizePath).sort();
+			const intNorm = clipboardState.items.map(i => normalizePath(i.path)).sort();
+			const match = osNorm.length === intNorm.length && osNorm.every((p, idx) => p === intNorm[idx]);
+			if (match) return; // Still in sync — nothing to do.
+		}
+		// OS empty: likely the self-write race — keep internal state untouched.
+		if (isEmpty) return;
+		// OS has something different: internal clipboard is stale. Clear it and
+		// show the OS hint in the footers.
+		clearClipboard(panelState, hintText);
+		return;
+	}
+
+	// No internal state: mirror whatever the OS holds (empty clears stale hint).
+	_osClipboardHint = hintText;
+	for (let id = 1; id <= 4; id++) {
+		if (panelState[id]) updateClipboardFooter(id);
+	}
+}
+
+// Concurrency guard for the focus poll: avoid overlapping PowerShell reads when
+// rapid focus events fire. A trailing read is coalesced into a single re-run.
+let _osReadInFlight = false;
+let _osReadPending = false;
+
+async function _pollOsClipboard(panelState) {
+	if (_osReadInFlight) { _osReadPending = true; return; }
+	_osReadInFlight = true;
+	try {
+		let clip = null;
+		try { clip = await window.electronAPI.readSystemClipboard(); } catch (_) {}
+		handleClipboardChanged(clip, panelState);
+	} finally {
+		_osReadInFlight = false;
+		if (_osReadPending) {
+			_osReadPending = false;
+			// Re-run once to capture the latest state observed during the read.
+			_pollOsClipboard(panelState);
+		}
+	}
+}
+
+/**
  * Attach a window-focus listener that reads the OS clipboard once each time
  * the app regains focus. If the internal clipboard is stale (the user copied
  * something else outside the app), internal state is cleared and the footer
@@ -619,48 +704,15 @@ export function initClipboardFocusSync(panelState) {
 	if (_focusSyncInitialised) return;
 	_focusSyncInitialised = true;
 
-	window.addEventListener('focus', async () => {
-		// Read the OS clipboard silently.
-		let clip = null;
-		try { clip = await window.electronAPI.readSystemClipboard(); } catch (_) {}
+	// Event-driven path (preferred): the main process pushes 'clipboard-changed'
+	// whenever the OS clipboard updates — works while focused AND headless.
+	if (window.electronAPI && typeof window.electronAPI.onClipboardChanged === 'function') {
+		window.electronAPI.onClipboardChanged((clip) => handleClipboardChanged(clip, panelState));
+	}
 
-		// OS empty / unreadable: skip. This covers the ~200ms PowerShell write
-		// race that follows setClipboard() — we must not falsely clear the
-		// internal state while the async write is still in flight.
-		if (!clip || clip.type === 'empty') return;
-
-		// Build a human-readable hint for whatever the OS holds.
-		let hintText = '';
-		if (clip.type === 'files' && Array.isArray(clip.data)) {
-			const n = clip.data.length;
-			hintText = n === 1 ? '1 file in clipboard (external)' : `${n} files in clipboard (external)`;
-		} else if (clip.type === 'image') {
-			hintText = 'Image in clipboard (external)';
-		} else if (clip.type === 'text') {
-			hintText = 'Text in clipboard (external)';
-		}
-
-		if (clipboardState.items.length > 0) {
-			// Internal clipboard is non-empty. Check whether the OS still holds
-			// the same files we wrote (setClipboard writes to OS via PowerShell).
-			if (clip.type === 'files' && Array.isArray(clip.data)) {
-				const osNorm = clip.data.map(normalizePath).sort();
-				const intNorm = clipboardState.items.map(i => normalizePath(i.path)).sort();
-				const match = osNorm.length === intNorm.length && osNorm.every((p, idx) => p === intNorm[idx]);
-				if (match) return; // Still in sync — nothing to do.
-			}
-			// OS has something different: internal clipboard is stale. Clear it
-			// and show the OS hint in the currently focused panel's footer.
-			clearClipboard(panelState, hintText);
-		} else {
-			// No internal state. Display what the OS holds in the footer of
-			// the currently focused panel only.
-			_osClipboardHint = hintText;
-			for (let id = 1; id <= 4; id++) {
-				if (panelState[id]) updateClipboardFooter(id);
-			}
-		}
-	});
+	// Focus poll (fallback + initial seed): covers environments where the
+	// watcher is unavailable and reconciles state when the window regains focus.
+	window.addEventListener('focus', () => { _pollOsClipboard(panelState); });
 }
 
 /**

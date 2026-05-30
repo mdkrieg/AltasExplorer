@@ -144,6 +144,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveImageToDir: ({ dir, filename, base64 }) => ipcRenderer.invoke('save-image-to-dir', { dir, filename, base64 }),
 
   /**
+   * Event-driven OS clipboard change notifications from the persistent watcher.
+   * Payload: { type:'files'|'image'|'text'|'empty', data?, seq? }. Fires while
+   * focused AND in the background, so the status footer stays accurate without
+   * relying on window-focus polling.
+   */
+  onClipboardChanged: (callback) => ipcRenderer.on('clipboard-changed', (event, payload) => callback(payload)),
+
+  /**
    * Cross-app drag IN: turn a renderer-side `File` object (from
    * `event.dataTransfer.files`) into the absolute filesystem path. Newer
    * Electron versions removed the legacy `File.path` property; use

@@ -22,12 +22,17 @@ const scanner = require('../src/scanner');
 const layouts = require('../src/layouts');
 const autoLabels = require('../src/autoLabels');
 const { execFile } = require('child_process');
+const { createClipboardWatcher } = require('../src/clipboardWatcher');
 const ffmpegBin = require('ffmpeg-static');
 const { dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
 let pendingLayoutFile = null; // File to load on startup (from command line or file association)
+
+// Persistent OS clipboard watcher (event-driven; focus-independent). Forwards
+// normalized 'clipboard-changed' payloads to the renderer.
+let clipboardWatcher = null;
 
 // Drag-tray secondary window. Created on demand by Ctrl+D in the renderer; at
 // most one tray exists at a time. The tray is `focusable: false` (sets Win32
@@ -3066,13 +3071,15 @@ ipcMain.handle('check-collisions', async (event, { items, targetDirPath } = {}) 
 });
 
 /**
- * Read the operating-system clipboard and return a typed payload:
+ * Read the operating-system clipboard directly (one-shot). Used as a fallback
+ * when the persistent clipboard watcher has no cached value yet (or is
+ * unavailable). Returns a typed payload:
  *   { type: 'files', data: string[] }   — list of absolute paths
  *   { type: 'image', data: string }     — PNG encoded as base64
  *   { type: 'text',  data: string }     — plain text string
  *   { type: 'empty' }                   — nothing useful on clipboard
  */
-ipcMain.handle('read-system-clipboard', async () => {
+async function readSystemClipboardRaw() {
   const { clipboard } = require('electron');
 
   // Windows: use PowerShell to read CF_HDROP (the format Windows Explorer uses for file copies).
@@ -3106,6 +3113,17 @@ ipcMain.handle('read-system-clipboard', async () => {
   if (text && text.trim()) return { type: 'text', data: text };
 
   return { type: 'empty' };
+}
+
+ipcMain.handle('read-system-clipboard', async () => {
+  // Prefer the persistent watcher's cached value: it is event-driven (always
+  // fresh) and already holds full contents (paths / base64 / text), so the
+  // paste path avoids spawning a fresh PowerShell reader.
+  if (clipboardWatcher) {
+    const cached = clipboardWatcher.last;
+    if (cached && cached.type && cached.type !== 'empty') return cached;
+  }
+  return readSystemClipboardRaw();
 });
 
 /**
@@ -4835,11 +4853,42 @@ function setupAutoUpdater() {
 // Call this immediately to parse command-line args
 parseCommandLineArgs();
 
+/**
+ * Start the persistent OS clipboard watcher and forward its normalized change
+ * events to the renderer as 'clipboard-changed'. Safe to call once at startup.
+ */
+function startClipboardWatcher() {
+  try {
+    clipboardWatcher = createClipboardWatcher({
+      backend: 'auto',
+      // Reader used only by the experimental native backend.
+      reader: () => readSystemClipboardRaw(),
+    });
+
+    clipboardWatcher.on('change', (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        try { mainWindow.webContents.send('clipboard-changed', payload); } catch (_) { /* ignore */ }
+      }
+    });
+
+    clipboardWatcher.on('unavailable', () => {
+      logger.warn('[ClipboardWatcher] backend unavailable; renderer falls back to focus polling');
+    });
+
+    clipboardWatcher.start();
+    logger.info('[ClipboardWatcher] started');
+  } catch (err) {
+    logger.warn('[ClipboardWatcher] failed to start:', err.message);
+    clipboardWatcher = null;
+  }
+}
+
 app.on('ready', () => {
   // Disable the default menu to prevent Alt key from showing it
   Menu.setApplicationMenu(null);
   initialize();
   createWindow();
+  startClipboardWatcher();
   setupAutoUpdater();
 
   // ── Session-level network firewall ──────────────────────────────────────────
@@ -4897,6 +4946,10 @@ app.on('ready', () => {
 });
 
 app.on('before-quit', () => {
+  if (clipboardWatcher) {
+    try { clipboardWatcher.stop(); } catch (_) {}
+    clipboardWatcher = null;
+  }
   for (const [, proc] of ptyMap) {
     try { proc.kill(); } catch (_) {}
   }
