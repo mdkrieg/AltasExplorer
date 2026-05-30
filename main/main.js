@@ -28,6 +28,10 @@ const { dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
+// Lightweight splash window shown the instant the app is ready, so the user
+// gets immediate feedback while the main window's heavier renderer boots. It is
+// destroyed the moment the main window is ready to show.
+let splashWindow = null;
 let pendingLayoutFile = null; // File to load on startup (from command line or file association)
 
 // Persistent OS clipboard watcher (event-driven; focus-independent). Forwards
@@ -271,6 +275,67 @@ function buildTerminalCommand(action, filePath) {
 }
 
 /**
+ * Create the lightweight splash window. Shown the instant the app is ready so
+ * the user gets immediate feedback while the heavier main window boots. It is a
+ * frameless, transparent, always-on-top card that never steals focus from the
+ * main window and is torn down by closeSplash() once the main window paints.
+ */
+function createSplash() {
+  try {
+    const width = 560;
+    const height = 240;
+    splashWindow = new BrowserWindow({
+      width,
+      height,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      center: true,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+
+    splashWindow.setMenuBarVisibility(false);
+    splashWindow.loadFile(path.join(__dirname, '..', 'public', 'splash.html'));
+
+    splashWindow.once('ready-to-show', () => {
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.show();
+      }
+    });
+
+    splashWindow.on('closed', () => {
+      splashWindow = null;
+    });
+
+    // Safety net: never let the splash linger if the main window fails to load.
+    setTimeout(() => closeSplash(), 20000);
+  } catch (err) {
+    logger.warn('[Splash] failed to create splash window:', err && err.message);
+    splashWindow = null;
+  }
+}
+
+/**
+ * Destroy the splash window if it is still open. Safe to call multiple times.
+ */
+function closeSplash() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    try { splashWindow.close(); } catch (_) { /* ignore */ }
+  }
+  splashWindow = null;
+}
+
+/**
  * Create the main application window
  */
 function createWindow() {
@@ -288,6 +353,7 @@ function createWindow() {
     });
 
     mainWindow.once('ready-to-show', () => {
+      closeSplash();
       mainWindow.show();
     });
 
@@ -358,6 +424,8 @@ function createWindow() {
     // Send pending layout file to renderer after window loads, and kick off
     // the deferred TODO aggregator refresh.
     mainWindow.webContents.on('did-finish-load', () => {
+      // Backup teardown in case 'ready-to-show' was somehow missed.
+      closeSplash();
       if (pendingLayoutFile) {
         mainWindow.webContents.send('load-layout-from-file', pendingLayoutFile);
         pendingLayoutFile = null; // Clear after sending
@@ -572,11 +640,21 @@ function initialize() {
   logger.info('Initializing application');
   syncIconAssets();
   db.initialize();
-  reconcilePendingDeletions();
-  // todoAggregator.refreshAll() and the initial monitoring pass are both
-  // deferred until after did-finish-load so they don't compete with window
-  // creation. See deferredTodoRefresh() and the did-finish-load hook.
-  reconfigureActiveMonitoring();
+  // reconcilePendingDeletions(), reconfigureActiveMonitoring(),
+  // todoAggregator.refreshAll() and the initial monitoring pass are all
+  // deferred so they don't compete with window creation / first paint.
+  // reconcilePendingDeletions + reconfigureActiveMonitoring only need the DB
+  // (already initialized above) and nothing the first paint depends on, so we
+  // push them just past the current tick. See deferredTodoRefresh() and the
+  // did-finish-load hook for the heavier deferred work.
+  setImmediate(() => {
+    try {
+      reconcilePendingDeletions();
+      reconfigureActiveMonitoring();
+    } catch (err) {
+      logger.error('Deferred startup reconcile failed:', err && err.message);
+    }
+  });
 
   // Load default window icon
   const defaultCategory = categories.getCategory('Default');
@@ -4886,6 +4964,9 @@ function startClipboardWatcher() {
 app.on('ready', () => {
   // Disable the default menu to prevent Alt key from showing it
   Menu.setApplicationMenu(null);
+  // Show the splash first so the user gets feedback within ~100ms, before the
+  // (potentially slow) DB init and main-window boot run.
+  createSplash();
   initialize();
   createWindow();
   startClipboardWatcher();

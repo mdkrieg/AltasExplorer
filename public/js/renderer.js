@@ -233,8 +233,16 @@ async function initialize() {
     panels.initializeDividers();
     await panels.loadFileTypes();
 
+    // Kick off the first directory scan WITHOUT blocking the rest of startup on
+    // it. navigateToDirectory() synchronously shows the panel's own loading
+    // overlay (the indeterminate bar) before its IPC call, so once the startup
+    // skeleton is removed the user sees that bar inside panel 1 while the scan
+    // finishes. This decouples "app shell ready / interactive" from the
+    // potentially slow home-directory scan on large drives.
     if (homePath) {
-      await panels.navigateToDirectory(homePath, 1);
+      panels.navigateToDirectory(homePath, 1).catch(err => {
+        console.error('Home directory navigation failed:', err);
+      });
     }
 
     await loadCategories();
