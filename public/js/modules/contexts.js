@@ -50,6 +50,7 @@ export function clearCustomActionsCache() { customActionsCache = null; }
 // controlled by explicit 'separator-N' entries in the order array.
 export const CONTEXT_MENU_REGISTRY = [
 	{ id: 'open-in', label: 'Open In', group: 1, description: 'Opens the selected folder in a panel of your choice. For .lnk shortcut files, resolves and opens the target path.', conditions: { singleOnly: true, files: false, dirs: true, note: 'Also shown for .lnk shortcut files.' } },
+	{ id: 'open-in-new-window', label: 'Open in New Window', group: 1, description: 'Opens the selected folder in a brand-new application window. The new window shares the same backend (database, monitoring) as all other windows.', conditions: { singleOnly: true, files: false, dirs: true } },
 	{ id: 'open-in-default-app', label: 'Open', group: 1, description: 'Opens the selected file with the system default application. When the default app is known, the app name appears in the label.', conditions: { singleOnly: true, files: true, dirs: false, note: 'Not shown for .lnk shortcut files.' } },
 	{ id: 'view-file', label: 'View / Edit', group: 1, description: 'Opens the file in the built-in viewer. Label adapts to file type: "View Image", "View Hex", "View/Edit", or "View…".', conditions: { singleOnly: true, files: true, dirs: false, note: 'Not shown when no built-in viewer is available (e.g. video files).' } },
 	{ id: 'open-in-terminal-label', label: 'Open in Terminal', group: 1, description: 'Opens a terminal panel for the selected folder. Lists existing terminal panels and a "New Terminal" option.', conditions: { singleOnly: true, files: false, dirs: true } },
@@ -75,7 +76,7 @@ export const CONTEXT_MENU_REGISTRY = [
 // Default order: registry item IDs interleaved with explicit 'separator-N' IDs
 // at each natural group boundary. Stored and restored identically to item IDs.
 export const DEFAULT_CONTEXT_MENU_ORDER = [
-	'open-in', 'open-in-default-app', 'view-file', 'open-in-terminal-label',
+	'open-in', 'open-in-new-window', 'open-in-default-app', 'view-file', 'open-in-terminal-label',
 	'separator-1',
 	'set-category-label', 'add-tag-label', 'remove-tag-label', 'add-to-favorites',
 	'separator-2',
@@ -305,6 +306,11 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 			}))
 		});
 		contextMenu.push({
+			id: 'open-in-new-window',
+			text: 'Open in New Window',
+			icon: 'fa fa-clone'
+		});
+		contextMenu.push({
 			id: 'set-category-label',
 			text: 'Set Category',
 			items: buildCategorySubmenuItems()
@@ -352,6 +358,11 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 					id: `open-in-${panelNumber}`,
 					text: `Panel ${panelNumber}`
 				}))
+			});
+			contextMenu.push({
+				id: 'open-in-new-window',
+				text: 'Open in New Window',
+				icon: 'fa fa-clone'
 			});
 		} else {
 			const openText = (defaultAppResult && defaultAppResult.appName)
@@ -662,6 +673,24 @@ async function handleContextMenuClick(event, panelId) {
 			await panels.navigateToDirectory(navPath, activePanelId);
 		} catch (err) {
 			alert('Error navigating: ' + err.message);
+		}
+	}
+
+	if (menuItemId === 'open-in-new-window') {
+		// Open the selected folder (or .lnk target) in a brand-new window.
+		const firstRecord = selectedRecords[0];
+		if (!firstRecord) return;
+		try {
+			const isLnk = firstRecord.path?.toLowerCase().endsWith('.lnk');
+			let navPath = firstRecord.path;
+			if (isLnk) {
+				const res = await window.electronAPI.resolveShortcut(firstRecord.path);
+				if (!res || !res.success) { alert('Could not resolve shortcut target'); return; }
+				navPath = res.targetPath;
+			}
+			await window.electronAPI.openInNewWindow(navPath);
+		} catch (err) {
+			alert('Error opening in new window: ' + err.message);
 		}
 	}
 

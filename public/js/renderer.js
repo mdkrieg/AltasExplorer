@@ -257,6 +257,18 @@ async function initialize() {
       panels.handleCloseRequest();
     });
 
+    // "Open in New Window": the main process boots a fresh window and, once the
+    // renderer has loaded, tells us which directory to open. Navigate panel 1 to
+    // it, overriding the default home-directory navigation above.
+    if (typeof window.electronAPI.onOpenPathOnStartup === 'function') {
+      window.electronAPI.onOpenPathOnStartup((dirPath) => {
+        if (!dirPath) return;
+        panels.navigateToDirectory(dirPath, 1).catch(err => {
+          console.error('Open-path-on-startup navigation failed:', err);
+        });
+      });
+    }
+
     // Blur vignette: toggle 'window-blurred' on <body> in response to
     // main-process focus state (DevTools-aware, so opening DevTools does NOT
     // flash the overlay). The overlay itself swallows the first click while

@@ -27,12 +27,62 @@ const ffmpegBin = require('ffmpeg-static');
 const { dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
-let mainWindow;
+// ── Window registry ─────────────────────────────────────────────────────────
+// The app runs as a SINGLE process (guarded by app.requestSingleInstanceLock()).
+// Every launch, "second-instance" event, and "Open in New Window" action adds a
+// BrowserWindow to this set instead of spawning a new process. The heavy
+// background subsystems (DB connection, monitoring scheduler, clipboard watcher,
+// auto-updater, global shortcuts) are singletons shared by ALL windows, so they
+// never double up regardless of how many windows are open.
+const windows = new Set();
+
+// Per-window state (focus tracking + close-confirmation handshake) that used to
+// live in module-level globals back when only one window existed. Keyed by the
+// BrowserWindow instance so it is garbage-collected with the window.
+const windowState = new WeakMap();
+
+/** All live (non-destroyed) Atlas windows. */
+function getAllWindows() {
+  return Array.from(windows).filter(w => w && !w.isDestroyed());
+}
+
+/** Send an IPC message to every live window. Use for app-wide notifications. */
+function broadcast(channel, ...args) {
+  for (const w of windows) {
+    if (w && !w.isDestroyed()) {
+      try { w.webContents.send(channel, ...args); } catch (_) { /* window closed */ }
+    }
+  }
+}
+
+/** The BrowserWindow that owns the webContents that sent an IPC message. */
+function senderWindow(event) {
+  try { return BrowserWindow.fromWebContents(event.sender); } catch (_) { return null; }
+}
+
+/**
+ * The window the user is currently interacting with. Used for actions that act
+ * on "the active window" but have no IPC sender (e.g. global-shortcut DevTools
+ * toggle, default startup icon). Falls back to the most recently added window.
+ */
+function getActiveWindow() {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && windows.has(focused)) return focused;
+  const live = getAllWindows();
+  return live[live.length - 1] || null;
+}
+
 // Lightweight splash window shown the instant the app is ready, so the user
 // gets immediate feedback while the main window's heavier renderer boots. It is
-// destroyed the moment the main window is ready to show.
+// destroyed the moment the main window is ready to show. Only shown for the
+// FIRST window (subsequent windows open fast since the backend is already up).
 let splashWindow = null;
 let pendingLayoutFile = null; // File to load on startup (from command line or file association)
+
+// One-time guard: app-wide deferred startup work (TODO aggregator refresh,
+// first monitoring pass) runs only when the FIRST window finishes loading, not
+// for every additional window that is opened afterwards.
+let firstWindowReady = false;
 
 // Persistent OS clipboard watcher (event-driven; focus-independent). Forwards
 // normalized 'clipboard-changed' payloads to the renderer.
@@ -44,15 +94,14 @@ let clipboardWatcher = null;
 // main window to the foreground — that's the whole point.
 let dragTrayWindow = null;
 
-// DevTools-aware focus state. The renderer treats the window as focused when
-// either the main webContents OR DevTools holds focus, so opening DevTools
-// doesn't trigger the blur vignette.
-let mainWindowFocused = false;
-let devtoolsFocused = false;
-function emitMainWindowFocus() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const focused = mainWindowFocused || devtoolsFocused;
-  try { mainWindow.webContents.send('main-window-focus', focused); } catch (_) { /* ignore */ }
+// DevTools-aware focus state. The renderer treats a window as focused when
+// either its webContents OR its DevTools holds focus, so opening DevTools
+// doesn't trigger the blur vignette. State is tracked per-window in windowState.
+function emitWindowFocus(win) {
+  if (!win || win.isDestroyed()) return;
+  const st = windowState.get(win) || {};
+  const focused = !!(st.focused || st.devtoolsFocused);
+  try { win.webContents.send('main-window-focus', focused); } catch (_) { /* ignore */ }
 }
 
 let checksumInFlight = 0;
@@ -125,12 +174,10 @@ const activeDeepSearches = new Map();
 // Session-persistent: survives renderer reloads, cleared on explicit Refresh.
 const osIconCache = new Map();
 
-// Wrap with Electron-aware notify (push to renderer via mainWindow)
+// Wrap with Electron-aware notify (push progress events to all open windows)
 function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBackgroundRefresh = false, options = {}) {
   return _doScan(dirPath, isManualNavigation, isBackgroundRefresh, options, (event) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(event);
-    }
+    broadcast(event);
   });
 }
 
@@ -194,8 +241,8 @@ async function runMonitoringPass() {
         observationSource: 'monitoring'
       });
 
-      if (result.success && result.alertsCreated && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('alert-count-updated', { count: db.getUnacknowledgedAlertCount() });
+      if (result.success && result.alertsCreated) {
+        broadcast('alert-count-updated', { count: db.getUnacknowledgedAlertCount() });
       }
 
       if (result.success && job.remainingDepth > 0) {
@@ -336,11 +383,20 @@ function closeSplash() {
 }
 
 /**
- * Create the main application window
+ * Create an application window.
+ *
+ * The app supports an arbitrary number of windows, all sharing a single backend
+ * process. Each window tracks its own focus and close-confirmation state in
+ * windowState. The one-time, app-wide startup work (TODO aggregator refresh,
+ * first monitoring pass) runs only for the first window via firstWindowReady.
+ *
+ * @param {string|null} startupPath  Optional directory to open the new window
+ *   into (used by "Open in New Window"). When null, the window loads normally.
+ * @returns {BrowserWindow|null}
  */
-function createWindow() {
+function createWindow(startupPath = null) {
   try {
-    mainWindow = new BrowserWindow({
+    const win = new BrowserWindow({
       width: 1200,
       height: 800,
       show: false,
@@ -352,21 +408,24 @@ function createWindow() {
       }
     });
 
-    mainWindow.once('ready-to-show', () => {
+    windows.add(win);
+    windowState.set(win, { focused: false, devtoolsFocused: false, closeApproved: false });
+
+    win.once('ready-to-show', () => {
       closeSplash();
-      mainWindow.show();
+      win.show();
     });
 
     // Hide the menu bar by default
-    mainWindow.setAutoHideMenuBar(true);
-    mainWindow.setMenuBarVisibility(false);
+    win.setAutoHideMenuBar(true);
+    win.setMenuBarVisibility(false);
 
     const indexPath = path.join(__dirname, '..', 'public', 'index.html');
     logger.info('Loading index from:', indexPath);
-    mainWindow.loadFile(indexPath);
+    win.loadFile(indexPath);
 
     // Block in-page navigation away from the local file (e.g. a link click inside rendered markdown)
-    mainWindow.webContents.on('will-navigate', (event, url) => {
+    win.webContents.on('will-navigate', (event, url) => {
       if (!url.startsWith('file://')) {
         logger.warn('[SECURITY] Blocked navigation to:', url);
         event.preventDefault();
@@ -374,100 +433,113 @@ function createWindow() {
     });
 
     // Block target="_blank" and any other attempt to open a new window
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    win.webContents.setWindowOpenHandler(({ url }) => {
       logger.warn('[SECURITY] Blocked new-window open for:', url);
       return { action: 'deny' };
     });
 
-    mainWindow.webContents.on('crashed', () => {
+    win.webContents.on('crashed', () => {
       logger.error('Renderer process crashed');
-      app.isQuitting = true;
-      app.quit();
+      // Only one window crashed — tear it down, but don't quit the whole app
+      // unless it was the last one (handled by window-all-closed).
+      if (!win.isDestroyed()) {
+        windowState.get(win) && (windowState.get(win).closeApproved = true);
+        try { win.destroy(); } catch (_) { /* ignore */ }
+      }
     });
 
-    mainWindow.on('unresponsive', () => {
+    win.on('unresponsive', () => {
       logger.warn('Renderer process became unresponsive');
-      app.isQuitting = true;
-      app.quit();
     });
 
     // Capture renderer console output in the log file.
     // This catches errors that originate outside the preload.js override
     // (e.g. unhandled rejections surfaced by Electron, errors in module load, etc.)
     // Note: DevTools-internal messages like Autofill.enable are NOT capturable this way.
-    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    win.webContents.on('console-message', (event, level, message, line, sourceId) => {
       if (!message || message.includes('Autofill')) return; // skip DevTools noise
       const levelName = level === 0 ? 'INFO' : level === 1 ? 'WARN' : 'ERROR';
       logger.rendererLog(levelName, `[${sourceId}:${line}] ${message}`);
     });
 
-    mainWindow.on('closed', () => {
-      mainWindow = null;
+    win.on('closed', () => {
+      windows.delete(win);
+      purgeWatchedPathsForWindow(win);
     });
 
-    // Handle window close requests - ask renderer if it's OK to close.
-    // A 3-second safety-net timer ensures the window can always be closed
-    // even if the renderer is dead and never sends 'allow-close-app'.
-    mainWindow.on('close', (event) => {
-      if (!app.isQuitting) {
-        event.preventDefault();
-        mainWindow.webContents.send('request-close-app');
-        setTimeout(() => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            app.isQuitting = true;
-            mainWindow.close();
-          }
-        }, 3000);
-      }
+    // Handle window close requests - ask the renderer if it's OK to close this
+    // window. A 3-second safety-net timer ensures the window can always be
+    // closed even if the renderer is dead and never sends 'allow-close-app'.
+    win.on('close', (event) => {
+      const st = windowState.get(win) || {};
+      if (app.isQuitting || st.closeApproved) return; // allow close
+      event.preventDefault();
+      try { win.webContents.send('request-close-app'); } catch (_) { /* ignore */ }
+      setTimeout(() => {
+        if (win && !win.isDestroyed()) {
+          const s = windowState.get(win); if (s) s.closeApproved = true;
+          win.close();
+        }
+      }, 3000);
     });
 
-    // Send pending layout file to renderer after window loads, and kick off
-    // the deferred TODO aggregator refresh.
-    mainWindow.webContents.on('did-finish-load', () => {
+    // Send pending layout/startup path to the renderer after the window loads,
+    // and (for the first window only) kick off the deferred app-wide startup work.
+    win.webContents.on('did-finish-load', () => {
       // Backup teardown in case 'ready-to-show' was somehow missed.
       closeSplash();
-      if (pendingLayoutFile) {
-        mainWindow.webContents.send('load-layout-from-file', pendingLayoutFile);
+      if (startupPath) {
+        // New window asked to open a specific directory.
+        try { win.webContents.send('open-path-on-startup', startupPath); } catch (_) { /* ignore */ }
+      } else if (pendingLayoutFile) {
+        win.webContents.send('load-layout-from-file', pendingLayoutFile);
         pendingLayoutFile = null; // Clear after sending
       }
-      deferredTodoRefresh().catch(err => {
-        logger.error('deferredTodoRefresh failed:', err.message);
-      });
-      // Defer the first monitoring pass by 3 s to let the renderer finish
-      // its own startup IPC calls before the main process starts file I/O.
-      setTimeout(() => {
-        runMonitoringPass().catch(err => {
-          logger.error('Initial monitoring pass failed:', err.message);
+
+      if (!firstWindowReady) {
+        firstWindowReady = true;
+        deferredTodoRefresh().catch(err => {
+          logger.error('deferredTodoRefresh failed:', err.message);
         });
-      }, 3000);
+        // Defer the first monitoring pass by 3 s to let the renderer finish
+        // its own startup IPC calls before the main process starts file I/O.
+        setTimeout(() => {
+          runMonitoringPass().catch(err => {
+            logger.error('Initial monitoring pass failed:', err.message);
+          });
+        }, 3000);
+      }
     });
 
     // Focus / blur bridging for the renderer's vignette overlay and the
     // drag tray's auto-close. We treat DevTools focus as still-focused to
     // avoid flashing the overlay when the user opens DevTools.
-    mainWindow.on('focus', () => {
-      mainWindowFocused = true;
-      emitMainWindowFocus();
-      // Main window regaining focus is the dismiss trigger for the tray.
+    win.on('focus', () => {
+      const st = windowState.get(win); if (st) st.focused = true;
+      emitWindowFocus(win);
+      // Any window regaining focus is the dismiss trigger for the tray.
       if (dragTrayWindow && !dragTrayWindow.isDestroyed()) {
         try { dragTrayWindow.close(); } catch (_) { /* ignore */ }
       }
     });
-    mainWindow.on('blur', () => {
-      mainWindowFocused = false;
-      emitMainWindowFocus();
+    win.on('blur', () => {
+      const st = windowState.get(win); if (st) st.focused = false;
+      emitWindowFocus(win);
     });
-    mainWindow.webContents.on('devtools-focused', () => {
-      devtoolsFocused = true;
-      emitMainWindowFocus();
+    win.webContents.on('devtools-focused', () => {
+      const st = windowState.get(win); if (st) st.devtoolsFocused = true;
+      emitWindowFocus(win);
     });
-    mainWindow.webContents.on('devtools-blurred', () => {
-      devtoolsFocused = false;
-      emitMainWindowFocus();
+    win.webContents.on('devtools-blurred', () => {
+      const st = windowState.get(win); if (st) st.devtoolsFocused = false;
+      emitWindowFocus(win);
     });
+
+    return win;
   } catch (err) {
     logger.error('Error creating window:', err.message);
-    app.quit();
+    if (getAllWindows().length === 0) app.quit();
+    return null;
   }
 }
 
@@ -604,9 +676,7 @@ async function deferredTodoRefresh() {
   if (total === 0) return;
 
   function send(channel, data) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      try { mainWindow.webContents.send(channel, data); } catch (_) { /* window closed */ }
-    }
+    broadcast(channel, data);
   }
 
   send('todo-refresh-start', { total });
@@ -664,14 +734,16 @@ function initialize() {
 }
 
 /**
- * Update the main window icon based on category colors
+ * Update a window's icon based on category colors. Targets the supplied window
+ * (the one whose active panel changed); falls back to the active window.
  */
-async function updateWindowIcon(category, initials = null) {
+async function updateWindowIcon(category, initials = null, targetWin = null) {
   try {
+    const win = targetWin || getActiveWindow();
     const iconBuffer = await icons.generateWindowIcon(category.bgColor, category.textColor, initials);
-    if (iconBuffer && mainWindow) {
+    if (iconBuffer && win && !win.isDestroyed()) {
       const nimg = nativeImage.createFromBuffer(iconBuffer);
-      mainWindow.setIcon(nimg);
+      win.setIcon(nimg);
     }
   } catch (err) {
     logger.error('Error updating window icon:', err.message);
@@ -683,20 +755,36 @@ async function updateWindowIcon(category, initials = null) {
 // ============================================
 
 /**
- * Application window control
+ * Application window control. Each handler acts on the window that sent the
+ * request, never on a global "main" window, so closing one window leaves the
+ * others (and the shared backend) running.
  */
-ipcMain.handle('close-window', () => {
-  if (mainWindow) {
-    app.isQuitting = true;  // Set flag to allow window close
-    mainWindow.close();
+ipcMain.handle('close-window', (event) => {
+  const win = senderWindow(event) || getActiveWindow();
+  if (win && !win.isDestroyed()) {
+    const st = windowState.get(win); if (st) st.closeApproved = true; // renderer already confirmed
+    win.close();
   }
 });
 
-ipcMain.on('allow-close-app', () => {
-  if (mainWindow) {
-    app.isQuitting = true;
-    mainWindow.close();
+ipcMain.on('allow-close-app', (event) => {
+  const win = senderWindow(event) || getActiveWindow();
+  if (win && !win.isDestroyed()) {
+    const st = windowState.get(win); if (st) st.closeApproved = true;
+    win.close();
   }
+});
+
+/**
+ * Open a directory in a brand-new window. Reuses the same startup-path
+ * mechanism as file associations: createWindow() boots a fresh window and,
+ * once its renderer has loaded, sends 'open-path-on-startup' so the window
+ * opens directly into the requested directory. The shared backend is unchanged.
+ */
+ipcMain.handle('open-in-new-window', (event, dirPath) => {
+  if (typeof dirPath !== 'string' || !dirPath) return false;
+  createWindow(dirPath);
+  return true;
 });
 
 /**
@@ -2165,7 +2253,7 @@ ipcMain.handle('update-window-icon', async (event, { categoryName, initials }) =
   try {
     const category = categories.getCategory(categoryName);
     if (category) {
-      await updateWindowIcon(category, initials || null);
+      await updateWindowIcon(category, initials || null, senderWindow(event));
       return { success: true };
     }
     return { error: 'Category not found' };
@@ -2343,12 +2431,13 @@ ipcMain.handle('save-directory-labels', (event, { dirPath, labels }) => {
 });
 
 /**
- * Window title: Set the main window title
+ * Window title: Set the title of the window that requested it
  */
 ipcMain.handle('set-window-title', (event, { title }) => {
   try {
-    if (mainWindow) {
-      mainWindow.setTitle(title || 'Atlas Explorer');
+    const win = senderWindow(event);
+    if (win && !win.isDestroyed()) {
+      win.setTitle(title || 'Atlas Explorer');
     }
     return { success: true };
   } catch (err) {
@@ -2636,14 +2725,14 @@ ipcMain.handle('refresh-todo-aggregate', async (event, { notesPath, dirId }) => 
       return { changed: false, notesFileId: null };
     }
     const result = todoAggregator.ensureAndRefresh(notesPath, resolvedDirId);
-    if (result.changed && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('todo-aggregates-changed');
+    if (result.changed) {
+      broadcast('todo-aggregates-changed');
     }
     // Also refresh reminders for this file (runs after todo aggregator upserts the row)
     try {
       const remResult = reminderAggregator.ensureAndRefresh(notesPath, resolvedDirId);
-      if (remResult.changed && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('reminder-aggregates-changed');
+      if (remResult.changed) {
+        broadcast('reminder-aggregates-changed');
       }
     } catch (remErr) {
       logger.warn(`refresh-todo-aggregate: reminder refresh failed for ${notesPath}: ${remErr.message}`);
@@ -2661,8 +2750,8 @@ ipcMain.handle('refresh-todo-aggregate', async (event, { notesPath, dirId }) => 
 ipcMain.handle('refresh-todo-aggregates', async () => {
   try {
     const result = todoAggregator.refreshAll();
-    if (result.changed > 0 && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('todo-aggregates-changed');
+    if (result.changed > 0) {
+      broadcast('todo-aggregates-changed');
     }
     return result;
   } catch (err) {
@@ -2715,8 +2804,8 @@ ipcMain.handle('refresh-reminder-aggregate', async (event, { notesPath, dirId })
       return { changed: false, notesFileId: null };
     }
     const result = reminderAggregator.ensureAndRefresh(notesPath, resolvedDirId);
-    if (result.changed && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('reminder-aggregates-changed');
+    if (result.changed) {
+      broadcast('reminder-aggregates-changed');
     }
     return result;
   } catch (err) {
@@ -2728,8 +2817,8 @@ ipcMain.handle('refresh-reminder-aggregate', async (event, { notesPath, dirId })
 ipcMain.handle('refresh-reminder-aggregates', async () => {
   try {
     const result = reminderAggregator.refreshAll();
-    if (result.changed > 0 && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('reminder-aggregates-changed');
+    if (result.changed > 0) {
+      broadcast('reminder-aggregates-changed');
     }
     return result;
   } catch (err) {
@@ -3515,14 +3604,15 @@ ipcMain.on('start-external-drag', (event, { filePaths } = {}) => {  // Synchrono
  *     close button or the tray's empty background, or when the renderer
  *     explicitly requests close.
  */
-function createDragTrayWindow(items) {
+function createDragTrayWindow(items, parentWin) {
   if (dragTrayWindow && !dragTrayWindow.isDestroyed()) {
     return { ok: false, reason: 'already-open' };
   }
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, reason: 'no-items' };
   }
-  if (!mainWindow || mainWindow.isDestroyed()) {
+  const owner = (parentWin && !parentWin.isDestroyed()) ? parentWin : getActiveWindow();
+  if (!owner || owner.isDestroyed()) {
     return { ok: false, reason: 'no-main-window' };
   }
 
@@ -3534,8 +3624,8 @@ function createDragTrayWindow(items) {
   const height = TITLEBAR_H + PADDING * 2 + visibleTiles * TILE_H + 4;
   const width = 360;
 
-  // Anchor to the top-right of the main window's content area on first open.
-  const mainBounds = mainWindow.getBounds();
+  // Anchor to the top-right of the owning window's content area on first open.
+  const mainBounds = owner.getBounds();
   const x = Math.max(0, mainBounds.x + mainBounds.width - width - 24);
   const y = Math.max(0, mainBounds.y + 80);
 
@@ -3559,7 +3649,7 @@ function createDragTrayWindow(items) {
       minimizable: false,
       maximizable: false,
       fullscreenable: false,
-      parent: mainWindow,
+      parent: owner,
       show: false,
       webPreferences: {
         preload: path.join(__dirname, '..', 'src', 'preload.js'),
@@ -3590,7 +3680,7 @@ function createDragTrayWindow(items) {
 }
 
 ipcMain.handle('open-drag-tray', (event, items) => {
-  return createDragTrayWindow(items);
+  return createDragTrayWindow(items, senderWindow(event));
 });
 
 ipcMain.on('close-drag-tray', () => {
@@ -3702,10 +3792,11 @@ ipcMain.handle('run-custom-action-in-terminal', async (event, { actionId, filePa
       return { success: false, error: `File not found: ${filePath}` };
     }
 
-    const ptyProcess = ptyMap.get(String(terminalId));
-    if (!ptyProcess) {
+    const ptyEntry = ptyMap.get(String(terminalId));
+    if (!ptyEntry) {
       return { success: false, error: 'Terminal session not found' };
     }
+    const ptyProcess = ptyEntry.proc;
 
     const workingDirectory = getSafeWorkingDirectory(filePath);
     const command = buildTerminalCommand(action, filePath);
@@ -3889,7 +3980,7 @@ ipcMain.handle('open-in-default-app', async (event, filePath) => {
  */
 ipcMain.handle('pick-file', async (event, { filters, defaultPath } = {}) => {
   try {
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(senderWindow(event) || getActiveWindow(), {
       defaultPath: defaultPath || os.homedir(),
       filters: filters || [{ name: 'All Files', extensions: ['*'] }],
       properties: ['openFile']
@@ -3956,7 +4047,8 @@ ipcMain.handle('save-layout-to-path', async (event, { filePath, layoutData, thum
       thumbnailBuffer = Buffer.from(thumbnailBase64, 'base64');
     } else {
       const sharp = require('sharp');
-      const nimg = await mainWindow.webContents.capturePage();
+      const win = senderWindow(event) || getActiveWindow();
+      const nimg = await win.webContents.capturePage();
       thumbnailBuffer = await sharp(nimg.toPNG()).resize(400).png().toBuffer();
     }
     layouts.saveLayout(filePath, layoutData, thumbnailBuffer);
@@ -3967,10 +4059,11 @@ ipcMain.handle('save-layout-to-path', async (event, { filePath, layoutData, thum
   }
 });
 
-ipcMain.handle('capture-thumbnail', async () => {
+ipcMain.handle('capture-thumbnail', async (event) => {
   try {
     const sharp = require('sharp');
-    const nimg = await mainWindow.webContents.capturePage();
+    const win = senderWindow(event) || getActiveWindow();
+    const nimg = await win.webContents.capturePage();
     const fullPng = nimg.toPNG();
     const thumbnailBuffer = await sharp(fullPng).resize(400).png().toBuffer();
     return { success: true, thumbnailBase64: thumbnailBuffer.toString('base64') };
@@ -3983,9 +4076,10 @@ ipcMain.handle('capture-thumbnail', async () => {
 ipcMain.handle('save-layout', async (event, layoutData) => {
   try {
     const sharp = require('sharp');
+    const win = senderWindow(event) || getActiveWindow();
 
     // Capture screenshot of current window
-    const nimg = await mainWindow.webContents.capturePage();
+    const nimg = await win.webContents.capturePage();
     const fullPng = nimg.toPNG();
 
     // Resize to 400px wide thumbnail
@@ -3995,7 +4089,7 @@ ipcMain.handle('save-layout', async (event, layoutData) => {
       .toBuffer();
 
     // Show save dialog
-    const result = await dialog.showSaveDialog(mainWindow, {
+    const result = await dialog.showSaveDialog(win, {
       defaultPath: path.join(layouts.getDefaultDirectory(), 'layout.aly'),
       filters: [{ name: 'Atlas Layout', extensions: ['aly'] }]
     });
@@ -4019,7 +4113,8 @@ ipcMain.handle('save-layout-global-named', async (event, { name, layoutData, thu
       thumbnailBuffer = Buffer.from(thumbnailBase64, 'base64');
     } else {
       const sharp = require('sharp');
-      const nimg = await mainWindow.webContents.capturePage();
+      const win = senderWindow(event) || getActiveWindow();
+      const nimg = await win.webContents.capturePage();
       thumbnailBuffer = await sharp(nimg.toPNG()).resize(400).png().toBuffer();
     }
 
@@ -4040,9 +4135,9 @@ ipcMain.handle('path-join', (event, ...parts) => {
   return path.join(...parts);
 });
 
-ipcMain.handle('load-layout', async () => {
+ipcMain.handle('load-layout', async (event) => {
   try {
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(senderWindow(event) || getActiveWindow(), {
       defaultPath: layouts.getDefaultDirectory(),
       filters: [{ name: 'Atlas Layout', extensions: ['aly'] }],
       properties: ['openFile']
@@ -4098,12 +4193,13 @@ ipcMain.handle('delete-layout', async (event, filePath) => {
 // Terminal (node-pty)
 // ============================================
 
-const ptyMap = new Map(); // id → IPty
+const ptyMap = new Map(); // id → { proc: IPty, win: BrowserWindow }
 let ptyIdCounter = 0;
 
 ipcMain.handle('terminal-create', (event, cwd) => {
   const id = String(++ptyIdCounter);
   const shell = getTerminalShell();
+  const ownerWin = senderWindow(event);
 
   const safeCwd = getSafeWorkingDirectory(cwd);
 
@@ -4116,37 +4212,37 @@ ipcMain.handle('terminal-create', (event, cwd) => {
   });
 
   ptyProcess.onData(data => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal-output', { id, data });
+    if (ownerWin && !ownerWin.isDestroyed()) {
+      ownerWin.webContents.send('terminal-output', { id, data });
     }
   });
 
   ptyProcess.onExit(() => {
     ptyMap.delete(id);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal-exit', { id });
+    if (ownerWin && !ownerWin.isDestroyed()) {
+      ownerWin.webContents.send('terminal-exit', { id });
     }
   });
 
-  ptyMap.set(id, ptyProcess);
+  ptyMap.set(id, { proc: ptyProcess, win: ownerWin });
   logger.info(`[TERMINAL] Created session ${id} in ${safeCwd}`);
   return { id };
 });
 
 ipcMain.handle('terminal-input', (event, { id, data }) => {
-  const ptyProcess = ptyMap.get(id);
-  if (ptyProcess) ptyProcess.write(data);
+  const entry = ptyMap.get(id);
+  if (entry) entry.proc.write(data);
 });
 
 ipcMain.handle('terminal-resize', (event, { id, cols, rows }) => {
-  const ptyProcess = ptyMap.get(id);
-  if (ptyProcess) ptyProcess.resize(cols, rows);
+  const entry = ptyMap.get(id);
+  if (entry) entry.proc.resize(cols, rows);
 });
 
 ipcMain.handle('terminal-destroy', (event, { id }) => {
-  const ptyProcess = ptyMap.get(id);
-  if (ptyProcess) {
-    try { ptyProcess.kill(); } catch (_) {}
+  const entry = ptyMap.get(id);
+  if (entry) {
+    try { entry.proc.kill(); } catch (_) {}
     ptyMap.delete(id);
     logger.info(`[TERMINAL] Destroyed session ${id}`);
   }
@@ -4158,7 +4254,24 @@ ipcMain.handle('terminal-destroy', (event, { id }) => {
 // ============================================
 
 let bgRefreshTimer = null;
-const bgWatchedPaths = new Map(); // panelId → dirPath
+// Composite key `${windowId}:${panelId}` → { win, panelId, dirPath }. The
+// composite key keeps panels from different windows independent even when they
+// happen to share a panelId.
+const bgWatchedPaths = new Map();
+
+/** Drop all watched-path entries and pty sessions owned by a closing window. */
+function purgeWatchedPathsForWindow(win) {
+  if (!win) return;
+  for (const [key, entry] of bgWatchedPaths) {
+    if (entry.win === win) bgWatchedPaths.delete(key);
+  }
+  for (const [id, entry] of ptyMap) {
+    if (entry.win === win) {
+      try { entry.proc.kill(); } catch (_) {}
+      ptyMap.delete(id);
+    }
+  }
+}
 
 function startBackgroundRefresh(enabled, interval) {
   if (bgRefreshTimer) {
@@ -4167,16 +4280,18 @@ function startBackgroundRefresh(enabled, interval) {
   }
   if (enabled && interval > 0) {
     bgRefreshTimer = setInterval(() => {
-      for (const [panelId, dirPath] of bgWatchedPaths) {
+      for (const [, entry] of bgWatchedPaths) {
+        const { win, panelId, dirPath } = entry;
+        if (!win || win.isDestroyed()) continue;
         try {
           const result = doScanDirectoryWithComparison(dirPath, false, true);
-          if (result.success && mainWindow) {
+          if (result.success) {
             if (result.alertsCreated) {
               const newCount = db.getUnacknowledgedAlertCount();
-              mainWindow.webContents.send('alert-count-updated', { count: newCount });
+              broadcast('alert-count-updated', { count: newCount });
             }
             if (result.hasChanges) {
-              mainWindow.webContents.send('directory-changed', { panelId, dirPath, entries: result.entries || [] });
+              win.webContents.send('directory-changed', { panelId, dirPath, entries: result.entries || [] });
             }
           }
         } catch (err) {
@@ -4203,12 +4318,15 @@ ipcMain.handle('stop-background-refresh', () => {
 });
 
 ipcMain.handle('register-watched-path', (event, { panelId, dirPath }) => {
-  bgWatchedPaths.set(panelId, dirPath);
+  const win = senderWindow(event);
+  if (!win) return { success: false };
+  bgWatchedPaths.set(`${win.id}:${panelId}`, { win, panelId, dirPath });
   return { success: true };
 });
 
 ipcMain.handle('unregister-watched-path', (event, { panelId }) => {
-  bgWatchedPaths.delete(panelId);
+  const win = senderWindow(event);
+  if (win) bgWatchedPaths.delete(`${win.id}:${panelId}`);
   return { success: true };
 });
 
@@ -4841,8 +4959,8 @@ function parseCommandLineArgs() {
 }
 
 /**
- * Auto-Updater: wire up electron-updater events, IPC forwarding, and scheduled checks.
- * Must be called after createWindow() so mainWindow is available.
+ * Auto-Updater: wire up electron-updater events, IPC forwarding, and scheduled
+ * checks. Update notifications are broadcast to every open window.
  */
 function setupAutoUpdater() {
   autoUpdater.autoDownload = false;
@@ -4855,46 +4973,36 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-available', (info) => {
     logger.info('[Updater] Update available:', info.version);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-available', {
-        version: info.version,
-        releaseName: info.releaseName || null,
-        releaseNotes: info.releaseNotes || null,
-        releaseDate: info.releaseDate || null
-      });
-    }
+    broadcast('update-available', {
+      version: info.version,
+      releaseName: info.releaseName || null,
+      releaseNotes: info.releaseNotes || null,
+      releaseDate: info.releaseDate || null
+    });
   });
 
   autoUpdater.on('update-not-available', (info) => {
     logger.info('[Updater] App is up to date:', info.version);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-not-available', { version: info.version });
-    }
+    broadcast('update-not-available', { version: info.version });
   });
 
   autoUpdater.on('download-progress', (progress) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-download-progress', {
-        percent: progress.percent,
-        transferred: progress.transferred,
-        total: progress.total,
-        bytesPerSecond: progress.bytesPerSecond
-      });
-    }
+    broadcast('update-download-progress', {
+      percent: progress.percent,
+      transferred: progress.transferred,
+      total: progress.total,
+      bytesPerSecond: progress.bytesPerSecond
+    });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
     logger.info('[Updater] Update downloaded:', info.version);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-downloaded', { version: info.version });
-    }
+    broadcast('update-downloaded', { version: info.version });
   });
 
   autoUpdater.on('error', (err) => {
     logger.error('[Updater] Error:', err.message);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-error', err.message);
-    }
+    broadcast('update-error', err.message);
   });
 
   // Initial check after a short startup delay
@@ -4944,9 +5052,7 @@ function startClipboardWatcher() {
     });
 
     clipboardWatcher.on('change', (payload) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        try { mainWindow.webContents.send('clipboard-changed', payload); } catch (_) { /* ignore */ }
-      }
+      broadcast('clipboard-changed', payload);
     });
 
     clipboardWatcher.on('unavailable', () => {
@@ -4961,7 +5067,31 @@ function startClipboardWatcher() {
   }
 }
 
+// ── Single-instance enforcement ─────────────────────────────────────────────
+// The app runs as exactly one process. Any additional launch (double-clicking
+// the icon again, opening a file association, etc.) is handed off to the
+// already-running process, which opens a NEW WINDOW instead of booting a second
+// backend. This is what prevents the monitoring scheduler, clipboard watcher,
+// DB connection and auto-updater from doubling up. There is no cap on the number
+// of windows — each launch (or "Open in New Window") simply adds one.
+const isPrimaryInstance = app.requestSingleInstanceLock();
+
+if (!isPrimaryInstance) {
+  // We lost the race: another Atlas process owns the lock. Quit immediately;
+  // the primary instance receives the 'second-instance' event below.
+  app.quit();
+} else {
+  app.on('second-instance', (event, argv) => {
+    // A second launch was attempted. If it carried an .aly file association,
+    // queue it so the new window opens straight into that layout.
+    const alyFile = argv.find(a => typeof a === 'string' && a.toLowerCase().endsWith('.aly'));
+    if (alyFile) pendingLayoutFile = alyFile;
+    createWindow();
+  });
+}
+
 app.on('ready', () => {
+  if (!isPrimaryInstance) return; // losing instance is quitting; do nothing
   // Disable the default menu to prevent Alt key from showing it
   Menu.setApplicationMenu(null);
   // Show the splash first so the user gets feedback within ~100ms, before the
@@ -5014,15 +5144,13 @@ app.on('ready', () => {
 
   // Register dev tools shortcuts since menu bar is hidden
   globalShortcut.register('F12', () => {
-    if (mainWindow) {
-      mainWindow.webContents.toggleDevTools();
-    }
+    const w = getActiveWindow();
+    if (w) w.webContents.toggleDevTools();
   });
 
   globalShortcut.register('Ctrl+Shift+I', () => {
-    if (mainWindow) {
-      mainWindow.webContents.toggleDevTools();
-    }
+    const w = getActiveWindow();
+    if (w) w.webContents.toggleDevTools();
   });
 });
 
@@ -5031,8 +5159,8 @@ app.on('before-quit', () => {
     try { clipboardWatcher.stop(); } catch (_) {}
     clipboardWatcher = null;
   }
-  for (const [, proc] of ptyMap) {
-    try { proc.kill(); } catch (_) {}
+  for (const [, entry] of ptyMap) {
+    try { entry.proc.kill(); } catch (_) {}
   }
   ptyMap.clear();
 });
@@ -5044,7 +5172,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (mainWindow === null) {
+  if (getAllWindows().length === 0) {
     createWindow();
   }
 });
@@ -5054,9 +5182,11 @@ app.on('open-file', (event, filePath) => {
   if (filePath.endsWith('.aly')) {
     pendingLayoutFile = filePath;
     logger.info(`File association triggered: ${filePath}`);
-    // If window already exists, send IPC immediately
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send('load-layout-from-file', filePath);
+    // If a window already exists, send the layout to the active one; otherwise
+    // the queued pendingLayoutFile is consumed when the next window finishes load.
+    const w = getActiveWindow();
+    if (w && w.webContents) {
+      w.webContents.send('load-layout-from-file', filePath);
     }
   }
 });

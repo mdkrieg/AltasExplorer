@@ -226,6 +226,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeWindow: () => ipcRenderer.invoke('close-window'),
   onCloseRequest: (callback) => ipcRenderer.on('request-close-app', callback),
   allowClose: () => ipcRenderer.send('allow-close-app'),
+  openInNewWindow: (dirPath) => ipcRenderer.invoke('open-in-new-window', dirPath),
+  onOpenPathOnStartup: (callback) =>
+    ipcRenderer.on('open-path-on-startup', (_event, dirPath) => callback(dirPath)),
   
   // Notes file operations
   readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),

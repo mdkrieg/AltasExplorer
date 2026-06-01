@@ -20,6 +20,10 @@ class DatabaseService {
 
     this.db = new Database(DB_PATH);
     this.db.pragma('journal_mode = WAL');
+    // Wait up to 5s for a lock instead of throwing SQLITE_BUSY immediately. The
+    // app is single-process, but background work (monitoring, aggregators) and
+    // the foreground can still briefly contend on writes.
+    this.db.pragma('busy_timeout = 5000');
     this.createSchema();
   }
 
