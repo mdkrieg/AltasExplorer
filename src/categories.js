@@ -195,6 +195,15 @@ class CategoryService {
   }
 
   /**
+   * Drop the in-memory categories cache so the next loadCategories() re-reads
+   * from disk. Exposed for callers that mutate category files out-of-band and
+   * for test isolation.
+   */
+  invalidateCache() {
+    _invalidateCategoryCache();
+  }
+
+  /**
    * Get a single category by name
    */
   getCategory(name) {

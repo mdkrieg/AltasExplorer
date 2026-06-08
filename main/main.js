@@ -4259,11 +4259,99 @@ let bgRefreshTimer = null;
 // happen to share a panelId.
 const bgWatchedPaths = new Map();
 
+// ---------------------------------------------------------------------------
+// Native per-directory watchers (fs.watch). Keyed by normalised dirPath →
+// { watcher, refCount, debounce }. We keep exactly one OS watch handle per
+// unique path no matter how many panels/windows view it, and tear it down when
+// the last observer leaves. fs.watch fires noisily (often several events per
+// logical change), so every callback is debounced into a single comparison
+// scan. fs.watch gives near-instant local detection; the 30s polling loop
+// below remains the fallback for paths fs.watch cannot observe (network shares,
+// restrictive permissions).
+// ---------------------------------------------------------------------------
+const fsWatchers = new Map();
+const FS_WATCH_DEBOUNCE_MS = 250;
+
+/** Run one comparison scan and push results to every panel viewing this path. */
+function emitDirectoryChangedFromWatch(dirPath) {
+  let result;
+  try {
+    result = doScanDirectoryWithComparison(dirPath, false, true);
+  } catch (err) {
+    logger.error(`fs.watch scan error for ${dirPath}:`, err.message);
+    return;
+  }
+  if (!result || !result.success) return;
+  if (result.alertsCreated) {
+    const newCount = db.getUnacknowledgedAlertCount();
+    broadcast('alert-count-updated', { count: newCount });
+  }
+  if (!result.hasChanges) return;
+  for (const [, entry] of bgWatchedPaths) {
+    if (entry.dirPath !== dirPath) continue;
+    const { win, panelId } = entry;
+    if (!win || win.isDestroyed()) continue;
+    try {
+      win.webContents.send('directory-changed', { panelId, dirPath, entries: result.entries || [] });
+    } catch (_) { /* window closed mid-send */ }
+  }
+}
+
+/** Force-close and forget a watcher regardless of refCount. */
+function closeFsWatch(dirPath) {
+  const rec = fsWatchers.get(dirPath);
+  if (!rec) return;
+  if (rec.debounce) clearTimeout(rec.debounce);
+  try { rec.watcher.close(); } catch (_) { /* already closed */ }
+  fsWatchers.delete(dirPath);
+}
+
+/** Add (or ref-count) a native watcher for a directory. */
+function addFsWatch(dirPath) {
+  if (!dirPath) return;
+  const existing = fsWatchers.get(dirPath);
+  if (existing) { existing.refCount++; return; }
+  let watcher;
+  try {
+    // persistent:false → the watcher never keeps the app alive on its own.
+    watcher = fsSync.watch(dirPath, { persistent: false }, () => {
+      const rec = fsWatchers.get(dirPath);
+      if (!rec) return;
+      if (rec.debounce) clearTimeout(rec.debounce);
+      rec.debounce = setTimeout(() => {
+        rec.debounce = null;
+        emitDirectoryChangedFromWatch(dirPath);
+      }, FS_WATCH_DEBOUNCE_MS);
+    });
+  } catch (err) {
+    // Unwatchable path (network share, permission, just-deleted). The polling
+    // loop remains the fallback — degrade silently to it.
+    logger.warn(`fs.watch unavailable for ${dirPath}: ${err.message}`);
+    return;
+  }
+  watcher.on('error', (err) => {
+    logger.warn(`fs.watch error for ${dirPath}: ${err.message}`);
+    closeFsWatch(dirPath);
+  });
+  fsWatchers.set(dirPath, { watcher, refCount: 1, debounce: null });
+}
+
+/** Release one reference to a directory watcher; close it when none remain. */
+function removeFsWatch(dirPath) {
+  const rec = fsWatchers.get(dirPath);
+  if (!rec) return;
+  rec.refCount--;
+  if (rec.refCount <= 0) closeFsWatch(dirPath);
+}
+
 /** Drop all watched-path entries and pty sessions owned by a closing window. */
 function purgeWatchedPathsForWindow(win) {
   if (!win) return;
   for (const [key, entry] of bgWatchedPaths) {
-    if (entry.win === win) bgWatchedPaths.delete(key);
+    if (entry.win === win) {
+      removeFsWatch(entry.dirPath);
+      bgWatchedPaths.delete(key);
+    }
   }
   for (const [id, entry] of ptyMap) {
     if (entry.win === win) {
@@ -4320,13 +4408,47 @@ ipcMain.handle('stop-background-refresh', () => {
 ipcMain.handle('register-watched-path', (event, { panelId, dirPath }) => {
   const win = senderWindow(event);
   if (!win) return { success: false };
-  bgWatchedPaths.set(`${win.id}:${panelId}`, { win, panelId, dirPath });
+  const key = `${win.id}:${panelId}`;
+  const prev = bgWatchedPaths.get(key);
+  // register-watched-path fires on every navigation; only churn the OS watch
+  // handle when this panel actually moved to a different directory.
+  if (prev && prev.dirPath === dirPath) return { success: true };
+  if (prev) removeFsWatch(prev.dirPath);
+  bgWatchedPaths.set(key, { win, panelId, dirPath });
+  addFsWatch(dirPath);
   return { success: true };
 });
 
 ipcMain.handle('unregister-watched-path', (event, { panelId }) => {
   const win = senderWindow(event);
-  if (win) bgWatchedPaths.delete(`${win.id}:${panelId}`);
+  if (win) {
+    const key = `${win.id}:${panelId}`;
+    const prev = bgWatchedPaths.get(key);
+    if (prev) {
+      removeFsWatch(prev.dirPath);
+      bgWatchedPaths.delete(key);
+    }
+  }
+  return { success: true };
+});
+
+// Multi-panel coherence. When a panel performs an in-app refresh (a mutation
+// reload or a forced refresh) it scans the directory and updates the shared DB
+// before any sibling panel's fs.watch can react — so the sibling's own scan
+// would race and find nothing changed. The acting renderer calls this after its
+// scan completes; we forward an explicit refresh signal to every OTHER panel
+// (in this window or another) currently viewing the same directory.
+ipcMain.handle('notify-sibling-refresh', (event, { panelId, dirPath }) => {
+  const win = senderWindow(event);
+  const selfKey = win ? `${win.id}:${panelId}` : null;
+  for (const [key, entry] of bgWatchedPaths) {
+    if (key === selfKey) continue;
+    if (entry.dirPath !== dirPath) continue;
+    if (!entry.win || entry.win.isDestroyed()) continue;
+    try {
+      entry.win.webContents.send('sibling-directory-refreshed', { panelId: entry.panelId, dirPath });
+    } catch (_) { /* window closed mid-send */ }
+  }
   return { success: true };
 });
 

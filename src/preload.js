@@ -329,7 +329,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopBackgroundRefresh: () => ipcRenderer.invoke('stop-background-refresh'),
   registerWatchedPath: (panelId, dirPath) => ipcRenderer.invoke('register-watched-path', { panelId, dirPath }),
   unregisterWatchedPath: (panelId) => ipcRenderer.invoke('unregister-watched-path', { panelId }),
-  
+
+  // Multi-panel coherence: after an in-app refresh updates the shared DB, tell
+  // sibling panels (this window or others) viewing the same directory to sync.
+  notifySiblingRefresh: (panelId, dirPath) => ipcRenderer.invoke('notify-sibling-refresh', { panelId, dirPath }),
+  onSiblingDirectoryRefreshed: (callback) => ipcRenderer.on('sibling-directory-refreshed', (event, data) => callback(data)),
+
   // Generic IPC invoke for custom handlers
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   

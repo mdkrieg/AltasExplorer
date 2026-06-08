@@ -89,11 +89,30 @@ export function setCacheBrowsingMode(val) { cacheBrowsingMode = val || 'enabled'
 const RECORDS_CACHE_MAX = 20;
 const _recordsCache = new Map();
 
+// Secondary, size-aware bound. A single directory can hold tens of thousands of
+// record objects (each carrying pre-rendered HTML cells), so a plain 20-entry
+// cap is not enough to bound memory. We also evict once the total number of
+// cached records across all directories exceeds this ceiling.
+const RECORDS_CACHE_MAX_RECORDS = 50000;
+
+function _rcTotalRecords() {
+	let n = 0;
+	for (const e of _recordsCache.values()) n += (e.records ? e.records.length : 0);
+	return n;
+}
+
 function _rcPut(path, entry) {
 	_recordsCache.delete(path); // move to most-recently-used position
 	_recordsCache.set(path, entry);
-	if (_recordsCache.size > RECORDS_CACHE_MAX) {
-		_recordsCache.delete(_recordsCache.keys().next().value); // evict LRU
+	// Evict least-recently-used entries until within BOTH caps. Never evict the
+	// entry we just inserted, even if it alone exceeds the record ceiling.
+	while (
+		_recordsCache.size > RECORDS_CACHE_MAX ||
+		(_recordsCache.size > 1 && _rcTotalRecords() > RECORDS_CACHE_MAX_RECORDS)
+	) {
+		const oldestKey = _recordsCache.keys().next().value;
+		if (oldestKey === path) break;
+		_recordsCache.delete(oldestKey);
 	}
 }
 
@@ -104,6 +123,27 @@ function _rcGet(path) {
 	_recordsCache.set(path, e);
 	return e;
 }
+
+// Drop a single path's cached records so the next visit re-reads from disk.
+function _rcInvalidate(path) {
+	if (!path) return;
+	_recordsCache.delete(path);
+}
+
+// Drop a path and every cached descendant beneath it — used when a folder is
+// deleted, moved, or renamed so stale subtree records never resurface.
+function _rcInvalidateSubtree(path) {
+	if (!path) return;
+	const prefix = path.endsWith('\\') ? path : path + '\\';
+	for (const key of [..._recordsCache.keys()]) {
+		if (key === path || key.startsWith(prefix)) _recordsCache.delete(key);
+	}
+}
+
+// Exposed so feature modules (clipboard, context-menu actions, drag-drop) can
+// purge specific paths after a filesystem mutation they performed out-of-band.
+export function invalidateRecordsCache(path) { _rcInvalidate(path); }
+export function invalidateRecordsCacheSubtree(path) { _rcInvalidateSubtree(path); }
 
 const closedPanelStack = [];
 const selectionAnchorRecids = {};
@@ -3569,6 +3609,28 @@ function showPanelRefreshBanner(panelId, message, onShow = null) {
 	}, onShow ? 12000 : 4000);
 }
 
+// Sibling-sync refresh: a sibling panel performed an in-app mutation/refresh on
+// the directory this panel is also viewing. The shared DB is already current, so
+// re-render this panel from a fresh scan (cheap — the DB is warm) while
+// preserving the user's scroll position. siblingSync=true stops this refresh
+// from re-notifying siblings and looping.
+export async function refreshPanelFromSibling(dirPath, panelId) {
+	const state = panelState[panelId];
+	if (!state || state.currentPath !== dirPath) return;
+	if (!$(`#panel-${panelId}`).find('.panel-grid').is(':visible')) return;
+
+	const scrollEl = state.w2uiGrid?.box?.querySelector('.w2ui-grid-records');
+	const savedScroll = scrollEl ? scrollEl.scrollTop : 0;
+
+	_rcInvalidate(dirPath);
+	await navigateToDirectory(dirPath, panelId, false, false, true, true);
+
+	requestAnimationFrame(() => {
+		const el = panelState[panelId]?.w2uiGrid?.box?.querySelector('.w2ui-grid-records');
+		if (el) el.scrollTop = savedScroll;
+	});
+}
+
 export async function applyBackgroundChanges(changedEntries, panelId) {
 	const state = panelState[panelId];
 	if (!state || !state.w2uiGrid || !changedEntries || changedEntries.length === 0) return;
@@ -4370,7 +4432,7 @@ async function handleAtlasUri(uri, panelId, addToHistory) {
 	}
 }
 
-export async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true, restoreScroll = false) {
+export async function navigateToDirectory(dirPath, panelId = activePanelId, addToHistory = true, restoreScroll = false, forceRefresh = false, siblingSync = false) {
 	// Set to true when the deep search pipeline takes ownership of the overlay
 	// lifecycle, so the finally block does not prematurely hide the overlay.
 	let deepSearchOwnsOverlay = false;
@@ -4423,6 +4485,15 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		state.currentPath = normalizedPath;
 		state.currentBasePath = normalizedPath;
 		state.currentNavParams = navParams;
+
+		// Decide whether to bypass the in-memory + DB caches and force a fresh
+		// filesystem scan. Re-navigating to the directory you are already viewing
+		// is, in practice, always a refresh/reload-in-place (the refresh button,
+		// or a post-mutation reload after paste/delete/new-folder/rename). In
+		// those cases the cached records are exactly what is already on screen, so
+		// serving them is pointless — and after a mutation they are stale. An
+		// explicit forceRefresh from a caller has the same effect.
+		const skipMemCache = forceRefresh || (normalizedPath === previousPath);
 
 		if (normalizedPath !== previousPath) {
 			resetFilterState(panelId);
@@ -4590,7 +4661,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		if (cacheBrowsingMode !== 'disabled' && navParams.size === 0 && (state.depth || 0) === 0) {
 
 			// ---- Level 1: Records cache — in-memory, zero IPC calls ----
-			const rcEntry = _rcGet(normalizedPath);
+			const rcEntry = skipMemCache ? null : _rcGet(normalizedPath);
 			if (rcEntry) {
 				const rcCategory = rcEntry.category || null;
 				const prevRcCategory = state.currentCategory;
@@ -4727,7 +4798,9 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			}
 
 			// ---- Level 2: DB cache — one IPC call, no filesystem scan ----
-			const cacheResult = await window.electronAPI.getCachedDirectoryEntries(normalizedPath);
+			const cacheResult = skipMemCache
+				? null
+				: await window.electronAPI.getCachedDirectoryEntries(normalizedPath);
 			if (cacheResult && cacheResult.success && cacheResult.dirFound && !cacheResult.neverScanned) {
 				const cacheCategory = cacheResult.categoryData || null;
 				const prevCategory = state.currentCategory;
@@ -4995,6 +5068,16 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		panelState[panelId].hasBeenViewed = true;
 		window.electronAPI.registerWatchedPath(panelId, normalizedPath);
+
+		// Multi-panel coherence: this was an in-app refresh (a mutation reload or
+		// a forced refresh) that just updated the shared DB. Any sibling panel
+		// viewing the same directory cannot learn of the change from its own
+		// fs.watch (its scan would race this one and see nothing), so push an
+		// explicit refresh signal to them. siblingSync guards against the
+		// resulting refresh re-broadcasting back and looping.
+		if (skipMemCache && !siblingSync && depth === 0 && scanResult.hasChanges) {
+			window.electronAPI.notifySiblingRefresh(panelId, normalizedPath);
+		}
 		autoLabels.refreshAutoLabelCountAndSuggestions(panelId).then(() => {
 			const mode = panelState[panelId]?.currentCategory?.displayMode === 'gallery' ? 'gallery' : 'detail';
 			renderPanelToolbar(panelId, mode);

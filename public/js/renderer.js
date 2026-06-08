@@ -317,6 +317,15 @@ async function initialize() {
       }
     });
 
+    window.electronAPI.onSiblingDirectoryRefreshed(({ panelId, dirPath }) => {
+      const state = panelState[panelId];
+      if (state && state.currentPath === dirPath) {
+        panels.refreshPanelFromSibling(dirPath, panelId).catch(err => {
+          console.error(`Sibling refresh failed for panel ${panelId}:`, err);
+        });
+      }
+    });
+
     window.electronAPI.onAlertCountUpdated(({ count }) => {
       panels.setUnacknowledgedAlertCount(count);
       alerts.updateAlertBadge();

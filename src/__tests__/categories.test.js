@@ -203,6 +203,7 @@ describe('CategoryService - createCategory()', () => {
 describe('CategoryService - loadCategories()', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    CategoryService.invalidateCache();
   });
 
   /**
@@ -367,6 +368,7 @@ describe('CategoryService - loadCategories()', () => {
 describe('CategoryService - getCategory()', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    CategoryService.invalidateCache();
   });
 
   /**
@@ -404,6 +406,7 @@ describe('CategoryService - getCategory()', () => {
 describe('CategoryService - auto-assign categories', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    CategoryService.invalidateCache();
   });
 
   it('should persist autoAssignCategory when creating a category', () => {
