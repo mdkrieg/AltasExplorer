@@ -64,6 +64,8 @@ Philosophy:
 
 [ ] When drag and dropping a file into a subfolder, leave the old file with a label (moved to [new location]) instead of refreshing the grid view.
 
+[ ] Do shortcuts not appear in the file grid? I feel like they should, perhaps this was a previous design choice but I am not liking it.
+
 ### ROADMAP:
 [ ] reminders sidebar should refresh slowly on its own, maybe once a minute
 

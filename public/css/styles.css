@@ -572,6 +572,25 @@ button:active {
   opacity: 0.45;
 }
 
+/* Post-move ghost row: item stays visible in the source grid after being
+   moved out. Red strikethrough lets the user see exactly what left and
+   recover if the move was a mistake. No refresh, so all other state
+   (selections, scroll position, sort order) is left undisturbed. */
+.row-moved-out > td {
+  text-decoration: line-through;
+  color: #c0392b !important;
+  opacity: 0.55;
+}
+.gallery-item.moved-out {
+  opacity: 0.55;
+  outline: 2px solid #c0392b;
+  outline-offset: -2px;
+}
+.gallery-item.moved-out .gallery-item-name {
+  text-decoration: line-through;
+  color: #c0392b;
+}
+
 .w2ui-grid-records tr[draggable="true"],
 .w2ui-grid-frecords tr[draggable="true"] {
   cursor: grab;

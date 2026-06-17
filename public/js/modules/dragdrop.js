@@ -735,18 +735,30 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 			result.failed.map(f => `${f.path}: ${f.error}`).join('\n'));
 	}
 
-	// Refresh every panel whose currentPath touches source or destination.
-	const affected = new Set();
-	affected.add(path.resolve(targetDirPath));
+	// Refresh destination panels; apply "moved-out" ghost rows on source panels.
+	// For a move: source panels are NOT refreshed — the moved items stay visible
+	// with a red strikethrough so the user can see exactly what left and recover
+	// if the move was a mistake. For a copy: the source is unchanged, so no
+	// update to source panels is needed.
+	const succeededSourcePaths = new Set(
+		(result?.succeeded || []).map(s => s?.sourcePath).filter(Boolean).map(p => path.resolve(p))
+	);
+	const destDirResolved = path.resolve(targetDirPath);
+	const sourceDirs = new Set();
 	for (const it of items) {
-		affected.add(path.resolve(parentPath(it.path) || it.path));
+		sourceDirs.add(path.resolve(parentPath(it.path) || it.path));
 	}
 	const ids = Object.keys(panelState || {});
 	for (const id of ids) {
 		const cp = panelState[id]?.currentPath;
 		if (!cp) continue;
-		if (affected.has(path.resolve(cp))) {
+		const cpResolved = path.resolve(cp);
+		if (cpResolved === destDirResolved) {
+			// Destination panel: refresh so the newly arrived items appear.
 			try { await navigateToDirectory(cp, id, false); } catch (_) { /* ignore */ }
+		} else if (!isCopy && sourceDirs.has(cpResolved) && succeededSourcePaths.size > 0) {
+			// Source panel for a move: ghost the moved rows instead of refreshing.
+			applyMovedOutStyling(id, items, succeededSourcePaths, panelState);
 		}
 	}
 
@@ -818,6 +830,45 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 			}
 		};
 		requestAnimationFrame(() => flashLanded(0));
+	}
+}
+
+/**
+ * Apply red-strikethrough "ghost" styling to rows that were successfully moved
+ * out of a panel's directory. Leaves all other visual state (scroll position,
+ * selection, column widths, other rows) completely undisturbed.
+ *
+ * @param {number|string} panelId
+ * @param {object[]} items  - payload items (same shape as buildPayloadItems output)
+ * @param {Set<string>}  succeededSourcePaths - resolved source paths that actually moved
+ * @param {object} panelState
+ */
+function applyMovedOutStyling(panelId, items, succeededSourcePaths, panelState) {
+	const gridName = `grid-panel-${panelId}`;
+	const grid = (typeof w2ui !== 'undefined') && w2ui[gridName];
+
+	for (const it of items) {
+		if (!succeededSourcePaths.has(path.resolve(it.path))) continue;
+
+		// Grid mode: style both the main-table row and the frozen-columns row.
+		if (grid && Array.isArray(grid.records)) {
+			const want = path.resolve(it.path);
+			for (const rec of grid.records) {
+				if (!rec) continue;
+				const p = rec.path
+					|| (rec.directory && rec.filenameRaw ? `${rec.directory}/${rec.filenameRaw}` : null);
+				if (!p || path.resolve(p) !== want) continue;
+				const mainRow = document.getElementById(`grid_${gridName}_rec_${rec.recid}`);
+				const frozenRow = document.getElementById(`grid_${gridName}_frec_${rec.recid}`);
+				if (mainRow) mainRow.classList.add('row-moved-out');
+				if (frozenRow) frozenRow.classList.add('row-moved-out');
+				break;
+			}
+		}
+
+		// Gallery mode.
+		const tile = findGalleryTileByPath(panelId, it.path, panelState);
+		if (tile) tile.classList.add('moved-out');
 	}
 }
 
