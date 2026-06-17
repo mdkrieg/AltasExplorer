@@ -52,6 +52,8 @@ Philosophy:
 
 [ ] Orange badge highlighting for indicating where a favorite will target should revert after navigation is successful
 
+[ ] Reminder modal - the Tomorrow and Next Week buttons currently work as deltas - they should be in absolute terms (Tomorrow = 1 day from today)
+
 [-] CNR Navigating to a favorite (possibly any dir) should clear the search bar, currently the view gets insta-filtered
 
 * Style for pasted-in files from Explorer, not working on the version in my work laptop, did we do this?

@@ -389,11 +389,57 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       }
     }
 
+    // Build filename→entry map for disk entries that arrived with an unknown inode.
+    // Used below to detect the sync-replace pattern: same filename, rotated inode.
+    const newDiskEntriesByFilename = new Map();
+    for (const e of entriesWithChanges) {
+      if (!e.isDirectory && e.changeState === 'new') {
+        newDiskEntriesByFilename.set(e.filename, e);
+      }
+    }
+
     const orphanedEntries = [];
     const pendingMovedFiles = [];
     for (const [inode, dbFile] of dbFileMap) {
       try {
         if (dbFile.filename === '.') {
+          continue;
+        }
+
+        // Sync-replace detection: same filename appeared on disk with a different inode.
+        // OneDrive hydration and Excel's temp-file save both do delete+rename instead of
+        // in-place write, rotating the inode while the path stays constant.
+        const replacementEntry = newDiskEntriesByFilename.get(dbFile.filename);
+        if (replacementEntry) {
+          db.replaceFileInode(dbFile.id, replacementEntry.inode, replacementEntry);
+          const updatedRecord = db.getFileByInode(replacementEntry.inode, dirId);
+          if (updatedRecord) {
+            db.insertFileHistory(replacementEntry.inode, dirId, updatedRecord.id, 'fileReplaced', {
+              filename: dbFile.filename,
+              oldInode: inode,
+              newInode: replacementEntry.inode,
+              dateModified: replacementEntry.dateModified,
+              filesizeBytes: replacementEntry.size
+            }, currentDirHistoryId);
+            try {
+              const replacedRule = doesEventMatchRules(alertRules, 'fileReplaced', categoryName, dirTagsJson, replacementEntry.attributes || null);
+              if (replacedRule) {
+                db.insertAlert(replacedRule.id, null, 'fileReplaced', dbFile.filename, categoryName, dirId, replacementEntry.inode, null, null);
+                alertsCreated++;
+              }
+            } catch (alertErr) {
+              logger.error(`Error creating fileReplaced alert for ${dbFile.filename}:`, alertErr.message);
+            }
+          }
+          // Carry user-managed fields forward so the returned entry is consistent
+          replacementEntry.changeState = 'fileReplaced';
+          replacementEntry.oldInode = inode;
+          replacementEntry.tags = dbFile.tags || null;
+          replacementEntry.attributes = dbFile.attributes || null;
+          replacementEntry.checksumValue = null;
+          replacementEntry.checksumStatus = 'untracked';
+          newDiskEntriesByFilename.delete(dbFile.filename);
+          logger.info(`File ${dbFile.filename} inode replaced in ${dirPath} (${inode} → ${replacementEntry.inode})`);
           continue;
         }
 
@@ -584,6 +630,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     for (const entry of entriesWithChanges) {
       if (entry.changeState === 'permError') continue;
       if (entry.changeState === 'moved' || entry.changeState === 'orphan') continue;
+      if (entry.changeState === 'fileReplaced') continue;
 
       if (!entry.isDirectory) {
         const dbFile = existingDbFiles.find(f => f.inode === entry.inode);

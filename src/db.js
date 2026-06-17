@@ -726,6 +726,28 @@ class DatabaseService {
     return stmt.get(dir_id, filename);
   }
 
+  /**
+   * Update a file row's inode and metadata after an in-place sync replacement
+   * (e.g. OneDrive hydration, Excel save dance). Tags, attributes, and all other
+   * user-managed columns are preserved; checksum is reset since content changed.
+   */
+  replaceFileInode(fileId, newInode, fileData) {
+    this.db.prepare(`
+      UPDATE files
+      SET inode = ?, filename = ?, dateModified = ?, dateCreated = ?, size = ?, mode = ?,
+          checksumValue = NULL, checksumStatus = 'untracked'
+      WHERE id = ?
+    `).run(
+      newInode,
+      fileData.filename,
+      fileData.dateModified || null,
+      fileData.dateCreated || null,
+      fileData.size || 0,
+      fileData.mode ?? null,
+      fileId
+    );
+  }
+
   getDirectoryChildren(parentDirId) {
     return this.db.prepare('SELECT * FROM dirs WHERE parent_id = ? AND deleted_at IS NULL ORDER BY dirname ASC').all(parentDirId);
   }
