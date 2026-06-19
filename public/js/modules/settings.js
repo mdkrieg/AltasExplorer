@@ -2753,11 +2753,11 @@ function _applyFilters(container) {
 		}
 		const entry = regMap.get(id);
 		if (!entry) return;
-		const matches =
-			(_cmActiveFilters.has('multi') && !entry.conditions.singleOnly) ||
-			(_cmActiveFilters.has('file') && entry.conditions.files) ||
-			(_cmActiveFilters.has('dir') && entry.conditions.dirs);
-		if (matches) {
+		let visible = true;
+		if (_cmActiveFilters.has('multi') && entry.conditions.singleOnly)  visible = false;
+		if (_cmActiveFilters.has('file')  && !entry.conditions.files)       visible = false;
+		if (_cmActiveFilters.has('dir')   && !entry.conditions.dirs)        visible = false;
+		if (visible) {
 			delete row.dataset.filtered;
 			row.style.cssText = row.dataset.normalCss || '';
 			row.style.background = row.dataset.id === _cmSelectedId ? '#e8f0fe' : '';
