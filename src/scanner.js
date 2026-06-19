@@ -29,6 +29,7 @@ const categories         = require('./categories');
 const notesParser        = require('./notesParser');
 const todoAggregator     = require('./todoAggregator');
 const reminderAggregator = require('./reminderAggregator');
+const atlasJson          = require('./atlasJson');
 
 // ---------------------------------------------------------------------------
 // Alert-rule helpers
@@ -226,6 +227,12 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         trashCount: 0,
       };
     }
+
+    // Atlas JSON absorption: if this directory's category is 'full-sync', check
+    // whether atlas.json has been edited externally and absorb it before we scan.
+    // This runs on every navigate AND on explicit Refresh (which also calls this
+    // function), so the user gets up-to-date data in both cases.
+    atlasJson.maybeAbsorb(normalizedPath);
 
     const dirStats = fs.getStats(normalizedPath);
     if (!dirStats) {

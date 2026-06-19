@@ -384,6 +384,32 @@ class DatabaseService {
     if (!latestDirCols.has('purged_at')) {
       this.db.exec('ALTER TABLE dirs ADD COLUMN purged_at INTEGER');
     }
+
+    // Migration: atlas.json sync — stores the mtime of the last written/absorbed
+    // atlas.json so the absorption check can skip files we wrote ourselves.
+    if (!latestDirCols.has('atlas_json_mtime')) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN atlas_json_mtime INTEGER');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // atlas.json mtime tracking
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Store the mtime (ms) of the atlas.json most recently written or absorbed
+   * for a directory.  Used by atlasJson.maybeAbsorb() to detect external edits.
+   */
+  setAtlasJsonMtime(dirname, mtime) {
+    this.db.prepare('UPDATE dirs SET atlas_json_mtime = ? WHERE dirname = ?').run(mtime, dirname);
+  }
+
+  /**
+   * Return the stored atlas.json mtime for a directory, or null if not set.
+   */
+  getAtlasJsonMtime(dirname) {
+    const row = this.db.prepare('SELECT atlas_json_mtime FROM dirs WHERE dirname = ?').get(dirname);
+    return row ? (row.atlas_json_mtime ?? null) : null;
   }
 
   normalizeAlertRuleName(name) {

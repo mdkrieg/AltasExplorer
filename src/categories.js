@@ -106,7 +106,8 @@ class CategoryService {
         enableChecksum: false,
         attributes: [],
         autoAssignCategory: null,
-        displayMode: 'details'
+        displayMode: 'details',
+        atlasJsonSync: 'disabled'
       };
       fs.writeFileSync(defaultCategoryPath, JSON.stringify(defaultCategory, null, 2));
     }
@@ -179,6 +180,10 @@ class CategoryService {
           if (category.displayMode === undefined) {
             category.displayMode = 'details';
           }
+          // Ensure backward compatibility: add atlasJsonSync if missing
+          if (!category.atlasJsonSync) {
+            category.atlasJsonSync = 'disabled';
+          }
           category.autoAssignCategory = this.normalizeAutoAssignCategory(category.autoAssignCategory);
           if (category.name === 'Default') {
             category.autoAssignCategory = null;
@@ -214,7 +219,7 @@ class CategoryService {
   /**
    * Create a new category
    */
-  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = [], autoAssignCategory = null, displayMode = 'details') {
+  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = [], autoAssignCategory = null, displayMode = 'details', atlasJsonSync = 'disabled') {
     if (name === 'Default') {
       throw new Error('Cannot create a category named "Default" - it already exists');
     }
@@ -230,7 +235,8 @@ class CategoryService {
       enableChecksum,
       attributes,
       autoAssignCategory: normalizedAutoAssignCategory,
-      displayMode: displayMode || 'details'
+      displayMode: displayMode || 'details',
+      atlasJsonSync: atlasJsonSync || 'disabled'
     };
 
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
@@ -243,7 +249,7 @@ class CategoryService {
   /**
    * Update an existing category
    */
-  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null, autoAssignCategory = undefined, displayMode = null) {
+  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null, autoAssignCategory = undefined, displayMode = null, atlasJsonSync = null) {
     // Get existing category to preserve fields if not specified
     const existingCategory = this.getCategory(name);
     const checksumSetting = enableChecksum !== null ? enableChecksum : (existingCategory?.enableChecksum || false);
@@ -252,6 +258,7 @@ class CategoryService {
       ? this.validateAutoAssignCategory(name, autoAssignCategory)
       : this.validateAutoAssignCategory(name, existingCategory?.autoAssignCategory || null);
     const displayModeSetting = displayMode !== null ? displayMode : (existingCategory?.displayMode || 'details');
+    const atlasJsonSyncSetting = atlasJsonSync !== null ? atlasJsonSync : (existingCategory?.atlasJsonSync || 'disabled');
 
     const category = {
       name,
@@ -262,7 +269,8 @@ class CategoryService {
       enableChecksum: checksumSetting,
       attributes: attributesSetting,
       autoAssignCategory: autoAssignSetting,
-      displayMode: displayModeSetting
+      displayMode: displayModeSetting,
+      atlasJsonSync: atlasJsonSyncSetting
     };
 
     // Preserve extra fields that aren't part of the standard update schema

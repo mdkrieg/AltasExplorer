@@ -21,6 +21,7 @@ const customActions = require('../src/customActions');
 const scanner = require('../src/scanner');
 const layouts = require('../src/layouts');
 const autoLabels = require('../src/autoLabels');
+const atlasJson = require('../src/atlasJson');
 const { execFile } = require('child_process');
 const { createClipboardWatcher } = require('../src/clipboardWatcher');
 const ffmpegBin = require('ffmpeg-static');
@@ -1267,17 +1268,17 @@ ipcMain.handle('get-categories-list', () => {
  */
 ipcMain.handle('save-category', (event, categoryData) => {
   try {
-    const { name, bgColor, textColor, description, patterns, enableChecksum, attributes: attrs, autoAssignCategory, displayMode } = categoryData;
+    const { name, bgColor, textColor, description, patterns, enableChecksum, attributes: attrs, autoAssignCategory, displayMode, atlasJsonSync } = categoryData;
     
     // Check if category exists
     const existing = categories.getCategory(name);
     
     if (existing) {
       // Update existing
-      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || null);
+      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || null, atlasJsonSync || 'disabled');
     } else {
       // Create new
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details');
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details', atlasJsonSync || 'disabled');
     }
   } catch (err) {
     logger.error('Error saving category:', err.message);
@@ -1290,16 +1291,16 @@ ipcMain.handle('save-category', (event, categoryData) => {
  */
 ipcMain.handle('update-category', (event, categoryData) => {
   try {
-    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, attributes: attrs, autoAssignCategory, displayMode } = categoryData;
+    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, attributes: attrs, autoAssignCategory, displayMode, atlasJsonSync } = categoryData;
     const updateName = name || oldName;
     
     // If name changed, delete old and create new
     if (oldName && name && oldName !== name) {
       categories.deleteCategory(oldName);
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details');
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details', atlasJsonSync || 'disabled');
     } else {
       // Just update
-      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || [], autoAssignCategory, displayMode || null);
+      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || [], autoAssignCategory, displayMode || null, atlasJsonSync || 'disabled');
     }
   } catch (err) {
     logger.error('Error updating category:', err.message);
@@ -1326,6 +1327,8 @@ ipcMain.handle('assign-category-to-directory', (event, { dirPath, categoryName, 
     } catch (histErr) {
       logger.error('Error recording category history for directory:', histErr.message);
     }
+    // Write atlas.json if the new category has sync enabled
+    try { atlasJson.writeAtlasJson(dirPath); } catch (_) {}
     return { success: true };
   } catch (err) {
     logger.error('Error assigning category:', err.message);
@@ -1355,6 +1358,8 @@ ipcMain.handle('assign-category-to-directories', (event, { dirPaths, categoryNam
         } catch (histErr) {
           logger.error(`Error recording category history for directory ${dirPath}:`, histErr.message);
         }
+        // Write atlas.json if the new category has sync enabled
+        try { atlasJson.writeAtlasJson(dirPath); } catch (_) {}
         results.push({ path: dirPath, success: true });
       } catch (err) {
         logger.error(`Error assigning category to ${dirPath}:`, err.message);
@@ -1769,6 +1774,14 @@ ipcMain.handle('get-file-attributes', (event, { inode, dir_id }) => {
 ipcMain.handle('set-file-attributes', (event, { inode, dir_id, attributes: attrs }) => {
   try {
     db.setFileAttributes(inode, dir_id, attrs);
+    // If this is a directory's dot-file (filename='.'), write atlas.json
+    try {
+      const fileRecord = db.getFileByInode(inode, dir_id);
+      if (fileRecord && fileRecord.filename === '.') {
+        const dirRow = db.getDirById(dir_id);
+        if (dirRow) atlasJson.writeAtlasJson(dirRow.dirname);
+      }
+    } catch (_) {}
     return { success: true };
   } catch (err) {
     logger.error('Error setting file attributes:', err.message);
@@ -1991,6 +2004,9 @@ ipcMain.handle('add-tag-to-item', (event, { path: itemPath, tagName, isDirectory
     } catch (histErr) {
       logger.warn('add-tag-to-item: failed to record history:', histErr.message);
     }
+    if (isDirectory) {
+      try { atlasJson.writeAtlasJson(itemPath); } catch (_) {}
+    }
     return { success: true };
   } catch (err) {
     logger.error('Error adding tag to item:', err.message);
@@ -2030,6 +2046,9 @@ ipcMain.handle('remove-tag-from-item', (event, { path: itemPath, tagName, isDire
       }
     } catch (histErr) {
       logger.warn('remove-tag-from-item: failed to record history:', histErr.message);
+    }
+    if (isDirectory) {
+      try { atlasJson.writeAtlasJson(itemPath); } catch (_) {}
     }
     return { success: true };
   } catch (err) {

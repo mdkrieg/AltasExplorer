@@ -1028,6 +1028,17 @@
                     <option value="gallery">Gallery</option>
                   </select>
                 </div>
+                <div style="display: flex; flex-direction: column;">
+                  <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Atlas JSON Sync</label>
+                  <select id="form-cat-atlasJsonSync"
+                    style="padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 11px;">
+                    <option value="disabled">Disabled</option>
+                    <option value="readonly">Read-only (write on change)</option>
+                    <option value="full-sync">Full Sync (absorb on open / refresh)</option>
+                  </select>
+                  <span style="font-size: 10px; color: #888; margin-top: 2px;">Write an atlas.json file in directories
+                    of this category. Full Sync also reads changes back into the database.</span>
+                </div>
                 <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
                   <input type="checkbox" id="form-cat-enableChecksum" style="cursor: pointer;">
                   <label for="form-cat-enableChecksum"
