@@ -12,6 +12,10 @@ This documentation captures the *why* behind the project: vision, architecture, 
 - [Core Concepts](concepts.md) — Panels, the P1-Pn+1 pattern, URIs, categories, tags, reminders, and aggregation.
 - [Module Map](modules.md) — what each major source file owns, and what *not* to put in it.
 
+### Proposals
+
+- [Node-RED Integration Plan](node-red-integration-plan.md) — BYO (bring-your-own) Node-RED via an internal event bus + loopback transport; opt-in, reactive-only v1.
+
 ## How to use these docs
 
 If you're contributing code (or directing an AI to), skim **Vision**, **Design Principles**, and **Core Concepts** first. They establish the framing that determines whether a given change feels right for this project.
