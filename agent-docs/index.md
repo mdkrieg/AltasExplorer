@@ -14,7 +14,7 @@ This documentation captures the *why* behind the project: vision, architecture, 
 
 ### Proposals
 
-- [Node-RED Integration Plan](node-red-integration-plan.md) — BYO (bring-your-own) Node-RED via an internal event bus + loopback transport; opt-in, reactive-only v1.
+- [External Automation Integration Plan](automation-integration-plan.md) — a language-agnostic loopback protocol (AAP) over an internal event bus; Node-RED + Python reference clients; opt-in, reactive-only v1.
 
 ## How to use these docs
 
