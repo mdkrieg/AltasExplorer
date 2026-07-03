@@ -1979,7 +1979,7 @@ function _buildMarkedFilenameHtml(filename, query) {
  */
 function _buildMarkedTagBadgesHtml(tagsJson, tagDefs, query) {
 	const names = parseTagNames(tagsJson);
-	if (names.length === 0) return '';
+	if (names.length === 0) return `<div class="tag-badge-container"></div>`;
 	const lowerQ = query ? query.toLowerCase() : '';
 	const badges = names.map(name => {
 		const def = tagDefs[name];
@@ -2355,7 +2355,7 @@ function setScanIndicator(panelId, scanning) {
 
 export function renderTagBadges(tagsJson, tagDefs) {
 	const names = parseTagNames(tagsJson);
-	if (names.length === 0) return '';
+	if (names.length === 0) return `<div class="tag-badge-container"></div>`;
 	const badges = names.map(name => {
 		const def = tagDefs[name];
 		const bg = def ? def.bgColor : '#888';
@@ -3131,12 +3131,7 @@ function getTagConfigTargetLabel() {
 
 async function renderTagConfigModal(options = {}) {
 	if (!tagConfigModalState.record) return;
-	$('#item-tags-modal-title').text(`Tags — ${getTagConfigTargetLabel()}`);
-	$('#item-tags-modal-content').html(renderTagEditorMarkup(tagConfigModalState.uiState, tagConfigModalState.tags, {
-		allowCreate: false,
-		placeholder: 'Add existing tag',
-		helperText: 'Assign existing tags here. Create new tags from Item Properties or Label Manager.'
-	}));
+	$('#item-tags-modal-content').html(renderTagEditorMarkup(tagConfigModalState.uiState, tagConfigModalState.tags));
 	if (options.restoreFocus) {
 		const input = $('#item-tags-modal-content').find('.item-props-tag-input').get(0);
 		if (input) {
@@ -3204,8 +3199,19 @@ async function removeTagFromTagModalItem(tagName) {
 }
 
 async function runPrimaryTagActionForTagModal() {
-	const action = getTagAction(tagConfigModalState.uiState, tagConfigModalState.tags, { allowCreate: false });
+	const action = getTagAction(tagConfigModalState.uiState, tagConfigModalState.tags);
 	if (action.disabled) return;
+	if (action.kind === 'create') {
+		await openCreateTagModal(tagConfigModalState.panelId, action.tagName, {
+			addHandler: async (newTagName) => {
+				await addTagToTagModalItem(newTagName);
+			},
+			afterCreate: async () => {
+				await rerenderTagConfigModal({ restoreFocus: true });
+			}
+		});
+		return;
+	}
 	await addTagToTagModalItem(action.tagName);
 }
 
@@ -3226,26 +3232,36 @@ async function activateTagSuggestionForTagModal(suggestionIndex) {
 	await addTagToTagModalItem(item.tag.name);
 }
 
-export async function openTagConfigModal(record, panelId) {
+export async function openTagConfigModal(record, panelId, anchorEl = null) {
 	if (!record) return;
 	tagConfigModalState.record = record;
 	tagConfigModalState.panelId = panelId;
 	tagConfigModalState.tags = parseTagNames(record.tagsRaw);
 	tagConfigModalState.uiState = createDefaultLabelsUiState();
 
-	$('#item-tags-modal').css('display', 'flex');
+	$('#item-tags-modal').css('display', 'block');
 	await renderTagConfigModal({ restoreFocus: true });
 
-	$('#btn-item-tags-close')
-		.off('click.itemTagsModal')
-		.on('click.itemTagsModal', function () {
-			hideTagConfigModal();
-		});
+	// Position the popover anchored below the triggering cell
+	if (anchorEl) {
+		const rect = anchorEl.getBoundingClientRect();
+		const $box = $('#item-tags-modal .item-tags-modal-box');
+		const boxW = $box.outerWidth() || 320;
+		const boxH = $box.outerHeight() || 200;
+		let top = rect.bottom + 4;
+		let left = rect.left;
+		if (left + boxW > window.innerWidth - 8) left = window.innerWidth - boxW - 8;
+		if (left < 8) left = 8;
+		if (top + boxH > window.innerHeight - 8) top = rect.top - boxH - 4;
+		$('#item-tags-modal').css({ top: `${top}px`, left: `${left}px` });
+	}
 
-	$('#item-tags-modal')
-		.off('mousedown.itemTagsOverlay')
-		.on('mousedown.itemTagsOverlay', function (event) {
-			if (event.target === this) {
+	// Dismiss on click outside the popover (exclude the create-tag modal)
+	$(document)
+		.off('mousedown.tagPopoverDismiss')
+		.on('mousedown.tagPopoverDismiss', function (event) {
+			if (!$(event.target).closest('.item-tags-modal-box').length &&
+				!$(event.target).closest('#item-tag-create-modal').length) {
 				hideTagConfigModal();
 			}
 		});
@@ -3377,6 +3393,7 @@ export function hideTagConfigModal() {
 	tagConfigModalState.panelId = null;
 	tagConfigModalState.tags = [];
 	tagConfigModalState.uiState = createDefaultLabelsUiState();
+	$(document).off('mousedown.tagPopoverDismiss');
 	$('#item-tags-modal').hide();
 	$('#item-tags-modal-content').empty();
 }
@@ -5256,8 +5273,7 @@ export async function initializeGridForPanel(panelId) {
 		{ field: 'checksum', headerLabel: 'Checksum', text: getColumnHeaderText(panelId, 'checksum', 'Checksum'), size: '70px', resizable: true, sortable: false },
 		{
 			field: 'tags', headerLabel: 'Tags', text: getColumnHeaderText(panelId, 'tags', 'Tags'), size: '190px', resizable: true, sortable: false, render: (record) => {
-				// return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M12.146.854a.5.5 0 0 1 .708 0l2.292 2.292a.5.5 0 0 1 0 .708L5.854 13.146a.5.5 0 0 1-.22.128l-3.5 1.167a.5.5 0 0 1-.632-.632l1.167-3.5a.5.5 0 0 1 .128-.22L12.146.854zM11.5 2.707 13.293 4.5 14.293 3.5 12.5 1.707 11.5 2.707zM12.586 5.207 10.793 3.414 4 10.207V10.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.793-6.793z"/></svg></button></div>`;
-				return `<div class="grid-tags-cell">${record.tags || '<span class="grid-tags-empty"></span>'}<button class="grid-tags-add-btn" title="Configure tags" data-tag-config-trigger="true"><img src="assets/icons/edit.svg" width="16" height="16"></button></div>`;
+				return `<div class="grid-tags-cell" data-tag-config-trigger="true" title="Double-click to edit tags">${record.tags}</div>`;
 			}
 		},
 		{
@@ -5326,19 +5342,6 @@ export async function initializeGridForPanel(panelId) {
 				const copyValue = decodeCopyValue(encodedValue);
 				copyValueToClipboard(copyValue, copyButton);
 				return;
-			}
-
-			if (originalTarget && originalTarget.closest && originalTarget.closest('[data-tag-config-trigger="true"]')) {
-				event.preventDefault();
-				event.stopPropagation();
-				if (event.detail.recid) {
-					const record = this.records.find(r => r.recid === event.detail.recid);
-					if (record) {
-						updateSelectedItemFromRecord(record, panelId);
-						openTagConfigModal(record, panelId);
-						return;
-					}
-				}
 			}
 
 			if (originalTarget && originalTarget.closest && originalTarget.closest('[data-attr-edit-trigger="true"]')) {
@@ -5435,6 +5438,17 @@ export async function initializeGridForPanel(panelId) {
 			}
 		},
 		onDblClick: function (event) {
+			const originalTarget = event.detail.originalEvent?.target;
+			const tagCellEl = originalTarget?.closest && originalTarget.closest('[data-tag-config-trigger="true"]');
+			if (tagCellEl) {
+				event.preventDefault();
+				const record = this.records.find(r => r.recid === event.detail.recid);
+				if (record) {
+					updateSelectedItemFromRecord(record, panelId);
+					openTagConfigModal(record, panelId, tagCellEl);
+				}
+				return;
+			}
 			const record = this.records.find(r => r.recid === event.detail.recid);
 			if (record && record.isFolder) {
 				// When double-clicking an orphaned folder from within a virtual

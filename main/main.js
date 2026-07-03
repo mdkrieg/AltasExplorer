@@ -545,11 +545,11 @@ function createWindow(startupPath = null) {
 }
 
 /**
- * Sync ~/.atlasexplorer/icons → public/assets/icons at startup
+ * Sync ~/.atlas-explorer/icons → public/assets/icons at startup
  * Falls back to bundled icons if user directory is empty or missing
  */
 function syncIconAssets() {
-  const srcDir = path.join(os.homedir(), '.atlasexplorer', 'icons');
+  const srcDir = path.join(os.homedir(), '.atlas-explorer', 'icons');
   const destDir = path.join(__dirname, '..', 'public', 'assets', 'icons');
 
   try {
@@ -2193,7 +2193,7 @@ ipcMain.handle('quit-and-install', () => {
  * Migrates from settings.json on first use if needed.
  */
 ipcMain.handle('get-favorites', () => {
-  const favPath = path.join(os.homedir(), '.atlasexplorer', 'favorites.json');
+  const favPath = path.join(os.homedir(), '.atlas-explorer', 'favorites.json');
   try {
     if (fsSync.existsSync(favPath)) {
       const content = fsSync.readFileSync(favPath, 'utf8');
@@ -2218,7 +2218,7 @@ ipcMain.handle('get-favorites', () => {
  * Favorites: Save favorites to favorites.json.
  */
 ipcMain.handle('save-favorites', (event, favorites) => {
-  const favPath = path.join(os.homedir(), '.atlasexplorer', 'favorites.json');
+  const favPath = path.join(os.homedir(), '.atlas-explorer', 'favorites.json');
   try {
     fsSync.writeFileSync(favPath, JSON.stringify(favorites, null, 2), 'utf8');
     return { success: true };
@@ -4979,7 +4979,7 @@ ipcMain.handle('reinitialize-database', (event) => {
     db.close();
     
     // Delete the database file
-    const dbPath = path.join(os.homedir(), '.atlasexplorer', 'data.sqlite');
+    const dbPath = path.join(os.homedir(), '.atlas-explorer', 'data.sqlite');
     const dbWalPath = dbPath + '-wal';
     const dbShmPath = dbPath + '-shm';
     

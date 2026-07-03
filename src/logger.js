@@ -4,7 +4,7 @@
  * Provides structured logging with:
  * - Multiple log levels (INFO, WARN, ERROR)
  * - Source tracking (MAIN process or RENDERER)
- * - File-based persistence to ~/.atlasexplorer/logs/app-YYYY-MM-DD.log
+ * - File-based persistence to ~/.atlas-explorer/logs/app-YYYY-MM-DD.log
  * - Timestamps on every entry
  * 
  * Usage:
@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const LOG_DIR = path.join(os.homedir(), '.atlasexplorer', 'logs');
+const LOG_DIR = path.join(os.homedir(), '.atlas-explorer', 'logs');
 
 class Logger {
   constructor() {
@@ -27,7 +27,7 @@ class Logger {
 
   /**
    * Ensure the log directory exists
-   * Creates ~/.atlasexplorer/logs if it doesn't exist
+   * Creates ~/.atlas-explorer/logs if it doesn't exist
    */
   ensureLogDirectory() {
     if (!fs.existsSync(LOG_DIR)) {

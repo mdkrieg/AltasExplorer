@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const CONFIG_DIR = path.join(os.homedir(), '.atlasexplorer');
+const CONFIG_DIR = path.join(os.homedir(), '.atlas-explorer');
 const DB_PATH = path.join(CONFIG_DIR, 'data.sqlite');
 const DB_WAL = path.join(CONFIG_DIR, 'data.sqlite-wal');
 const DB_SHM = path.join(CONFIG_DIR, 'data.sqlite-shm');

@@ -1,7 +1,7 @@
 /**
  * Custom Actions Service
  *
- * Manages user-defined executable actions stored in ~/.atlasexplorer/custom-actions.json.
+ * Manages user-defined executable actions stored in ~/.atlas-explorer/custom-actions.json.
  * Each action specifies an executable, optional extra arguments, and optional file pattern
  * filters that control when the action appears in the context menu.
  *
@@ -16,7 +16,7 @@ const path = require('path');
 const os   = require('os');
 const crypto = require('crypto');
 
-const ACTIONS_FILE = path.join(os.homedir(), '.atlasexplorer', 'custom-actions.json');
+const ACTIONS_FILE = path.join(os.homedir(), '.atlas-explorer', 'custom-actions.json');
 
 // Extensions whose content can be trivially modified in a text editor — checksum these.
 // Binary executables (.exe, .com) are not checksummed; use OS Authenticode for those.

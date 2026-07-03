@@ -51,7 +51,7 @@ Environment=NODE_ENV=production
 # NoNewPrivileges=true
 # ProtectSystem=strict
 # ProtectHome=read-only
-# ReadWritePaths=/home/pi/.atlasexplorer /home/pi/.local/share/Trash
+# ReadWritePaths=/home/pi/.atlas-explorer /home/pi/.local/share/Trash
 
 [Install]
 WantedBy=multi-user.target

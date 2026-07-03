@@ -24,7 +24,7 @@ const crypto = require('crypto');
 // ---------------------------------------------------------------------------
 // Resolve AtlasExplorer config dir & home_directory setting
 // ---------------------------------------------------------------------------
-const CONFIG_DIR = path.join(os.homedir(), '.atlasexplorer');
+const CONFIG_DIR = path.join(os.homedir(), '.atlas-explorer');
 const SETTINGS_PATH = path.join(CONFIG_DIR, 'settings.json');
 
 function loadHomeDirectory() {

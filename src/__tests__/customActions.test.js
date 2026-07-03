@@ -7,7 +7,7 @@ describe('customActions service', () => {
   let customActions;
 
   function writeActionsFile(actions) {
-    const configDir = path.join(tempHome, '.atlasexplorer');
+    const configDir = path.join(tempHome, '.atlas-explorer');
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, 'custom-actions.json'),

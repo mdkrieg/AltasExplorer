@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 const logger = require('./logger');
 
-const FILETYPES_FILE = path.join(os.homedir(), '.atlasexplorer', 'filetypes.json');
+const FILETYPES_FILE = path.join(os.homedir(), '.atlas-explorer', 'filetypes.json');
 
 const DEFAULT_FILE_TYPES = [
   { pattern: 'notes.txt', type: 'Notes', locked: true },

@@ -4,7 +4,7 @@ const path = require('path');
 const os = require('os');
 const logger = require('./logger');
 
-const USER_ICONS_DIR = path.join(os.homedir(), '.atlasexplorer', 'icons');
+const USER_ICONS_DIR = path.join(os.homedir(), '.atlas-explorer', 'icons');
 
 class IconService {
   constructor() {
@@ -39,7 +39,7 @@ class IconService {
   }
 
   /**
-   * Ensure ~/.atlasexplorer/icons exists and contains bundled icon files.
+   * Ensure ~/.atlas-explorer/icons exists and contains bundled icon files.
    * Existing user files are preserved; only missing files are copied.
    */
   ensureIconAssets() {

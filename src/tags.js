@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 const logger = require('./logger');
 
-const TAGS_DIR = path.join(os.homedir(), '.atlasexplorer', 'tags');
+const TAGS_DIR = path.join(os.homedir(), '.atlas-explorer', 'tags');
 
 class TagService {
   constructor() {

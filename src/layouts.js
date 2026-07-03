@@ -4,7 +4,7 @@ const os = require('os');
 const AdmZip = require('adm-zip');
 const logger = require('./logger');
 
-const LAYOUTS_DIR = path.join(os.homedir(), '.atlasexplorer', 'layouts');
+const LAYOUTS_DIR = path.join(os.homedir(), '.atlas-explorer', 'layouts');
 
 class LayoutService {
   constructor() {

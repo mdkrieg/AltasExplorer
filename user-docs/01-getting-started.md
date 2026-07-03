@@ -12,7 +12,7 @@ Set your home directory in **Settings → Browser** so Atlas Explorer knows wher
 
 Atlas Explorer stores its metadata (labels, history, monitoring rules) in a local SQLite database, but keeps your notes and label definitions as plain files you can open anywhere. Nothing is locked into the app — you can work with your files in Windows Explorer, on a phone, or on another machine, and Atlas will pick up the changes when you return.
 
-User data lives in `%USERPROFILE%\.atlasexplorer\`:
+User data lives in `%USERPROFILE%\.atlas-explorer\`:
 
 | File / folder           | What it stores                                      |
 |-------------------------|-----------------------------------------------------|

@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 const logger = require('./logger');
 
-const ATTRIBUTES_DIR = path.join(os.homedir(), '.atlasexplorer', 'attributes');
+const ATTRIBUTES_DIR = path.join(os.homedir(), '.atlas-explorer', 'attributes');
 
 class AttributeService {
   constructor() {

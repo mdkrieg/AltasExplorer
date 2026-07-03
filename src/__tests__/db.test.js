@@ -1,7 +1,7 @@
 /**
  * @file Unit tests for the move/copy DB helpers used by drag-and-drop.
  *
- * Strategy: instead of calling `db.initialize()` (which writes to ~/.atlasexplorer),
+ * Strategy: instead of calling `db.initialize()` (which writes to ~/.atlas-explorer),
  * we plug an in-memory better-sqlite3 connection into the singleton and run the
  * service's own `createSchema()` so the tests use the real schema.
  */

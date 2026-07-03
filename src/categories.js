@@ -4,9 +4,9 @@ const os = require('os');
 const logger = require('./logger');
 const db = require('./db');
 
-const CATEGORIES_DIR = path.join(os.homedir(), '.atlasexplorer', 'categories');
-const SETTINGS_PATH = path.join(os.homedir(), '.atlasexplorer', 'settings.json');
-const HOTKEYS_PATH = path.join(os.homedir(), '.atlasexplorer', 'hotkeys.json');
+const CATEGORIES_DIR = path.join(os.homedir(), '.atlas-explorer', 'categories');
+const SETTINGS_PATH = path.join(os.homedir(), '.atlas-explorer', 'settings.json');
+const HOTKEYS_PATH = path.join(os.homedir(), '.atlas-explorer', 'hotkeys.json');
 const SOURCE_HOTKEYS_PATH = path.join(__dirname, '..', 'assets', 'hotkeys.json');
 
 // Module-level categories cache — avoids re-reading all category JSON files on every

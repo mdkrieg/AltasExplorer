@@ -13,8 +13,8 @@ module.exports = {
 
   // ── Data directory ───────────────────────────────────────────────────────
   // Where Atlas Explorer stores its data (categories, tags, DB, etc.)
-  // Defaults to ~/.atlasexplorer on all platforms.
-  dataDir: require('os').homedir() + '/.atlasexplorer',
+  // Defaults to ~/.atlas-explorer on all platforms.
+  dataDir: require('os').homedir() + '/.atlas-explorer',
 
   // ── Authentication ───────────────────────────────────────────────────────
   // Long random string used to sign session cookies. Change this.
@@ -39,7 +39,7 @@ module.exports = {
   // ── Trash ────────────────────────────────────────────────────────────────
   // Where deleted items are moved. Defaults to XDG trash (~/.local/share/Trash)
   // which is visible to the system file manager on Linux.
-  // Set to a custom path (e.g. ~/.atlasexplorer/trash) for app-local trash.
+  // Set to a custom path (e.g. ~/.atlas-explorer/trash) for app-local trash.
   trashDir: null, // null = use XDG default
 
   // ── HTTPS ────────────────────────────────────────────────────────────────

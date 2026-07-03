@@ -148,7 +148,7 @@ const HANDLERS = {
     const path = require('path');
     const os = require('os');
     const categories = require('../../src/categories');
-    const favPath = path.join(os.homedir(), '.atlasexplorer', 'favorites.json');
+    const favPath = path.join(os.homedir(), '.atlas-explorer', 'favorites.json');
     try {
       if (fs.existsSync(favPath)) {
         return JSON.parse(fs.readFileSync(favPath, 'utf8'));
@@ -170,7 +170,7 @@ const HANDLERS = {
     const fs = require('fs');
     const path = require('path');
     const os = require('os');
-    const favPath = path.join(os.homedir(), '.atlasexplorer', 'favorites.json');
+    const favPath = path.join(os.homedir(), '.atlas-explorer', 'favorites.json');
     try {
       fs.writeFileSync(favPath, JSON.stringify(favorites, null, 2), 'utf8');
       return { success: true };

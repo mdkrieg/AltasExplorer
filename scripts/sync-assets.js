@@ -4,7 +4,7 @@ const os = require('os');
 
 const src = path.join(__dirname, '..', 'assets', 'icons');
 const destinations = [
-  path.join(os.homedir(), '.atlasexplorer', 'icons'),
+  path.join(os.homedir(), '.atlas-explorer', 'icons'),
   path.join(__dirname, '..', 'public', 'assets', 'icons'),
 ];
 

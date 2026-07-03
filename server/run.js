@@ -39,7 +39,7 @@ function loadConfig() {
 
   // Apply defaults
   config.port    = config.port    || 3000;
-  config.dataDir = config.dataDir || path.join(os.homedir(), '.atlasexplorer');
+  config.dataDir = config.dataDir || path.join(os.homedir(), '.atlas-explorer');
   return config;
 }
 
@@ -60,7 +60,7 @@ function initServices(config) {
   const logger     = require('../src/logger');
 
   // Only db has an initialize() method; all other services self-initialize
-  // using hardcoded paths (os.homedir()/.atlasexplorer) matching main/main.js.
+  // using hardcoded paths (os.homedir()/.atlas-explorer) matching main/main.js.
   db.initialize();
 
   return { db, categories, tags, filetypes, icons, checksum, attributes, autoLabels, layouts, customActions, logger };

@@ -1313,46 +1313,17 @@ textarea {
   color: #555;
 }
 
-#item-tags-modal {
-  z-index: 1001;
-}
-
 .item-tags-modal-box {
   background: white;
   border-radius: 8px;
-  width: 520px;
-  max-width: calc(100vw - 40px);
-  max-height: calc(100vh - 60px);
-  min-height: 300px;
+  width: 320px;
+  max-width: calc(100vw - 20px);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  border: 1px solid #d5d5d5;
   overflow: visible;
-}
-
-.item-tags-modal-header,
-.item-tags-modal-footer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 18px;
-  background: #fff;
-}
-
-.item-tags-modal-header {
-  border-bottom: 1px solid #ddd;
-  border-radius: 8px 8px 0 0;
-}
-
-.item-tags-modal-footer {
-  justify-content: flex-end;
-  border-top: 1px solid #eee;
-}
-
-.item-tags-modal-body {
-  padding: 16px 18px;
-  overflow: visible;
-  background: #fff;
+  padding: 12px 14px;
 }
 
 .item-tags-modal-content {
@@ -2000,11 +1971,20 @@ hr {
   opacity: 0.4;
 }
 
+/* Stretch the w2ui-generated cell wrapper to the full row height so the
+   Tags cell's click/pointer hit-area covers the whole cell, not just the
+   height of its (possibly empty) content. */
+.w2ui-grid .w2ui-grid-body table td.w2ui-grid-data:has(.grid-tags-cell) > div {
+  height: 100%;
+}
+
 .grid-tags-cell {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  height: 100%;
+  cursor: pointer;
 }
 
 .grid-tags-cell .tag-badge-container {
@@ -2012,34 +1992,7 @@ hr {
   min-width: 0;
 }
 
-.grid-tags-empty {
-  flex: 1;
-  min-width: 0;
-}
 
-.grid-tags-add-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  background: transparent;
-  border: 1px solid #F0F0F0;
-  border-radius: 3px;
-  color: #5c6670;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.grid-tags-add-btn:hover {
-  background: #cce4ff;
-  border-color: #83b2d8;
-  color: #1976d2;
-}
-
-.grid-tags-add-btn img{
-  opacity:0.4;
-}
 
 /* Settings Button Styles */
 #btn-cat-save,
@@ -2264,6 +2217,10 @@ hr {
   gap: 3px;
   align-items: center;
   padding: 1px 0;
+  /* Matches .tag-badge's rendered height (line-height 16px + 1px/1px padding)
+     so the container is the same height whether or not it holds any badges —
+     an empty flex container has no content box height of its own otherwise. */
+  min-height: 18px;
 }
 
 .tag-badge {

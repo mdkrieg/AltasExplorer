@@ -37,7 +37,7 @@ Create and manage directory categories. Each category defines:
 - **Inherits** — whether the category automatically applies to all subdirectories
 - **Description** — free text, shown in dropdowns
 
-Categories are stored as JSON files in `~/.atlasexplorer/categories/` and can be shared or backed up freely.
+Categories are stored as JSON files in `~/.atlas-explorer/categories/` and can be shared or backed up freely.
 
 ---
 
@@ -49,7 +49,7 @@ Create and manage tags. Each tag defines:
 - **Background color**
 - **Outline color**
 
-Tags are stored in `~/.atlasexplorer/tags/`.
+Tags are stored in `~/.atlas-explorer/tags/`.
 
 ---
 

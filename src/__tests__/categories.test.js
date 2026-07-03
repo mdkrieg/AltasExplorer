@@ -551,7 +551,7 @@ describe('CategoryService - getHotkeys()', () => {
 
   it('should return DEFAULT_HOTKEYS and write to disk when user file cannot be read', () => {
     fs.readFileSync.mockImplementation(p => {
-      if (p.includes('.atlasexplorer')) throw new Error('ENOENT');
+      if (p.includes('.atlas-explorer')) throw new Error('ENOENT');
       throw new Error('ENOENT'); // source also unavailable in this scenario
     });
     fs.existsSync.mockReturnValue(false);
@@ -587,7 +587,7 @@ describe('CategoryService - getHotkeys()', () => {
     };
 
     fs.readFileSync.mockImplementation(p => {
-      if (p.includes('.atlasexplorer')) return JSON.stringify(userHotkeys);
+      if (p.includes('.atlas-explorer')) return JSON.stringify(userHotkeys);
       return JSON.stringify(sourceHotkeys);
     });
     fs.existsSync.mockReturnValue(true);

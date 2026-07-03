@@ -4,7 +4,7 @@ const os = require('os');
 const { randomUUID } = require('crypto');
 const logger = require('./logger');
 
-const AUTO_LABELS_DIR = path.join(os.homedir(), '.atlasexplorer', 'auto-labels');
+const AUTO_LABELS_DIR = path.join(os.homedir(), '.atlas-explorer', 'auto-labels');
 
 class AutoLabelService {
   constructor() {

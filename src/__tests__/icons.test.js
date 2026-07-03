@@ -20,11 +20,11 @@ describe('IconService - bootstrap icon assets', () => {
         return true;
       }
 
-      if (checkPath.includes(`${path.sep}.atlasexplorer${path.sep}icons${path.sep}`)) {
+      if (checkPath.includes(`${path.sep}.atlas-explorer${path.sep}icons${path.sep}`)) {
         return false;
       }
 
-      if (checkPath.endsWith(`${path.sep}.atlasexplorer${path.sep}icons`)) {
+      if (checkPath.endsWith(`${path.sep}.atlas-explorer${path.sep}icons`)) {
         return false;
       }
 
@@ -51,7 +51,7 @@ describe('IconService - bootstrap icon assets', () => {
     icons.ensureIconAssets();
 
     expect(fs.mkdirSync).toHaveBeenCalledWith(
-      expect.stringContaining(`${path.sep}.atlasexplorer${path.sep}icons`),
+      expect.stringContaining(`${path.sep}.atlas-explorer${path.sep}icons`),
       { recursive: true }
     );
     expect(fs.copyFileSync).toHaveBeenCalledTimes(2);
@@ -63,7 +63,7 @@ describe('IconService - bootstrap icon assets', () => {
         return true;
       }
 
-      if (checkPath.endsWith(`${path.sep}.atlasexplorer${path.sep}icons`)) {
+      if (checkPath.endsWith(`${path.sep}.atlas-explorer${path.sep}icons`)) {
         return true;
       }
 

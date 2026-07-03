@@ -73,7 +73,7 @@ function createApp(config) {
   app.get('/favicon.ico', (req, res) => res.sendFile(FAVICON_PATH));
 
   // ── User icons — served before the dist static so custom icons take effect ──
-  app.use('/assets/icons', express.static(path.join(os.homedir(), '.atlasexplorer', 'icons')));
+  app.use('/assets/icons', express.static(path.join(os.homedir(), '.atlas-explorer', 'icons')));
 
   // ── Static renderer build ─────────────────────────────────────────────────
   app.use(express.static(DIST_APP));
