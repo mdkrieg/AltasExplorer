@@ -502,6 +502,7 @@ function createWindow(startupPath = null) {
         deferredTodoRefresh().catch(err => {
           logger.error('deferredTodoRefresh failed:', err.message);
         });
+        startReminderAutoRefresh();
         // Defer the first monitoring pass by 3 s to let the renderer finish
         // its own startup IPC calls before the main process starts file I/O.
         setTimeout(() => {
@@ -702,6 +703,60 @@ async function deferredTodoRefresh() {
   logger.info(`TODO aggregator (deferred): refreshed ${changed}/${total} notes.txt files`);
   send('todo-refresh-done', { changed, total });
   send('todo-aggregates-changed', {});
+}
+
+// How often to silently re-scan every known notes.txt for REMINDER changes, so
+// reminders added/edited by hand (outside the app) bubble up into the sidebar
+// without a manual refresh. Cheap in the common case: ensureAndRefresh() skips
+// the DB write entirely when a file's content hash hasn't changed since the
+// last scan, so this is just a stat+read+hash per file for the vast majority
+// of ticks. Yielding between files keeps this from blocking the event loop
+// even with a few hundred notes files open at once.
+const REMINDER_AUTO_REFRESH_INTERVAL_MS = 60 * 1000;
+let reminderAutoRefreshTimer = null;
+
+async function runReminderAutoRefresh() {
+  let rows;
+  try {
+    rows = db.getAllTodoNotesFiles();
+  } catch (err) {
+    logger.error('runReminderAutoRefresh: could not load notes files:', err.message);
+    return;
+  }
+  if (rows.length === 0) return;
+
+  let changed = 0;
+  for (const row of rows) {
+    // Yield to the event loop between each file so IPC and UI remain responsive.
+    await new Promise(resolve => setImmediate(resolve));
+    try {
+      const res = reminderAggregator.ensureAndRefresh(row.notes_path, row.dir_id);
+      if (res.changed) changed++;
+    } catch (err) {
+      logger.warn(`runReminderAutoRefresh: failed for ${row.notes_path}: ${err.message}`);
+    }
+  }
+
+  if (changed > 0) {
+    logger.info(`Reminder aggregator (auto-refresh): ${changed}/${rows.length} notes.txt files changed`);
+    broadcast('reminder-aggregates-changed');
+  }
+}
+
+function startReminderAutoRefresh() {
+  if (reminderAutoRefreshTimer) return;
+  reminderAutoRefreshTimer = setInterval(() => {
+    runReminderAutoRefresh().catch(err => {
+      logger.error('Reminder auto-refresh interval failed:', err.message);
+    });
+  }, REMINDER_AUTO_REFRESH_INTERVAL_MS);
+}
+
+function stopReminderAutoRefresh() {
+  if (reminderAutoRefreshTimer) {
+    clearInterval(reminderAutoRefreshTimer);
+    reminderAutoRefreshTimer = null;
+  }
 }
 
 /**
@@ -2795,9 +2850,9 @@ ipcMain.handle('normalize-todo-section', async (event, sectionContent) => {
 // REMINDER Aggregator IPC handlers
 // ============================================================
 
-ipcMain.handle('get-reminder-aggregates', async () => {
+ipcMain.handle('get-reminder-aggregates', async (event, opts = {}) => {
   try {
-    return reminderAggregator.getAggregates();
+    return reminderAggregator.getAggregates(opts);
   } catch (err) {
     logger.error('Error getting reminder aggregates:', err.message);
     throw err;
@@ -2881,6 +2936,19 @@ ipcMain.handle('update-todo-items', async (event, { sectionContent, updates }) =
     return notesParser.updateTodoItemStates(sectionContent, updates);
   } catch (err) {
     logger.error('Error updating TODO items:', err.message);
+    throw err;
+  }
+});
+
+/**
+ * REMINDER: Toggle the completed ('[x]') marker on a single REMINDER line,
+ * located by absolute line number (standalone or cohabitated inside a TODO item).
+ */
+ipcMain.handle('update-reminder-completed', async (event, { sectionContent, lineStart, completed }) => {
+  try {
+    return notesParser.updateReminderCompletionState(sectionContent, lineStart, completed);
+  } catch (err) {
+    logger.error('Error updating reminder completion state:', err.message);
     throw err;
   }
 });
@@ -5296,6 +5364,7 @@ app.on('ready', () => {
 });
 
 app.on('before-quit', () => {
+  stopReminderAutoRefresh();
   if (clipboardWatcher) {
     try { clipboardWatcher.stop(); } catch (_) {}
     clipboardWatcher = null;

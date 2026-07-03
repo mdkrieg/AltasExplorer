@@ -69,7 +69,7 @@ Philosophy:
 [ ] Do shortcuts not appear in the file grid? I feel like they should, perhaps this was a previous design choice but I am not liking it.
 
 ### ROADMAP:
-[ ] reminders sidebar should refresh slowly on its own, maybe once a minute
+[x] reminders sidebar should refresh slowly on its own, maybe once a minute
 
 [ ] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
 

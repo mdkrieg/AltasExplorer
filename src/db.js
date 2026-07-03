@@ -216,6 +216,7 @@ class DatabaseService {
         section_key TEXT NOT NULL,
         due_datetime TEXT,
         text TEXT NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0,
         line_start INTEGER,
         text_hash TEXT NOT NULL,
         is_cohabitated INTEGER NOT NULL DEFAULT 0,
@@ -283,6 +284,13 @@ class DatabaseService {
       this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_dir_orphans_parent_child ON dir_orphans(parent_dir_id, dir_id);');
     } catch (err) {
       logger.error('Error migrating dir_orphans uniqueness:', err.message);
+    }
+
+    // Runtime migration for existing databases created before reminder_items.completed existed
+    const reminderItemCols = this.db.prepare('PRAGMA table_info(reminder_items)').all();
+    const hasReminderCompletedCol = reminderItemCols.some(col => col.name === 'completed');
+    if (!hasReminderCompletedCol) {
+      this.db.exec('ALTER TABLE reminder_items ADD COLUMN completed INTEGER NOT NULL DEFAULT 0');
     }
 
     const alertRuleCols = this.db.prepare('PRAGMA table_info(alert_rules)').all();
@@ -1899,8 +1907,8 @@ class DatabaseService {
     const del = this.db.prepare('DELETE FROM reminder_items WHERE notes_file_id = ?');
     const ins = this.db.prepare(`
       INSERT INTO reminder_items
-        (notes_file_id, section_key, due_datetime, text, line_start, text_hash, is_cohabitated, linked_todo_line)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (notes_file_id, section_key, due_datetime, text, completed, line_start, text_hash, is_cohabitated, linked_todo_line)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const tx = this.db.transaction((fileId, rows) => {
       del.run(fileId);
@@ -1910,6 +1918,7 @@ class DatabaseService {
           r.section_key,
           r.due_datetime || null,
           r.text,
+          r.completed ? 1 : 0,
           r.line_start ?? null,
           r.text_hash,
           r.is_cohabitated ? 1 : 0,
@@ -1920,16 +1929,18 @@ class DatabaseService {
     tx(notesFileId, items);
   }
 
-  getReminderAggregates() {
+  getReminderAggregates({ includeCompleted = true } = {}) {
+    const whereCompleted = includeCompleted ? '' : 'WHERE ri.completed = 0';
     return this.db.prepare(`
       SELECT
         ri.id, ri.notes_file_id, ri.section_key, ri.due_datetime,
-        ri.text, ri.line_start, ri.text_hash, ri.is_cohabitated, ri.linked_todo_line,
+        ri.text, ri.completed, ri.line_start, ri.text_hash, ri.is_cohabitated, ri.linked_todo_line,
         tnf.notes_path, tnf.dir_id,
         d.dirname AS dirname
       FROM reminder_items ri
       JOIN todo_notes_files tnf ON ri.notes_file_id = tnf.id
       LEFT JOIN dirs d ON tnf.dir_id = d.id
+      ${whereCompleted}
       ORDER BY ri.due_datetime ASC NULLS LAST, ri.line_start ASC
     `).all();
   }

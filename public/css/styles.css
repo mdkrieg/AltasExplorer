@@ -3171,6 +3171,17 @@ hr {
   background: rgba(0,0,0,0.04);
 }
 
+.sidebar-reminder-item input[type="checkbox"] {
+  flex-shrink: 0;
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.sidebar-reminder-item.completed .sidebar-reminder-item-text {
+  text-decoration: line-through;
+  color: #999;
+}
+
 .sidebar-reminder-item-date {
   flex-shrink: 0;
   color: #777;
@@ -3273,6 +3284,20 @@ hr {
   font-size: 11px;
   color: #666;
   font-weight: 600;
+}
+
+.reminder-completed-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #444;
+  cursor: pointer;
+  user-select: none;
+}
+
+.reminder-completed-input {
+  cursor: pointer;
 }
 
 .reminder-text-input {

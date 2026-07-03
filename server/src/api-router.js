@@ -315,15 +315,16 @@ const HANDLERS = {
   parseReminderSection:        async ([sectionContent]) => null,
   normalizeReminderSection:    async ([sectionContent]) => null,
   parseTodoBlocksWithReminders: async ([sectionContent]) => null,
+  updateReminderCompleted:     async ([sectionContent, lineStart, completed]) => null,
   renderMarkdown:              async ([content, basePath]) => null,
 
-  // ── TODO Aggregates (src/todoAggregator.js) ───────────────────────────────
+  // ── TODO Aggregates (src/todoAggregator.js) ──────────────────────
   getTodoAggregates:     async ([opts]) => null,
   refreshTodoAggregate:  async ([notesPath, dirId]) => null,
   refreshTodoAggregates: async () => null,
 
-  // ── Reminder Aggregates (src/reminderAggregator.js) ──────────────────────
-  getReminderAggregates:     async () => null,
+  // ── Reminder Aggregates (src/reminderAggregator.js) ────────────────
+  getReminderAggregates:     async ([opts]) => null,
   refreshReminderAggregate:  async ([notesPath, dirId]) => null,
   refreshReminderAggregates: async () => null,
 

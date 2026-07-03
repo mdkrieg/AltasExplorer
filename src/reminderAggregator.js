@@ -55,6 +55,7 @@ function flattenRemindersToItems(sections) {
         section_key:      sectionKey,
         due_datetime:     reminder.parsedDate || null,
         text:             reminder.text,
+        completed:        !!reminder.completed,
         line_start:       reminder.lineStart,
         text_hash:        sha1(reminder.text + (reminder.parsedDate || '')),
         is_cohabitated:   false,
@@ -72,6 +73,7 @@ function flattenRemindersToItems(sections) {
             section_key:      sectionKey,
             due_datetime:     rem.parsedDate || null,
             text:             rem.text,
+            completed:        !!rem.completed,
             line_start:       rem.lineStart,
             text_hash:        sha1(rem.text + (rem.parsedDate || '')),
             is_cohabitated:   true,
@@ -230,16 +232,20 @@ const BUCKET_ORDER = ['No Date', 'Past Due', 'Today', 'Tomorrow', 'This Week', '
  *     bucketLabel: string,
  *     count: number,
  *     items: [{
- *       id, text, due_datetime, notesPath, dirId, sectionKey,
+ *       id, text, due_datetime, completed, notesPath, dirId, sectionKey,
  *       isCohabitated, linkedTodoLine, lineStart, dirName
  *     }]
  *   }]
  *
  * Items within each bucket are sorted most-imminent first (ascending due_datetime).
  * No Date items are sorted by line_start ascending.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeCompleted=true]
  */
-function getAggregates() {
-  const rows = db.getReminderAggregates();
+function getAggregates(opts = {}) {
+  const includeCompleted = opts.includeCompleted !== false;
+  const rows = db.getReminderAggregates({ includeCompleted });
 
   const bucketMap = new Map();
   for (const label of BUCKET_ORDER) {
@@ -255,6 +261,7 @@ function getAggregates() {
       id:              row.id,
       text:            row.text,
       due_datetime:    row.due_datetime || null,
+      completed:       !!row.completed,
       notesPath:       row.notes_path,
       dirId:           row.dir_id,
       sectionKey:      row.section_key,

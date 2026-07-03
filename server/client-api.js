@@ -220,6 +220,7 @@
     parseReminderSection:         (sectionContent)          => call('parseReminderSection', [sectionContent]),
     normalizeReminderSection:     (sectionContent)          => call('normalizeReminderSection', [sectionContent]),
     parseTodoBlocksWithReminders: (sectionContent)          => call('parseTodoBlocksWithReminders', [sectionContent]),
+    updateReminderCompleted:      (sectionContent, lineStart, completed) => call('updateReminderCompleted', [sectionContent, lineStart, completed]),
     renderMarkdown:               (content, basePath)       => call('renderMarkdown', [content, basePath]),
 
     // ── TODO Aggregates ───────────────────────────────────────────────────────
@@ -229,7 +230,7 @@
     onTodoAggregatesChanged: (callback) => onWS('push:todoAggregatesChanged', callback),
 
     // ── Reminder Aggregates ───────────────────────────────────────────────────
-    getReminderAggregates:     ()                 => call('getReminderAggregates', []),
+    getReminderAggregates:     (opts)             => call('getReminderAggregates', [opts]),
     refreshReminderAggregate:  (notesPath, dirId) => call('refreshReminderAggregate', [notesPath, dirId]),
     refreshReminderAggregates: ()                 => call('refreshReminderAggregates', []),
     onReminderAggregatesChanged: (callback) => onWS('push:reminderAggregatesChanged', callback),

@@ -465,9 +465,12 @@ function promoteTagInSection(sectionContent, tagName) {
 
 // Matches a REMINDER line at the start of a line (after optional leading whitespace):
 //   REMINDER (date): text
+//   REMINDER (date) [x]: text   (completed)
 //   REMINDER: text
-// Groups: [1]=leading whitespace, [2]=raw date string (or undefined), [3]=reminder text
-const _REMINDER_HEADER_RE = /^(\s*)REMINDER\s*(?:\(([^)]*)\))?:(.*)/;
+//   REMINDER [x]: text          (completed, no date)
+// Groups: [1]=leading whitespace, [2]=raw date string (or undefined),
+//         [3]=completed marker '[x]'/'[X]' (or undefined), [4]=reminder text
+const _REMINDER_HEADER_RE = /^(\s*)REMINDER\s*(?:\(([^)]*)\))?\s*(\[x\]|\[X\])?\s*:(.*)/;
 
 /**
  * Parse a forgiving ISO-like date/time string into a normalized form.
@@ -614,7 +617,7 @@ function parseReminderBlocks(sectionContent, userWarn) {
 
     if (reminderMatch) {
       // Warn if other keywords are also present in the remainder of this line
-      const remainder = reminderMatch[3] || '';
+      const remainder = reminderMatch[4] || '';
       if (/\bTODO:|\bCOMMENT:|\bREPLY:/.test(remainder)) {
         warn('REMINDER line contains TODO:/COMMENT:/REPLY: keyword — treated as REMINDER only', {
           line: i, content: line.trim()
@@ -623,9 +626,10 @@ function parseReminderBlocks(sectionContent, userWarn) {
 
       const rawDate   = reminderMatch[2] ? reminderMatch[2].trim() : null;
       const { isoDateTime: parsedDate } = parseReminderDate(rawDate);
+      const completed = !!reminderMatch[3];
       const text      = remainder.trim();
 
-      currentReminder = { text, rawDate, parsedDate, lineStart: i, comments: [] };
+      currentReminder = { text, rawDate, parsedDate, completed, lineStart: i, comments: [] };
       reminders.push(currentReminder);
       lastCtx = 'reminder';
 
@@ -739,7 +743,7 @@ function parseTodoBlocksWithReminders(sectionContent, userWarn) {
 
       } else if (reminderMatch && items.length > 0) {
         // Warn if other primary keywords are also present
-        const remainder = reminderMatch[3] || '';
+        const remainder = reminderMatch[4] || '';
         if (/\bTODO:|\bCOMMENT:|\bREPLY:/.test(remainder)) {
           warn('REMINDER line inside a TODO block contains TODO:/COMMENT:/REPLY: keyword', {
             line: j, content: line.trim()
@@ -747,10 +751,11 @@ function parseTodoBlocksWithReminders(sectionContent, userWarn) {
         }
         const rawDate   = reminderMatch[2] ? reminderMatch[2].trim() : null;
         const { isoDateTime: parsedDate } = parseReminderDate(rawDate);
+        const completed = !!reminderMatch[3];
         const text      = remainder.trim();
         // Attach to the most recent item (overwrite if already set)
         items[items.length - 1].cohabitatingReminder = {
-          text, rawDate, parsedDate, lineStart: j
+          text, rawDate, parsedDate, completed, lineStart: j
         };
         blockEndLine = j;
         lastCtx = 'reminder';
@@ -900,13 +905,15 @@ function normalizeReminderSection(sectionContent, userWarn) {
         // Re-normalize the date inside the parens
         const rawDate = reminderMatch[2] ? reminderMatch[2].trim() : null;
         const { isoDateTime } = parseReminderDate(rawDate);
-        const text    = (reminderMatch[3] || '').trim();
+        const completed = !!reminderMatch[3];
+        const text    = (reminderMatch[4] || '').trim();
         const indent  = reminderMatch[1] || '';
+        const markerPart = completed ? ' [x]' : '';
         let   rebuilt;
         if (isoDateTime) {
-          rebuilt = `${indent}REMINDER (${isoDateTime}):${text ? ' ' + text : ''}`;
+          rebuilt = `${indent}REMINDER (${isoDateTime})${markerPart}:${text ? ' ' + text : ''}`;
         } else {
-          rebuilt = `${indent}REMINDER:${text ? ' ' + text : ''}`;
+          rebuilt = `${indent}REMINDER${markerPart}:${text ? ' ' + text : ''}`;
         }
         itemBuffer.push({ kind: 'reminder', raw: rebuilt });
 
@@ -938,13 +945,15 @@ function normalizeReminderSection(sectionContent, userWarn) {
     if (reminderMatch) {
       const rawDate    = reminderMatch[2] ? reminderMatch[2].trim() : null;
       const { isoDateTime } = parseReminderDate(rawDate);
-      const text       = (reminderMatch[3] || '').trim();
+      const completed  = !!reminderMatch[3];
+      const text       = (reminderMatch[4] || '').trim();
       const baseIndent = reminderMatch[1] || '';
+      const markerPart = completed ? ' [x]' : '';
       let rebuilt;
       if (isoDateTime) {
-        rebuilt = `${baseIndent}REMINDER (${isoDateTime}):${text ? ' ' + text : ''}`;
+        rebuilt = `${baseIndent}REMINDER (${isoDateTime})${markerPart}:${text ? ' ' + text : ''}`;
       } else {
-        rebuilt = `${baseIndent}REMINDER:${text ? ' ' + text : ''}`;
+        rebuilt = `${baseIndent}REMINDER${markerPart}:${text ? ' ' + text : ''}`;
       }
       output.push(rebuilt);
       inReminderBlock   = true;
@@ -983,6 +992,42 @@ function normalizeReminderSection(sectionContent, userWarn) {
   return output.join('\n');
 }
 
+/**
+ * Toggle the completed ('[x]') marker on a single REMINDER line, located by its
+ * absolute line number (as reported in `lineStart` by parseReminderBlocks /
+ * parseTodoBlocksWithReminders, and persisted as reminder_items.line_start).
+ *
+ * A REMINDER is located by line number rather than a flat index because
+ * standalone and cohabitated (inside-a-TODO-item) reminders can be interleaved
+ * arbitrarily within a section — there is no stable single ordering across both
+ * kinds the way there is for TODO bullets.
+ *
+ * No-op (returns sectionContent unchanged) if the line doesn't exist or isn't a
+ * REMINDER line.
+ *
+ * @param {string} sectionContent
+ * @param {number} lineStart
+ * @param {boolean} completed
+ * @returns {string}
+ */
+function updateReminderCompletionState(sectionContent, lineStart, completed) {
+  if (!sectionContent || lineStart == null || lineStart < 0) return sectionContent;
+  const lines = sectionContent.split(/\r?\n/);
+  if (lineStart >= lines.length) return sectionContent;
+
+  const match = lines[lineStart].match(_REMINDER_HEADER_RE);
+  if (!match) return sectionContent;
+
+  const indent  = match[1] || '';
+  const rawDate = match[2] ? match[2].trim() : null;
+  const text    = (match[4] || '').trim();
+  const datePart   = rawDate ? ` (${rawDate})` : '';
+  const markerPart = completed ? ' [x]' : '';
+  lines[lineStart] = `${indent}REMINDER${datePart}${markerPart}:${text ? ' ' + text : ''}`;
+
+  return lines.join('\n');
+}
+
 // Export public API
 const notesParserAPI = {
   parseNotesFileSections,
@@ -1005,7 +1050,8 @@ const notesParserAPI = {
   formatReminderDateTime,
   parseReminderBlocks,
   parseTodoBlocksWithReminders,
-  normalizeReminderSection
+  normalizeReminderSection,
+  updateReminderCompletionState
 };
 
 if (typeof module !== 'undefined' && module.exports) {

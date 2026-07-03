@@ -92,6 +92,8 @@
             title="Expand/collapse">&#9654;</button>
           <span class="sidebar-section-label sidebar-section-label-full">REMINDERS</span>
           <span class="sidebar-section-label sidebar-section-label-short">REM</span>
+          <button class="sidebar-section-action btn-reminders-show-completed" title="Show completed items"
+            aria-pressed="false">&#10003;</button>
           <button class="sidebar-section-action btn-reminders-refresh" title="Refresh Reminders">&#x21BB;</button>
         </div>
         <div id="sidebar-reminders-body" class="sidebar-section-body"></div>
@@ -1844,6 +1846,13 @@
           <label class="reminder-field-label" for="reminder-text-input">Text</label>
           <textarea id="reminder-text-input" class="reminder-text-input" rows="3"
             placeholder="Reminder text…"></textarea>
+        </div>
+        <!-- Completed -->
+        <div class="reminder-field-row reminder-field-row-inline">
+          <label class="reminder-completed-label" for="reminder-completed-input">
+            <input type="checkbox" id="reminder-completed-input" class="reminder-completed-input">
+            Mark complete
+          </label>
         </div>
         <!-- Date + time -->
         <div class="reminder-datetime-section">

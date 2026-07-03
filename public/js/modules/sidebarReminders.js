@@ -5,9 +5,11 @@
  * known notes.txt files, bucketed by due date.
  *
  * Wires:
- *   - refresh button (.btn-reminders-refresh)   → full refresh
- *   - dblclick on item                          → opens reminder modal
- *   - onReminderAggregatesChanged event         → re-render
+ *   - refresh button (.btn-reminders-refresh)           → full refresh
+ *   - show-completed toggle (.btn-reminders-show-completed) → filter
+ *   - checkbox toggle on an item                        → updates notes.txt
+ *   - dblclick on item                                  → opens reminder modal
+ *   - onReminderAggregatesChanged event                 → re-render
  */
 
 import { openReminderModal } from './reminders.js';
@@ -15,6 +17,7 @@ import { onSidebarSectionExpanded } from './sidebar.js';
 import { activePanelId } from '../renderer.js';
 
 let isRendering = false;
+let showCompleted = false;
 let collapsedBuckets = new Set();
 let _lastRenderedBuckets = null;
 
@@ -50,7 +53,7 @@ function renderEmpty(body, message) {
  */
 function renderGroups(body, buckets) {
   if (!buckets || buckets.length === 0) {
-    renderEmpty(body, 'No reminders found.');
+    renderEmpty(body, showCompleted ? 'No reminders found.' : 'No open reminders.');
     return;
   }
 
@@ -75,7 +78,8 @@ function renderGroups(body, buckets) {
       const cohabBadge = item.isCohabitated
         ? `<span class="sidebar-reminder-item-cohab" title="Embedded in a TODO item">⧓</span>`
         : '';
-      html += `<div class="sidebar-reminder-item"
+      const completedClass = item.completed ? ' completed' : '';
+      html += `<div class="sidebar-reminder-item${completedClass}"
           data-reminder-id="${item.id}"
           data-notes-path="${escapeHtml(item.notesPath)}"
           data-dir-id="${item.dirId}"
@@ -86,6 +90,7 @@ function renderGroups(body, buckets) {
           data-linked-todo-line="${item.linkedTodoLine ?? ''}"
           title="${escapeHtml(item.notesPath)}"
           >
+          <input type="checkbox" class="sidebar-reminder-checkbox"${item.completed ? ' checked' : ''}>
           ${dateLabel}
           ${cohabBadge}
           <span class="sidebar-reminder-item-text">${escapeHtml(item.text)}</span>
@@ -104,7 +109,7 @@ async function refreshRender() {
   if (isRendering) return;
   isRendering = true;
   try {
-    const buckets = await window.electronAPI.getReminderAggregates();
+    const buckets = await window.electronAPI.getReminderAggregates({ includeCompleted: showCompleted });
     const serialized = JSON.stringify(buckets);
     if (serialized === _lastRenderedBuckets) return;
     _lastRenderedBuckets = serialized;
@@ -132,6 +137,41 @@ function toggleBucketCollapsed(label) {
   else collapsedBuckets.add(label);
 }
 
+async function handleCheckboxToggle(itemEl, checked) {
+  const notesPath  = itemEl.dataset.notesPath;
+  const sectionKey = itemEl.dataset.sectionKey;
+  const lineStart  = parseInt(itemEl.dataset.lineStart, 10);
+  const dirId      = parseInt(itemEl.dataset.dirId, 10);
+  if (!notesPath || !sectionKey || Number.isNaN(lineStart)) return;
+
+  // Optimistic UI
+  itemEl.classList.toggle('completed', checked);
+
+  try {
+    const rawContent = await window.electronAPI.readFileContent(notesPath);
+    if (!rawContent) throw new Error('notes.txt not found');
+    const sections = await window.electronAPI.invoke('parse-notes-file', rawContent);
+    const sectionContent = sections[sectionKey] || '';
+    if (!sectionContent) throw new Error('section not found: ' + sectionKey);
+
+    const updated = await window.electronAPI.updateReminderCompleted(sectionContent, lineStart, checked);
+    const newFull = await window.electronAPI.invoke('write-notes-section', {
+      existingContent: rawContent,
+      sectionKey,
+      newContent: updated
+    });
+    await window.electronAPI.writeFileContent(notesPath, newFull);
+    await window.electronAPI.refreshReminderAggregate(notesPath, dirId);
+    // refresh-reminder-aggregate broadcasts a changed event which triggers re-render.
+  } catch (err) {
+    console.error('Sidebar Reminders toggle failed:', err);
+    // Revert optimistic UI
+    itemEl.classList.toggle('completed', !checked);
+    const cb = itemEl.querySelector('.sidebar-reminder-checkbox');
+    if (cb) cb.checked = !checked;
+  }
+}
+
 async function handleItemDblClick(itemEl) {
   const notesPath  = itemEl.dataset.notesPath;
   const sectionKey = itemEl.dataset.sectionKey;
@@ -144,6 +184,7 @@ async function handleItemDblClick(itemEl) {
     id:              parseInt(itemEl.dataset.reminderId, 10) || null,
     text:            itemEl.querySelector('.sidebar-reminder-item-text')?.textContent || '',
     due_datetime:    itemEl.dataset.due || null,
+    completed:       itemEl.classList.contains('completed'),
     notesPath,
     sectionKey,
     lineStart:       parseInt(itemEl.dataset.lineStart, 10) || null,
@@ -181,10 +222,22 @@ function wireEvents() {
   });
 
   body.addEventListener('click', (e) => {
+    if (e.target.matches('.sidebar-reminder-checkbox')) {
+      // checkbox handled via 'change' below; don't double-handle
+      return;
+    }
     const itemEl = e.target.closest('.sidebar-reminder-item');
     if (itemEl) {
       void handleItemDblClick(itemEl);
     }
+  });
+
+  body.addEventListener('change', (e) => {
+    const cb = e.target.closest('.sidebar-reminder-checkbox');
+    if (!cb) return;
+    const itemEl = cb.closest('.sidebar-reminder-item');
+    if (!itemEl) return;
+    void handleCheckboxToggle(itemEl, cb.checked);
   });
 
   // Header refresh button
@@ -196,6 +249,18 @@ function wireEvents() {
       refreshBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         void fullRefresh();
+      });
+    }
+    const showCompletedBtn = section.querySelector('.btn-reminders-show-completed');
+    if (showCompletedBtn && !showCompletedBtn.dataset.wired) {
+      showCompletedBtn.dataset.wired = 'true';
+      showCompletedBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showCompleted = !showCompleted;
+        showCompletedBtn.setAttribute('aria-pressed', showCompleted ? 'true' : 'false');
+        showCompletedBtn.classList.toggle('active', showCompleted);
+        _lastRenderedBuckets = null; // force re-render with new filter
+        void refreshRender();
       });
     }
   }

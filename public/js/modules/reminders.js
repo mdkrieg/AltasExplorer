@@ -93,6 +93,7 @@ function addDaysToDate(dateStr, days) {
 
 function getModal()       { return document.getElementById('reminder-modal'); }
 function getTextInput()   { return document.getElementById('reminder-text-input'); }
+function getCompletedInput() { return document.getElementById('reminder-completed-input'); }
 function getDateInput()   { return document.getElementById('reminder-date-input'); }
 function getTimeInput()   { return document.getElementById('reminder-time-input'); }
 function getCohPanel()    { return document.getElementById('reminder-cohabitation-panel'); }
@@ -107,7 +108,9 @@ function renderReminderModal(reminderItem) {
   const textInput = getTextInput();
   const dateInput = getDateInput();
   const timeInput = getTimeInput();
+  const completedInput = getCompletedInput();
   if (textInput) textInput.value = reminderItem.text || '';
+  if (completedInput) completedInput.checked = !!reminderItem.completed;
 
   const { date, time } = splitDateTime(reminderItem.due_datetime || null);
   if (dateInput) dateInput.value = date;
@@ -235,10 +238,11 @@ async function saveReminder() {
   if (!reminderModalContext) return;
   const { notesFilePath, sectionKey, reminderItem, panelId } = reminderModalContext;
 
-  const newText     = getTextInput()?.value?.trim() || '';
-  const newDate     = getDateInput()?.value || '';
-  const newTime     = getTimeInput()?.value || '';
-  const newDateTime = joinDateTime(newDate, newTime);
+  const newText      = getTextInput()?.value?.trim() || '';
+  const newDate      = getDateInput()?.value || '';
+  const newTime      = getTimeInput()?.value || '';
+  const newDateTime  = joinDateTime(newDate, newTime);
+  const newCompleted = !!getCompletedInput()?.checked;
 
   if (!newText) return; // Don't save an empty reminder
 
@@ -256,12 +260,14 @@ async function saveReminder() {
     const comments  = reminderItem.comments || [];
 
     if (lineIdx != null && lineIdx >= 0 && lineIdx < lines.length) {
-      const leadingWs = (lines[lineIdx].match(/^(\s*)/) || ['', ''])[1];
-      const datePart  = newDateTime ? `(${newDateTime})` : '';
-      lines[lineIdx]  = `${leadingWs}REMINDER${datePart}: ${newText}`;
+      const leadingWs   = (lines[lineIdx].match(/^(\s*)/) || ['', ''])[1];
+      const datePart    = newDateTime ? ` (${newDateTime})` : '';
+      const markerPart  = newCompleted ? ' [x]' : '';
+      lines[lineIdx]    = `${leadingWs}REMINDER${datePart}${markerPart}: ${newText}`;
     } else {
-      const datePart = newDateTime ? `(${newDateTime})` : '';
-      lines.push(`REMINDER${datePart}: ${newText}`);
+      const datePart   = newDateTime ? ` (${newDateTime})` : '';
+      const markerPart = newCompleted ? ' [x]' : '';
+      lines.push(`REMINDER${datePart}${markerPart}: ${newText}`);
     }
 
     // 2. Process edits/deletes on existing comments
@@ -594,7 +600,10 @@ export async function openReminderModal(reminderItem, record, panelId) {
         for (const block of (todoBlocks || [])) {
           for (const item of (block.items || [])) {
             if (item.lineStart === reminderItem.linkedTodoLine) {
-              reminderItem = { ...reminderItem, linkedTodoText: item.text };
+              const completed = item.cohabitatingReminder
+                ? !!item.cohabitatingReminder.completed
+                : reminderItem.completed;
+              reminderItem = { ...reminderItem, linkedTodoText: item.text, completed };
               break;
             }
           }
@@ -614,7 +623,12 @@ export async function openReminderModal(reminderItem, record, panelId) {
       // Find matching reminder by line number
       const match = (remBlocks || []).find(r => r.lineStart === reminderItem.lineStart);
       if (match) {
-        reminderWithComments = { ...reminderItem, comments: match.comments || [], linkedTodoText: reminderItem.linkedTodoText };
+        reminderWithComments = {
+          ...reminderItem,
+          comments: match.comments || [],
+          completed: match.completed,
+          linkedTodoText: reminderItem.linkedTodoText
+        };
       }
     }
   } catch (_) { /* non-fatal */ }

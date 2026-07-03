@@ -253,12 +253,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTodoRefreshDone: (callback) => ipcRenderer.on('todo-refresh-done', (_, data) => callback(data)),
 
   // Reminder parsing + aggregation (sidebar REMINDERS section)
-  getReminderAggregates: () => ipcRenderer.invoke('get-reminder-aggregates'),
+  getReminderAggregates: (opts) => ipcRenderer.invoke('get-reminder-aggregates', opts || {}),
   refreshReminderAggregate: (notesPath, dirId) => ipcRenderer.invoke('refresh-reminder-aggregate', { notesPath, dirId }),
   refreshReminderAggregates: () => ipcRenderer.invoke('refresh-reminder-aggregates'),
   parseReminderSection: (sectionContent) => ipcRenderer.invoke('parse-reminder-section', sectionContent),
   normalizeReminderSection: (sectionContent) => ipcRenderer.invoke('normalize-reminder-section', sectionContent),
   parseTodoBlocksWithReminders: (sectionContent) => ipcRenderer.invoke('parse-todo-blocks-with-reminders', sectionContent),
+  updateReminderCompleted: (sectionContent, lineStart, completed) => ipcRenderer.invoke('update-reminder-completed', { sectionContent, lineStart, completed }),
   onReminderAggregatesChanged: (callback) => ipcRenderer.on('reminder-aggregates-changed', () => callback()),
 
   // Markdown rendering via IPC
