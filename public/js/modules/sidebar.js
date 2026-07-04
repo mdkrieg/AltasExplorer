@@ -610,6 +610,18 @@ async function initializeSidebarSections() {
     document.getElementById('sidebar-content')?.focus({ preventScroll: true });
   });
 
+  // Double-clicking the header body (not a button/input) toggles the section's
+  // expanded state.
+  container.addEventListener('dblclick', (e) => {
+    const header = e.target.closest('.sidebar-section-header');
+    if (!header) return;
+    // Ignore double-clicks on interactive children (buttons, inputs, toggles)
+    if (e.target.closest('button, input, [data-section-toggle]')) return;
+
+    const sectionName = header.closest('.sidebar-section')?.dataset?.section;
+    if (sectionName) void toggleSidebarSection(sectionName);
+  });
+
   // Fire expand callbacks for any sections that start expanded (e.g. TODO) so they
   // populate on app start without requiring a user click.
   for (const sectionName of getExpandedSectionsSet()) {

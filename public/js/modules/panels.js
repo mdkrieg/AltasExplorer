@@ -1430,7 +1430,7 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 			<img src="assets/icons/terminal.svg" style="width: 16px; height: 16px; pointer-events: none;">
 		</button>
 		<button id="btn-toolbar-save-${panelId}" class="panel-tb-btn" title="Save">
-			<img src="assets/icons/save.svg" style="width: 16px; height: 16px; pointer-events: none;">
+			<img src="assets/icons/layout.svg" style="width: 16px; height: 16px; pointer-events: none;">
 		</button>
 		<button id="btn-toolbar-autolabel-${panelId}" class="panel-tb-btn" title="Suggested Labels${alCount ? ` (${alCount})` : ''}" style="position:relative;">
 			<img src="assets/icons/tag.svg" style="width: 16px; height: 16px; pointer-events: none;">
