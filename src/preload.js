@@ -314,11 +314,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteLayout: (filePath) => ipcRenderer.invoke('delete-layout', filePath),
   onLoadLayoutFromFile: (callback) => ipcRenderer.on('load-layout-from-file', (event, filePath) => callback(filePath)),
 
-  // Dir grid layout (per-directory column/sort state)
-  saveDirGridLayout: (dirname, columns, sortData) => ipcRenderer.invoke('save-dir-grid-layout', { dirname, columns, sortData }),
-  getDirGridLayout: (dirname) => ipcRenderer.invoke('get-dir-grid-layout', dirname),
-  setCategoryDefaultGridLayout: (name, columns, sortData) => ipcRenderer.invoke('set-category-default-grid-layout', { name, columns, sortData }),
-  getCategoryDefaultGridLayout: (name) => ipcRenderer.invoke('get-category-default-grid-layout', name),
+  // Grid layout inheritance layers (global -> category -> local)
+  getGridLayoutLayers: (dirPath, categoryName) => ipcRenderer.invoke('get-grid-layout-layers', { dirPath, categoryName }),
+  setGridLayoutLayer: (scope, key, layer) => ipcRenderer.invoke('set-grid-layout-layer', { scope, key, layer }),
 
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),

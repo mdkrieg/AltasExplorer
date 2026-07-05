@@ -25,6 +25,7 @@ import { attachDragDropForPanel, attachDragDropForGallery } from './dragdrop.js'
 import * as clipboard from './clipboard.js';
 import { w2grid, w2ui, w2utils, w2confirm, w2alert, w2field, w2tooltip, w2popup } from './vendor/w2ui.es6.min.js';
 import * as autoLabels from './auto-labels.js';
+import * as gridLayoutSettings from './gridLayoutSettings.js';
 import { getPathSuggestions, scoreCandidate } from './path-autocomplete.js';
 import {
 	panelState,
@@ -3917,6 +3918,12 @@ export function hideCreateTagModal() {
 }
 
 export function handleTransientEscape() {
+	// Grid Layout Settings modal captures Escape while open
+	// (closes an open cell-editor popover first, then the modal itself)
+	if (gridLayoutSettings.isOpen()) {
+		return gridLayoutSettings.handleEscape();
+	}
+
 	// Exit column reorder mode first if active on any panel
 	for (let panelId = 1; panelId <= 4; panelId++) {
 		if (panelState[panelId]?.columnReorderMode) {
@@ -5821,29 +5828,32 @@ function setColumnReorderMode(panelId, active) {
 
 /**
  * Apply the "Default" column layout for a panel:
- * If a per-directory layout was previously saved with "Remember grid layout", apply it.
- * Otherwise, reset all columns to factory visibility and order.
+ * If the grid-layout inheritance layers (global -> category -> local) resolve
+ * to a non-empty effective layout, apply it. Otherwise, reset all columns to
+ * factory visibility and order.
  */
 async function applyDefaultColumnLayout(panelId) {
 	const state = panelState[panelId];
 	const grid = state?.w2uiGrid;
 	if (!grid || !state.currentPath) return;
 
-	const result = await window.electronAPI.getDirGridLayout(state.currentPath);
-	if (result?.success && result.layout?.columns?.length > 0) {
-		// A saved layout exists — apply it
-		const currentFields = new Set(grid.columns.map(c => c.field));
-		const validColumns = result.layout.columns.filter(c => currentFields.has(c.field));
-		if (validColumns.length > 0) {
-			panelState[panelId].columnOverrides = validColumns;
-			applyColumnOverrides(panelId);
+	let eff = null;
+	try {
+		const res = await window.electronAPI.getGridLayoutLayers(
+			state.currentPath, state.currentCategory?.name || null
+		);
+		if (res?.success) {
+			eff = gridLayoutSettings.resolveEffectiveLayout(
+				res.layers.global, res.layers.category, res.layers.local
+			);
 		}
-		if (result.layout.sortData?.length > 0) {
-			grid.sortData = result.layout.sortData;
-			grid.localSort();
-			repositionMetaDirs(grid, panelId);
-			grid.refresh();
-		}
+	} catch (err) {
+		console.warn('[grid-layout] failed to load layout layers:', err);
+	}
+
+	if (eff && (Object.keys(eff.columns).length > 0 || eff.order !== undefined || eff.sortData !== undefined)) {
+		// A persisted layout exists across the layers — apply it
+		applyResolvedLayout(panelId, eff);
 	} else {
 		// No saved layout — reset to factory defaults
 		const FACTORY_ORDER = ['icon', 'filename', 'type', 'size', 'dateModified', 'modified',
@@ -9735,6 +9745,49 @@ function applyColumnOverrides(panelId) {
 	delete panelState[panelId].columnOverrides;
 }
 
+/**
+ * Apply an effective layout resolved from the Global -> Category -> Local
+ * inheritance layers (see gridLayoutSettings.resolveEffectiveLayout).
+ * Units the layers don't set are left untouched; sortData [] explicitly
+ * clears the sort, while an undefined sortData inherits the grid's state.
+ */
+function applyResolvedLayout(panelId, eff) {
+	const grid = panelState[panelId]?.w2uiGrid;
+	if (!grid || !eff) return;
+
+	for (const [field, unit] of Object.entries(eff.columns || {})) {
+		const col = grid.columns.find(c => c.field === field);
+		if (!col) continue; // stale attr_ column no longer in this grid
+		col.size = unit.size;
+		col.hidden = !!unit.hidden;
+		if (unit.sizeConfig) col.sizeConfig = { ...unit.sizeConfig };
+	}
+
+	if (Array.isArray(eff.order)) {
+		const fieldOrder = eff.order;
+		grid.columns.sort((a, b) => {
+			const ia = fieldOrder.indexOf(a.field);
+			const ib = fieldOrder.indexOf(b.field);
+			if (ia === -1 && ib === -1) return 0;
+			if (ia === -1) return 1;
+			if (ib === -1) return -1;
+			return ia - ib;
+		});
+	}
+
+	applyColumnSizeConfigs(panelId);
+	grid.refresh();
+
+	if (eff.sortData !== undefined) {
+		grid.sortData = (eff.sortData || []).map(s => ({ ...s }));
+		if (grid.sortData.length > 0) {
+			grid.localSort();
+			repositionMetaDirs(grid, panelId);
+		}
+		grid.refresh();
+	}
+}
+
 export function serializeLayoutState(description = null) {
 	const panels = {};
 	for (let panelId = 1; panelId <= 4; panelId++) {
@@ -9884,21 +9937,15 @@ function showSaveButtonMenu(panelId, anchorEl) {
 	closeSaveMenu();
 
 	const state = panelState[panelId];
-	const categoryName = state?.currentCategory?.name || null;
+	const gridAvailable = !!(state?.currentPath && state?.w2uiGrid);
 
 	const rect = anchorEl.getBoundingClientRect();
 	const menu = document.createElement('div');
 	menu.className = 'tb-save-menu';
-	const categoryItemHtml = categoryName
-		? `<button class="tb-save-menu-item" data-action="save-category-default">
-				<div class="tb-save-menu-label">Set as default for category (${utils.escapeHtml(categoryName)})</div>
-			</button>`
-		: '';
 	menu.innerHTML = `
-		<button class="tb-save-menu-item" data-action="remember-grid">
-			<div class="tb-save-menu-label">Remember grid layout</div>
+		<button class="tb-save-menu-item" data-action="grid-layout-settings"${gridAvailable ? '' : ' disabled'}>
+			<div class="tb-save-menu-label">Grid layout settings…</div>
 		</button>
-		${categoryItemHtml}
 		<button class="tb-save-menu-item" data-action="save-layout-here">
 			<div class="tb-save-menu-label">Save window layout here</div>
 		</button>
@@ -9913,18 +9960,10 @@ function showSaveButtonMenu(panelId, anchorEl) {
 	document.body.appendChild(menu);
 	activeSaveMenu = menu;
 
-	menu.querySelector('[data-action="remember-grid"]').addEventListener('click', () => {
+	menu.querySelector('[data-action="grid-layout-settings"]').addEventListener('click', () => {
 		closeSaveMenu();
-		rememberGridLayout(panelId);
+		openGridLayoutSettingsModal(panelId);
 	});
-
-	const catItemBtn = menu.querySelector('[data-action="save-category-default"]');
-	if (catItemBtn) {
-		catItemBtn.addEventListener('click', () => {
-			closeSaveMenu();
-			saveLayoutAsCategoryDefault(panelId);
-		});
-	}
 
 	menu.querySelector('[data-action="save-layout-here"]').addEventListener('click', () => {
 		closeSaveMenu();
@@ -9942,45 +9981,31 @@ function showSaveButtonMenu(panelId, anchorEl) {
 	}, 0);
 }
 
-async function rememberGridLayout(panelId) {
+/**
+ * Open the Grid Layout Settings matrix modal for a panel. All grid access is
+ * passed through a context object so gridLayoutSettings.js never imports this
+ * module (avoids a circular import).
+ */
+export function openGridLayoutSettingsModal(panelId) {
 	const state = panelState[panelId];
-	if (!state || !state.currentPath) {
-		w2alert('No directory is open in this panel.');
-		return;
+	const grid = state?.w2uiGrid;
+	if (!state?.currentPath || !grid) return;
+
+	const labels = {};
+	for (const col of grid.columns) {
+		labels[col.field] = col.headerLabel || col.field;
 	}
-	const grid = state.w2uiGrid;
-	if (!grid) return;
 
-	const columns = serializeGridColumns(grid, state);
-	const sortData = (grid.sortData || []).map(s => ({ field: s.field, direction: s.direction }));
-
-	const result = await window.electronAPI.saveDirGridLayout(state.currentPath, columns, sortData);
-	if (result.success) {
-		w2alert('Grid layout remembered for this directory.');
-	} else {
-		w2alert('Failed to save grid layout: ' + (result.error || 'Unknown error'));
-	}
-}
-
-async function saveLayoutAsCategoryDefault(panelId) {
-	const state = panelState[panelId];
-	if (!state || !state.currentCategory) {
-		w2alert('No category is assigned to this panel.');
-		return;
-	}
-	const grid = state.w2uiGrid;
-	if (!grid) return;
-
-	const categoryName = state.currentCategory.name;
-	const columns = serializeGridColumns(grid, state);
-	const sortData = (grid.sortData || []).map(s => ({ field: s.field, direction: s.direction }));
-
-	const result = await window.electronAPI.setCategoryDefaultGridLayout(categoryName, columns, sortData);
-	if (result && result.success) {
-		w2alert(`Default grid layout saved for category "${categoryName}".`);
-	} else {
-		w2alert('Failed to save category default: ' + ((result && result.error) || 'Unknown error'));
-	}
+	gridLayoutSettings.open({
+		panelId,
+		dirPath: state.currentPath,
+		categoryName: state.currentCategory?.name || null,
+		labels,
+		serializeColumns: () => serializeGridColumns(grid, state),
+		liveSortData: () => (grid.sortData || []).map(s => ({ field: s.field, direction: s.direction })),
+		applyResolvedLayout: (eff) => applyResolvedLayout(panelId, eff),
+		snapshotSession: () => snapshotSessionDirLayout(panelId)
+	});
 }
 
 /**
@@ -10149,46 +10174,25 @@ function applySessionDirLayout(panelId, layout) {
 }
 
 export async function applyDirGridLayoutIfExists(panelId, dirPath) {
-	const result = await window.electronAPI.getDirGridLayout(dirPath);
-	let layout = (result && result.success) ? result.layout : null;
+	const state = panelState[panelId];
+	if (!state?.w2uiGrid) return;
 
-	// Fall back to category default if no per-directory layout exists
-	if (!layout) {
-		const state = panelState[panelId];
-		const categoryName = state?.currentCategory?.name;
-		if (categoryName) {
-			try {
-				const catRes = await window.electronAPI.getCategoryDefaultGridLayout(categoryName);
-				if (catRes && catRes.success && catRes.layout) {
-					layout = catRes.layout;
-				}
-			} catch (err) {
-				console.warn('[grid-layout] failed to load category default:', err);
-			}
-		}
+	let res;
+	try {
+		res = await window.electronAPI.getGridLayoutLayers(dirPath, state.currentCategory?.name || null);
+	} catch (err) {
+		console.warn('[grid-layout] failed to load layout layers:', err);
+		return;
 	}
+	if (!res?.success) return;
 
-	if (!layout) return;
-
-	const { columns, sortData } = layout;
-	const grid = panelState[panelId]?.w2uiGrid;
-	if (!grid) return;
-
-	// Validate attribute columns — remove any that no longer exist in the current grid
-	const currentFields = new Set(grid.columns.map(c => c.field));
-	const validColumns = (columns || []).filter(col => currentFields.has(col.field));
-
-	if (validColumns.length > 0) {
-		panelState[panelId].columnOverrides = validColumns;
-		applyColumnOverrides(panelId);
+	const eff = gridLayoutSettings.resolveEffectiveLayout(
+		res.layers.global, res.layers.category, res.layers.local
+	);
+	if (Object.keys(eff.columns).length === 0 && eff.order === undefined && eff.sortData === undefined) {
+		return; // nothing set at any layer
 	}
-
-	if (sortData && sortData.length > 0) {
-		grid.sortData = sortData;
-		grid.localSort();
-		repositionMetaDirs(grid, panelId);
-		grid.refresh();
-	}
+	applyResolvedLayout(panelId, eff);
 }
 
 // ---------- .aly open-confirm modal ----------

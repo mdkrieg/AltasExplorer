@@ -281,27 +281,25 @@ const HANDLERS = {
     try { db.updateDirectoryLabels(dirPath, labels); return { success: true }; } catch (err) { return { success: false, error: err.message }; }
   },
 
-  // ── Dir Grid Layout (src/db.js) ───────────────────────────────────────────
-  saveDirGridLayout: async ([dirname, columns, sortData]) => null,
-  getDirGridLayout: async ([dirname]) => {
+  // ── Grid Layout Layers (src/gridLayoutStore.js, src/db.js, src/categories.js) ──
+  getGridLayoutLayers: async ([dirPath, categoryName]) => {
     const db = require('../../src/db');
-    try {
-      const layout = db.getDirGridLayout(dirname);
-      return { success: true, layout };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  },
-  setCategoryDefaultGridLayout: async ([name, columns, sortData]) => null,
-  getCategoryDefaultGridLayout: async ([name]) => {
     const cats = require('../../src/categories');
+    const gridLayoutStore = require('../../src/gridLayoutStore');
     try {
-      const layout = cats.getCategoryDefaultGridLayout(name);
-      return { success: true, layout };
+      return {
+        success: true,
+        layers: {
+          global: gridLayoutStore.getGlobalGridLayout(),
+          category: categoryName ? cats.getCategoryDefaultGridLayout(categoryName) : null,
+          local: dirPath ? db.getDirGridLayout(dirPath) : null
+        }
+      };
     } catch (err) {
       return { success: false, error: err.message };
     }
   },
+  setGridLayoutLayer: async ([scope, key, layer]) => null,
 
   // ── Notes File I/O (fs, path-jailed) ─────────────────────────────────────
   readFileContent:  async ([filePath]) => null,

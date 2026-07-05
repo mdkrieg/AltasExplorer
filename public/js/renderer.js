@@ -38,6 +38,7 @@ import * as sidebarReminders from './modules/sidebarReminders.js';
 import * as terminal from './modules/terminal.js';
 import { openDragTrayForActivePanel } from './modules/dragdrop.js';
 import * as clipboard from './modules/clipboard.js';
+import * as gridLayoutSettings from './modules/gridLayoutSettings.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, attachFvWidgetHeaderListeners, openNotesViewerForPath, cancelFileViewerEdit, getFileViewerHost } from './modules/notes.js';
@@ -1145,6 +1146,10 @@ function attachEventListeners() {
     // Only handle recognized hotkeys
     if (!actionId) return;
 
+    // Modals capture keyboard input — block global action hotkeys while the
+    // Grid Layout Settings modal is open (Escape is handled above)
+    if (gridLayoutSettings.isOpen()) return;
+
     switch (actionId) {
       case 'navigate_back':
         event.preventDefault();
@@ -1382,6 +1387,9 @@ function attachEventListeners() {
   $('#rename-item-modal').click(function (e) {
     if (e.target === this) closeRenameModal();
   });
+
+  // Grid Layout Settings modal (buttons, backdrop, capture, matrix cells)
+  gridLayoutSettings.initUI();
 
   // Save Layout Global modal
   $('#btn-save-layout-global-close, #btn-save-layout-global-cancel').click(function () {

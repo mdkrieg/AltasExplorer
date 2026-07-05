@@ -348,6 +348,302 @@ button:active {
 .tb-save-menu-item:hover .tb-save-menu-desc {
   color: #6d9bf5;
 }
+.tb-save-menu-item:disabled {
+  color: #aaa;
+  cursor: default;
+}
+.tb-save-menu-item:disabled:hover {
+  background: none;
+  color: #aaa;
+}
+
+/* Grid Layout Settings modal (Global -> Category -> Local inheritance matrix) */
+.gls-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px 24px;
+  border-radius: 8px;
+  width: 780px;
+  max-width: 95vw;
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+.gls-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.gls-header h2 {
+  margin: 0;
+  flex: 1;
+  font-size: 16px;
+}
+.gls-header button,
+.gls-footer button,
+.gls-capture-row button {
+  padding: 6px 12px;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.gls-capture-row button:disabled {
+  color: #aaa;
+  cursor: default;
+}
+.gls-footer button.gls-primary {
+  background: #1976d2;
+  color: white;
+  border: none;
+  font-weight: bold;
+  padding: 8px 18px;
+}
+.gls-context {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 12px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+.gls-context .gls-path {
+  color: #555;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gls-context .gls-category {
+  color: #888;
+  flex-shrink: 0;
+}
+.gls-divergence {
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 4px;
+  padding: 6px 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #795548;
+}
+.gls-capture-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #555;
+  margin-bottom: 10px;
+}
+.gls-table-wrap {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.gls-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.gls-matrix th {
+  position: sticky;
+  top: 0;
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 7px 10px;
+  text-align: left;
+  font-weight: 600;
+  color: #444;
+  white-space: nowrap;
+}
+.gls-matrix td {
+  border-bottom: 1px solid #f0f0f0;
+  padding: 6px 10px;
+  vertical-align: middle;
+}
+.gls-row-label {
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+}
+.gls-row-special {
+  font-style: italic;
+}
+.gls-cell.gls-editable {
+  cursor: pointer;
+}
+.gls-cell.gls-editable:hover {
+  background: #f0f5ff;
+}
+.gls-cell.gls-na {
+  color: #ccc;
+}
+.gls-unset {
+  color: #bbb;
+}
+.gls-tag {
+  display: inline-block;
+  background: #eee;
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 11px;
+  color: #666;
+}
+.gls-tag.gls-stale {
+  background: #fff3e0;
+  color: #b36b00;
+}
+.gls-mode {
+  display: inline-block;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+  color: #888;
+}
+.gls-chip {
+  display: inline-block;
+  min-width: 16px;
+  text-align: center;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 1px 3px;
+  color: white;
+}
+.gls-chip-global { background: #7e57c2; }
+.gls-chip-category { background: #26a69a; }
+.gls-chip-local { background: #1976d2; }
+.gls-clear-layer {
+  background: none;
+  border: none;
+  color: #bbb;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 3px;
+}
+.gls-clear-layer:hover {
+  color: #d32f2f;
+}
+.gls-loading {
+  color: #999;
+  text-align: center;
+  padding: 20px;
+}
+.gls-footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.gls-error {
+  flex: 1;
+  color: #d32f2f;
+  font-size: 12px;
+}
+.gls-dirty-hint {
+  color: #b36b00;
+  font-size: 12px;
+}
+#btn-gls-cancel.gls-discard-armed {
+  background: #ffebee;
+  border-color: #ef9a9a;
+  color: #c62828;
+  font-weight: bold;
+}
+
+/* Cell-editor popover (w2ui overlay). The gls-editor-overlay class is attached
+   to the overlay body via w2tooltip's `class` option; this out-specifies
+   w2ui's `.w2ui-overlay .w2ui-overlay-body` default (dark bg, white text,
+   text-shadow) without touching w2ui.css. Arrow inherits bg/border. */
+.w2ui-overlay .w2ui-overlay-body.gls-editor-overlay {
+  background-color: #eee;
+  color: #333;
+  text-shadow: none;
+  border-color: #bbb;
+}
+
+.gls-editor {
+  padding: 10px 12px;
+  min-width: 240px;
+}
+.gls-editor-title {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 8px;
+  color: #333;
+}
+.gls-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  font-size: 12px;
+}
+.gls-editor-row label {
+  color: #555;
+}
+.gls-editor-row input[type="number"] {
+  width: 56px;
+  padding: 3px 5px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
+.gls-editor-row select {
+  padding: 3px 5px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
+.gls-editor input.gls-input-invalid {
+  border-color: #d32f2f;
+  outline: none;
+}
+.gls-editor-error {
+  color: #d32f2f;
+  font-size: 11px;
+  min-height: 14px;
+  margin-bottom: 4px;
+}
+.gls-editor-note {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 6px;
+  max-width: 300px;
+}
+.gls-editor-note.gls-editor-hint {
+  color: #999;
+  font-style: italic;
+}
+.gls-editor-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.gls-editor-actions button {
+  padding: 4px 10px;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.gls-editor-actions button.gls-primary {
+  background: #1976d2;
+  color: white;
+  border: none;
+  font-weight: bold;
+}
+.gls-editor-actions button:disabled {
+  color: #aaa;
+  cursor: default;
+}
 
 /* Gallery view container */
 .panel-item > .panel-gallery,

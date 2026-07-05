@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const logger = require('./logger');
 const db = require('./db');
+const gridLayoutStore = require('./gridLayoutStore');
 
 const CATEGORIES_DIR = path.join(os.homedir(), '.atlas-explorer', 'categories');
 const SETTINGS_PATH = path.join(os.homedir(), '.atlas-explorer', 'settings.json');
@@ -290,18 +291,16 @@ class CategoryService {
    * JSON file so directories using this category can fall back to it when no
    * per-directory layout exists.
    */
-  setCategoryDefaultGridLayout(name, columns, sortData) {
+  setCategoryDefaultGridLayout(name, layer) {
     const existing = this.getCategory(name);
     if (!existing) {
       throw new Error(`Category "${name}" not found`);
     }
-    if (columns == null) {
+    const normalized = gridLayoutStore.normalizeLayer(layer);
+    if (gridLayoutStore.isEmptyLayer(normalized)) {
       delete existing.defaultGridLayout;
     } else {
-      existing.defaultGridLayout = {
-        columns: Array.isArray(columns) ? columns : [],
-        sortData: Array.isArray(sortData) ? sortData : []
-      };
+      existing.defaultGridLayout = normalized;
     }
     const filePath = path.join(CATEGORIES_DIR, `${name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
@@ -311,10 +310,11 @@ class CategoryService {
 
   /**
    * Get the default grid layout previously saved for a category, or null.
+   * Always returns the sparse v2 layer shape (legacy snapshots are normalized).
    */
   getCategoryDefaultGridLayout(name) {
     const existing = this.getCategory(name);
-    return existing?.defaultGridLayout || null;
+    return gridLayoutStore.normalizeLayer(existing?.defaultGridLayout) || null;
   }
 
   /**

@@ -1544,6 +1544,55 @@
     </div>
   </div>
 
+  <!-- Grid Layout Settings Modal (Global -> Category -> Local inheritance matrix) -->
+  <div id="grid-layout-settings-modal"
+    style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001;">
+    <div class="gls-panel">
+      <div class="gls-header">
+        <img src="assets/icons/layout.svg" style="width: 18px; height: 18px; margin-right: 8px; opacity: 0.7;">
+        <h2>Grid Layout Settings</h2>
+        <button id="btn-gls-close">Close</button>
+      </div>
+      <div class="gls-context">
+        <span id="gls-dir-path" class="gls-path"></span>
+        <span id="gls-category-name" class="gls-category"></span>
+      </div>
+      <div id="gls-divergence" class="gls-divergence" style="display: none;">
+        The current grid has session-only changes that differ from the saved layers below. Use a capture button to
+        persist them.
+      </div>
+      <div class="gls-capture-row">
+        <span>Capture current grid into:</span>
+        <button data-gls-capture="global">Global</button>
+        <button data-gls-capture="category" id="btn-gls-capture-category">Category</button>
+        <button data-gls-capture="local">Local</button>
+      </div>
+      <div class="gls-table-wrap">
+        <table class="gls-matrix">
+          <thead>
+            <tr>
+              <th class="gls-col-setting">Setting</th>
+              <th>Global <button class="gls-clear-layer" data-gls-clear-layer="global"
+                  title="Clear all Global settings">✕</button></th>
+              <th><span id="gls-category-header">Category</span> <button class="gls-clear-layer"
+                  data-gls-clear-layer="category" title="Clear all Category settings">✕</button></th>
+              <th>Local <button class="gls-clear-layer" data-gls-clear-layer="local"
+                  title="Clear all Local settings">✕</button></th>
+              <th>Effective</th>
+            </tr>
+          </thead>
+          <tbody id="gls-matrix-body"></tbody>
+        </table>
+      </div>
+      <div class="gls-footer">
+        <span id="gls-error" class="gls-error"></span>
+        <span id="gls-dirty-hint" class="gls-dirty-hint" style="display: none;">Unsaved changes</span>
+        <button id="btn-gls-cancel">Cancel</button>
+        <button id="btn-gls-save" class="gls-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ALY Layout Open Confirm Modal -->
   <div id="aly-open-modal"
     style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 1002;">

@@ -20,6 +20,7 @@ const reminderAggregator = require('../src/reminderAggregator');
 const customActions = require('../src/customActions');
 const scanner = require('../src/scanner');
 const layouts = require('../src/layouts');
+const gridLayoutStore = require('../src/gridLayoutStore');
 const autoLabels = require('../src/autoLabels');
 const atlasJson = require('../src/atlasJson');
 const { execFile } = require('child_process');
@@ -4083,42 +4084,43 @@ ipcMain.handle('pick-file', async (event, { filters, defaultPath } = {}) => {
 // Grid Layout (per-directory column/sort state)
 // ============================================
 
-ipcMain.handle('save-dir-grid-layout', (event, { dirname, columns, sortData }) => {
+// Returns all three inheritance layers (each a sparse v2 layer or null).
+// Resolution to an effective layout happens renderer-side so the settings
+// modal can show and edit the raw layers directly.
+ipcMain.handle('get-grid-layout-layers', (event, { dirPath, categoryName }) => {
   try {
-    db.saveDirGridLayout(dirname, columns, sortData);
+    return {
+      success: true,
+      layers: {
+        global: gridLayoutStore.getGlobalGridLayout(),
+        category: categoryName ? categories.getCategoryDefaultGridLayout(categoryName) : null,
+        local: dirPath ? db.getDirGridLayout(dirPath) : null
+      }
+    };
+  } catch (err) {
+    logger.error('Error getting grid layout layers:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// scope: 'global' (key ignored) | 'category' (key = category name) | 'local'
+// (key = directory path). A null/empty layer deletes the stored layer.
+ipcMain.handle('set-grid-layout-layer', (event, { scope, key, layer }) => {
+  try {
+    const empty = gridLayoutStore.isEmptyLayer(gridLayoutStore.normalizeLayer(layer));
+    if (scope === 'global') {
+      gridLayoutStore.setGlobalGridLayout(layer);
+    } else if (scope === 'category') {
+      categories.setCategoryDefaultGridLayout(key, empty ? null : layer);
+    } else if (scope === 'local') {
+      if (empty) db.deleteDirGridLayout(key);
+      else db.saveDirGridLayout(key, gridLayoutStore.normalizeLayer(layer));
+    } else {
+      throw new Error(`Unknown grid layout scope "${scope}"`);
+    }
     return { success: true };
   } catch (err) {
-    logger.error('Error saving dir grid layout:', err.message);
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle('get-dir-grid-layout', (event, dirname) => {
-  try {
-    const layout = db.getDirGridLayout(dirname);
-    return { success: true, layout };
-  } catch (err) {
-    logger.error('Error getting dir grid layout:', err.message);
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle('set-category-default-grid-layout', (event, { name, columns, sortData }) => {
-  try {
-    const layout = categories.setCategoryDefaultGridLayout(name, columns, sortData);
-    return { success: true, layout };
-  } catch (err) {
-    logger.error('Error setting category default grid layout:', err.message);
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle('get-category-default-grid-layout', (event, name) => {
-  try {
-    const layout = categories.getCategoryDefaultGridLayout(name);
-    return { success: true, layout };
-  } catch (err) {
-    logger.error('Error getting category default grid layout:', err.message);
+    logger.error('Error setting grid layout layer:', err.message);
     return { success: false, error: err.message };
   }
 });

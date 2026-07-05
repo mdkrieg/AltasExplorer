@@ -202,11 +202,9 @@
     getDirectoryLabels:    (dirPath)          => call('getDirectoryLabels', [dirPath]),
     saveDirectoryLabels:   (dirPath, labels)  => call('saveDirectoryLabels', [dirPath, labels]),
 
-    // ── Dir Grid Layout ───────────────────────────────────────────────────────
-    saveDirGridLayout: (dirname, columns, sortData) => call('saveDirGridLayout', [dirname, columns, sortData]),
-    getDirGridLayout:  (dirname)                    => call('getDirGridLayout', [dirname]),
-    setCategoryDefaultGridLayout: (name, columns, sortData) => call('setCategoryDefaultGridLayout', [name, columns, sortData]),
-    getCategoryDefaultGridLayout: (name)                    => call('getCategoryDefaultGridLayout', [name]),
+    // ── Grid Layout Layers (global -> category -> local) ─────────────────────
+    getGridLayoutLayers: (dirPath, categoryName) => call('getGridLayoutLayers', [dirPath, categoryName]),
+    setGridLayoutLayer:  (scope, key, layer)     => call('setGridLayoutLayer', [scope, key, layer]),
 
     // ── Notes File I/O ────────────────────────────────────────────────────────
     readFileContent:  (filePath)          => call('readFileContent', [filePath]),

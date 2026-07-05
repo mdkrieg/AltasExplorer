@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const logger = require('./logger');
+const { normalizeLayer } = require('./gridLayoutStore');
 
 const DB_PATH = path.join(os.homedir(), '.atlas-explorer', 'data.sqlite');
 const CONFIG_DIR = path.join(os.homedir(), '.atlas-explorer');
@@ -1961,7 +1962,9 @@ class DatabaseService {
   // Grid Layout (per-directory column/sort state)
   // ============================================
 
-  saveDirGridLayout(dirname, columns, sortData) {
+  // Stores a sparse v2 layer object (see gridLayoutStore.normalizeLayer) in the
+  // `columns` column. `sort_data` is kept only to satisfy NOT NULL on legacy rows.
+  saveDirGridLayout(dirname, layer) {
     const now = Math.floor(Date.now() / 1000);
     this.db.prepare(
       `INSERT INTO dir_grid_layouts (dirname, columns, sort_data, saved_at)
@@ -1970,7 +1973,7 @@ class DatabaseService {
          columns = excluded.columns,
          sort_data = excluded.sort_data,
          saved_at = excluded.saved_at`
-    ).run(dirname, JSON.stringify(columns), JSON.stringify(sortData), now);
+    ).run(dirname, JSON.stringify(layer), '[]', now);
   }
 
   getDirGridLayout(dirname) {
@@ -1978,10 +1981,17 @@ class DatabaseService {
       'SELECT columns, sort_data FROM dir_grid_layouts WHERE dirname = ?'
     ).get(dirname);
     if (!row) return null;
-    return {
-      columns: JSON.parse(row.columns),
-      sortData: JSON.parse(row.sort_data)
-    };
+    try {
+      const parsed = JSON.parse(row.columns);
+      // Legacy rows store a bare columns array with sort in sort_data
+      if (Array.isArray(parsed)) {
+        return normalizeLayer({ columns: parsed, sortData: JSON.parse(row.sort_data) });
+      }
+      return normalizeLayer(parsed);
+    } catch (err) {
+      logger.error('Error parsing dir grid layout row:', err.message);
+      return null;
+    }
   }
 
   deleteDirGridLayout(dirname) {
