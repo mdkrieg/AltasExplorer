@@ -1389,6 +1389,7 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 	const container = getPanelToolbarElement(panelId);
 	if (!container) return;
 	const isDeepSearch = !!(panelState[panelId]?.deepSearchQuery);
+	const isLiveContentSearch = isDeepSearch && panelState[panelId]?.deepSearchContentMode === 'live';
 	const showDepth = mode !== 'gallery' && !isDeepSearch;
 	const depth = panelState[panelId]?.depth || 0;
 	const searchValue = panelState[panelId]?.toolbarSearch || '';
@@ -1412,6 +1413,12 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 		</button>
 		<span class="panel-tb-break"></span>
 		<input type="text" class="panel-tb-search" placeholder="Search filename" value="${utils.escapeHtml(searchValue)}">
+		${isDeepSearch ? `
+			<button id="btn-content-search-${panelId}" class="panel-tb-btn panel-tb-virtual-btn${isLiveContentSearch ? ' is-active' : ''}" data-action="toggle-content-search"
+				title="${isLiveContentSearch ? 'Searching file contents (extracting uncached files on the fly)' : 'Also search file contents — extracts text from uncached files now (kept in memory for this session only)'}">
+				≡ Contents
+			</button>
+		` : ''}
 		${showDepth ? `
 			<span class="panel-tb-break"></span>
 			<div class="panel-tb-depth">
@@ -1440,6 +1447,7 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 		<div class="panel-tb-scan">
 			<button id="btn-stop-scan-${panelId}" class="panel-tb-stop-scan" style="display:none;" title="Stop the current scan">&#9632; Stop</button>
 			<span id="scan-status-${panelId}" class="panel-tb-scan-status" style="display:none;">Scanning…</span>
+			<span id="content-status-${panelId}" class="panel-tb-scan-status" style="display:none;" title="Extracting text for deep content search"></span>
 		</div>
 	`;
 	container.style.display = '';
@@ -1492,6 +1500,16 @@ function attachPanelToolbarEventListeners(panelId) {
 		navigateToDirectory(buildNavUri(state.currentBasePath, newParams), panelId);
 	});
 
+	// Promote/demote the current deep search to/from a live content search.
+	$tb.find('[data-action="toggle-content-search"]').off('click').on('click', function () {
+		setActivePanelId(panelId);
+		const state = panelState[panelId];
+		if (!state?.currentBasePath || !state.deepSearchQuery) return;
+		const isLive = state.deepSearchContentMode === 'live';
+		const suffix = isLive ? '' : '&content';
+		navigateToDirectory(`${state.currentBasePath}?search=${state.deepSearchQuery}${suffix}`, panelId);
+	});
+
 	let liveFilterTimer = null;
 	$tb.find('.panel-tb-search').off('keydown blur input').on('keydown', function (e) {
 		if (e.key === 'Enter') {
@@ -1502,8 +1520,10 @@ function attachPanelToolbarEventListeners(panelId) {
 			if (val && state && state.currentPath) {
 				// Start a deep search. Spaces are passed raw in Electron IPC (safe);
 				// see the TODO(serveable) comment in navigateToDirectory for HTTP notes.
+				// Refining a query keeps the promoted live-content mode active.
 				state.toolbarSearch = val;
-				navigateToDirectory(`${state.currentPath}?search=${val}`, panelId, true);
+				const contentSuffix = (state.deepSearchQuery && state.deepSearchContentMode === 'live') ? '&content' : '';
+				navigateToDirectory(`${state.currentPath}?search=${val}${contentSuffix}`, panelId, true);
 			} else if (!val && state && state.deepSearchQuery) {
 				// Empty Enter while in deep search — exit back to plain directory.
 				state.toolbarSearch = '';
@@ -2016,6 +2036,49 @@ function _buildMarkedTagBadgesHtml(tagsJson, tagDefs, query) {
 	return `<div class="tag-badge-container">${badges.join('')}</div>`;
 }
 
+/**
+ * Build HTML for the search snippet cell: escaped snippet text with marker
+ * spans on every content term. Terms mirror src/deepSearch.js parseContentTerms
+ * (quoted phrases + keywords) — duplicated here because deepSearch.js is a
+ * Node module and this file is a browser ES module.
+ */
+function _buildMarkedSnippetHtml(snippet, query) {
+	if (!snippet) return '';
+	const terms = [];
+	if (query) {
+		const rest = query.replace(/"([^"]+)"/g, (_m, p) => {
+			const t = p.trim().toLowerCase();
+			if (t) terms.push(t);
+			return ' ';
+		});
+		for (const kw of rest.replace(/"/g, ' ').split(/\s+/)) {
+			const t = kw.trim().toLowerCase();
+			if (t) terms.push(t);
+		}
+	}
+	if (terms.length === 0) return utils.escapeHtml(snippet);
+
+	// Longest terms first so phrase marks win over their component keywords.
+	terms.sort((a, b) => b.length - a.length);
+	const lowerSnip = snippet.toLowerCase();
+	let result = '', pos = 0;
+	while (pos < snippet.length) {
+		let bestIdx = -1, bestLen = 0;
+		for (const t of terms) {
+			const idx = lowerSnip.indexOf(t, pos);
+			if (idx !== -1 && (bestIdx === -1 || idx < bestIdx || (idx === bestIdx && t.length > bestLen))) {
+				bestIdx = idx;
+				bestLen = t.length;
+			}
+		}
+		if (bestIdx === -1) { result += utils.escapeHtml(snippet.slice(pos)); break; }
+		if (bestIdx > pos) result += utils.escapeHtml(snippet.slice(pos, bestIdx));
+		result += `<span class="w2ui-marker">${utils.escapeHtml(snippet.slice(bestIdx, bestIdx + bestLen))}</span>`;
+		pos = bestIdx + bestLen;
+	}
+	return result;
+}
+
 function filterGalleryByNameFuzzy(panelId, query) {
 	const $gallery = $(`#panel-${panelId} .panel-gallery`);
 	if ($gallery.length === 0) return;
@@ -2086,7 +2149,7 @@ function filterGalleryByNameFuzzy(panelId, query) {
  * Start a deep search for `panelId`, cancelling any in-progress search first.
  * Called by `navigateToDirectory` after detecting a `?search=` URI param.
  */
-function startDeepSearchForPanel(panelId, rootPath, query) {
+function startDeepSearchForPanel(panelId, rootPath, query, contentMode = 'cached') {
 	const state = panelState[panelId];
 	if (!state) return;
 
@@ -2104,6 +2167,7 @@ function startDeepSearchForPanel(panelId, rootPath, query) {
 		if (grid.last) { grid.last.searchIds = []; }
 		try { grid.showColumn('score');   } catch (_) { /* col may not exist yet */ }
 		try { grid.showColumn('relPath'); } catch (_) {}
+		try { grid.showColumn('snippet'); } catch (_) {}
 	}
 	state.sourceRecords             = [];
 	state.recidCounter              = 1;   // reset so new records start from recid 1
@@ -2127,7 +2191,7 @@ function startDeepSearchForPanel(panelId, rootPath, query) {
 	}, 2000);
 
 	// Fire the search.
-	window.electronAPI.startDeepSearch(panelId, rootPath, query).catch(err => {
+	window.electronAPI.startDeepSearch(panelId, rootPath, query, contentMode).catch(err => {
 		console.error(`[deepSearch] IPC error for panelId=${panelId}:`, err);
 	});
 }
@@ -2229,6 +2293,14 @@ async function flushDeepSearchBatch(panelId, forceFinish) {
 				if (query && rec.tagsRaw) {
 					rec.tags = _buildMarkedTagBadgesHtml(rec.tagsRaw, tagDefs, query);
 				}
+				// Content-match snippet + filename badge. Baked-in HTML survives
+				// grid.refresh(), same strategy as the filename/tag marks above.
+				if (entry.contentMatch) {
+					rec.snippet = _buildMarkedSnippetHtml(entry.contentSnippet || '', query);
+					rec.filename += ' <span class="content-match-badge" title="Matched in file content">≡</span>';
+				} else {
+					rec.snippet = '';
+				}
 			});
 
 			appendPanelSourceRecords(panelId, records);
@@ -2326,11 +2398,12 @@ function stopDeepSearch(panelId) {
 	state.deepSearchCategoryCache = null;
 	hidePanelLoading(panelId);
 
-	// Hide score / relPath columns when leaving search mode.
+	// Hide score / relPath / snippet columns when leaving search mode.
 	const grid = state.w2uiGrid;
 	if (grid) {
 		try { grid.hideColumn('score');   } catch (_) {}
 		try { grid.hideColumn('relPath'); } catch (_) {}
+		try { grid.hideColumn('snippet'); } catch (_) {}
 	}
 }
 
@@ -4102,7 +4175,7 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 		records.push({
 			recid: state.recidCounter++,
 			icon: applyClass(iconSvg, className),
-			filename: applyClass(file.displayFilename || file.filename, className),
+			filename: applyClass(file.displayFilename || file.filename, className) + getContentDotHtml(file.contentStatus, file.contentPending),
 			filenameRaw: file.filename,
 			size: applyClass(utils.formatBytes(file.size), className),
 			dateModified: dateModifiedContent,
@@ -4115,6 +4188,8 @@ async function buildGridRecords(entries, panelId, iconCache, categoryCache, tagD
 			checksum: checksumCell,
 			checksumStatus: file.checksumStatus || null,
 			checksumValue: file.checksumValue || null,
+			contentPending: file.contentPending || false,
+			contentStatus: file.contentStatus || null,
 			tags: renderTagBadges(file.tags || null, tagDefs),
 			tagsRaw: file.tags || null,
 			type: applyClass(file.changeState === 'moved' ? '' : ftType, className),
@@ -4552,18 +4627,22 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		const searchQuery = paramValues.get('search') ?? null;
 		if (searchQuery !== null) {
 			const trimmedQuery = searchQuery.trim();
+			// &content promotes to a live deep CONTENT search: Phase 2 extracts
+			// text on the fly for uncached files (session memory cache only).
+			const contentMode = navParams.has('content') ? 'live' : 'cached';
 			state.deepSearchQuery = trimmedQuery;
+			state.deepSearchContentMode = contentMode;
 			state.toolbarSearch   = trimmedQuery;
 			// Update the loading overlay label from "Scanning…" to "Searching…"
 			const panelEl = document.getElementById(`panel-${panelId}`);
 			if (panelEl) {
 				const labelEl = panelEl.querySelector('.panel-loading-overlay__label');
-				if (labelEl) labelEl.textContent = 'Searching…';
+				if (labelEl) labelEl.textContent = contentMode === 'live' ? 'Searching contents…' : 'Searching…';
 			}
 			updatePanelHeader(panelId, rawInput);
 			renderPanelToolbar(panelId, 'detail');
 			deepSearchOwnsOverlay = true;
-			startDeepSearchForPanel(panelId, normalizedPath, trimmedQuery);
+			startDeepSearchForPanel(panelId, normalizedPath, trimmedQuery, contentMode);
 			return;
 		}
 
@@ -4571,6 +4650,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		if (state.deepSearchQuery) {
 			stopDeepSearch(panelId);
 			state.deepSearchQuery = '';
+			state.deepSearchContentMode = 'cached';
 		}
 		// Reset the search/filter term when navigating to a new directory so the
 		// toolbar input doesn't show a stale query from a previous location.
@@ -4809,10 +4889,20 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 										}
 									}
 								}
+								maybeStartContentQueue(panelId, showCategory, bgRcPath);
 							}).catch(() => {});
 						});
 					} else {
 						renderPanelToolbar(panelId, 'detail');
+					}
+
+					// Content extraction runs regardless of the banner: kick it off
+					// silently from the fresh scan entries.
+					if (bgScan.hasContentPending) {
+						try {
+							const liveCat = await window.electronAPI.getCategoryForDirectory(bgRcPath);
+							startContentQueueFromScan(panelId, liveCat, bgRcPath, bgScan.entries);
+						} catch (_) { /* non-fatal */ }
 					}
 				}).catch(err => {
 					console.warn('[records-cache] Background scan failed:', err.message || err);
@@ -4959,11 +5049,21 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 										}
 									}
 								}
+								maybeStartContentQueue(panelId, showCategory, bgNavPath);
 							}).catch(() => {});
 						});
 					} else {
 						// No visible changes — silently refresh toolbar badge counts
 						renderPanelToolbar(panelId, 'detail');
+					}
+
+					// Content extraction runs regardless of the banner: kick it off
+					// silently from the fresh scan entries.
+					if (bgScan.hasContentPending) {
+						try {
+							const liveCat = await window.electronAPI.getCategoryForDirectory(bgNavPath);
+							startContentQueueFromScan(panelId, liveCat, bgNavPath, bgScan.entries);
+						} catch (_) { /* non-fatal */ }
 					}
 				}).catch(err => {
 					console.warn('[cache-browsing] Background scan failed:', err.message || err);
@@ -5121,6 +5221,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 				}
 			}
 		}
+		maybeStartContentQueue(panelId, category, dirPath);
 	} catch (err) {
 		console.error('Error navigating to directory:', err);
 		alert('Error accessing directory: ' + err.message);
@@ -5263,6 +5364,7 @@ export async function initializeGridForPanel(panelId) {
 			render: (record) => record.score != null ? String(record.score) : ''
 		},
 		{ field: 'relPath', headerLabel: 'Path', text: getColumnHeaderText(panelId, 'relPath', 'Path'), size: '200px', resizable: true, sortable: true, hidden: true },
+		{ field: 'snippet', headerLabel: 'Match', text: getColumnHeaderText(panelId, 'snippet', 'Match'), size: '220px', resizable: true, sortable: false, hidden: true },
 		{ field: 'type', headerLabel: 'Type', text: getColumnHeaderText(panelId, 'type', 'Type'), size: '80px', resizable: true, sortable: true },
 		{ field: 'size', headerLabel: 'Size', text: getColumnHeaderText(panelId, 'size', 'Size'), size: '60px', resizable: true, sortable: true, align: 'right' },
 		{ field: 'dateModified', headerLabel: 'Date Modified', text: getColumnHeaderText(panelId, 'dateModified', 'Date Modified'), size: '150px', resizable: true, sortable: true, hidden: true },
@@ -6209,7 +6311,7 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 		records.push({
 			recid: recordId++,
 			icon: applyClass(iconSvg, className),
-			filename: applyClass(file.displayFilename || file.filename, className),
+			filename: applyClass(file.displayFilename || file.filename, className) + getContentDotHtml(file.contentStatus, file.contentPending),
 			filenameRaw: file.filename,
 			filenameText: file.displayFilename || file.filename,
 			type: applyClass(file.changeState === 'moved' ? '' : ftType, className),
@@ -6228,6 +6330,8 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 			checksum: checksumCell,
 			checksumStatus: file.checksumStatus || null,
 			checksumValue: file.checksumValue || null,
+			contentPending: file.contentPending || false,
+			contentStatus: file.contentStatus || null,
 			tags: renderTagBadges(file.tags || null, tagDefs),
 			tagsRaw: file.tags || null,
 			tagsText: getTagFilterText(file.tags || null),
@@ -6966,6 +7070,18 @@ async function acknowledgeFileModification(inode, panelId) {
 	}
 }
 
+/**
+ * Small status dot appended to the filename cell for deep-content-search
+ * extraction state. Empty string when there is nothing to report.
+ */
+function getContentDotHtml(contentStatus, contentPending) {
+	if (contentPending) return '<span class="content-dot content-dot-pending" title="Text extraction pending"></span>';
+	if (contentStatus === 'skipped_size') return '<span class="content-dot content-dot-skipped" title="Content not indexed — file exceeds the deep search size cap"></span>';
+	if (contentStatus === 'truncated') return '<span class="content-dot content-dot-truncated" title="Content partially indexed (text truncated)"></span>';
+	if (contentStatus === 'error') return '<span class="content-dot content-dot-error" title="Text extraction failed"></span>';
+	return '';
+}
+
 async function startChecksumQueue(filesToChecksum, panelId, dirPath) {
 	const state = panelState[panelId];
 	state.checksumQueue = filesToChecksum;
@@ -7015,6 +7131,99 @@ function cancelChecksumQueue(panelId) {
 	if (state.checksumQueue) {
 		state.checksumCancelled = true;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Deep content search: background text-extraction queue (mirrors the checksum
+// queue). One file at a time per panel; the main process bounds global
+// concurrency with its own semaphore.
+// ---------------------------------------------------------------------------
+
+function setContentQueueStatus(panelId, text) {
+	const el = document.getElementById(`content-status-${panelId}`);
+	if (el) {
+		el.textContent = text || '';
+		el.style.display = text ? '' : 'none';
+	}
+}
+
+async function startContentQueue(filesToExtract, panelId, dirPath) {
+	const state = panelState[panelId];
+	state.contentQueue = filesToExtract;
+	state.contentQueueIndex = 0;
+	state.contentCancelled = false;
+	while (state.contentQueueIndex < state.contentQueue.length && !state.contentCancelled) {
+		setContentQueueStatus(panelId, `Extracting text ${state.contentQueueIndex + 1}/${state.contentQueue.length}…`);
+		const file = state.contentQueue[state.contentQueueIndex];
+		await extractContentForFile(file, panelId, dirPath);
+		state.contentQueueIndex++;
+	}
+	setContentQueueStatus(panelId, '');
+}
+
+async function extractContentForFile(record, panelId, dirPath) {
+	try {
+		const result = await window.electronAPI.extractFileContent(record.path, record.inode, record.dir_id);
+		record.contentPending = false;
+		record.contentStatus = result && result.status ? result.status : 'error';
+	} catch (err) {
+		record.contentPending = false;
+		record.contentStatus = 'error';
+	}
+	// Swap the baked-in status dot in the filename cell for the new state.
+	if (typeof record.filename === 'string') {
+		record.filename = record.filename.replace(/<span class="content-dot[^"]*"[^>]*><\/span>/, '') +
+			getContentDotHtml(record.contentStatus, false);
+	}
+	const grid = panelState[panelId].w2uiGrid;
+	if (grid) grid.refresh();
+}
+
+function cancelContentQueue(panelId) {
+	const state = panelState[panelId];
+	if (state.contentQueue) {
+		state.contentCancelled = true;
+	}
+	setContentQueueStatus(panelId, '');
+}
+
+/**
+ * Shared kick-off used by every scan-completion path: start the extraction
+ * queue if the category opts in, there are pending rows, and the queue is idle.
+ */
+function maybeStartContentQueue(panelId, category, dirPath) {
+	if (!category || !category.deepSearchEnabled) return;
+	const state = panelState[panelId];
+	const grid = state?.w2uiGrid;
+	if (!grid) return;
+	const filesToExtract = grid.records.filter(r => !r.isFolder && r.contentPending);
+	if (filesToExtract.length === 0) return;
+	const queueIdle = !state.contentQueue || state.contentCancelled ||
+	                   state.contentQueueIndex >= state.contentQueue.length;
+	if (queueIdle) startContentQueue(filesToExtract, panelId, dirPath);
+}
+
+/**
+ * Silent kick-off for the cached-render paths: the grid is showing cached
+ * records (built without contentPending), but the background scan's fresh
+ * entries know which files need extraction. Mark the matching live grid
+ * records pending and start the queue — no repopulate, no banner needed.
+ */
+function startContentQueueFromScan(panelId, category, dirPath, scanEntries) {
+	if (!category || !category.deepSearchEnabled) return;
+	const state = panelState[panelId];
+	const grid = state?.w2uiGrid;
+	if (!grid) return;
+	const pendingByPath = new Set(
+		(scanEntries || []).filter(e => e.contentPending && !e.isDirectory).map(e => e.path)
+	);
+	if (pendingByPath.size === 0) return;
+	const filesToExtract = grid.records.filter(r => !r.isFolder && pendingByPath.has(r.path));
+	if (filesToExtract.length === 0) return;
+	for (const rec of filesToExtract) rec.contentPending = true;
+	const queueIdle = !state.contentQueue || state.contentCancelled ||
+	                   state.contentQueueIndex >= state.contentQueue.length;
+	if (queueIdle) startContentQueue(filesToExtract, panelId, dirPath);
 }
 
 export async function loadCategories() {

@@ -17,6 +17,37 @@ const filesystem  = require('./filesystem');
 const notesParser = require('./notesParser');
 const logger      = require('./logger');
 const db          = require('./db');
+const contentExtractor = require('./contentExtractor');
+
+// ─── Live content search: session-scoped LRU ─────────────────────────────────
+// Promoted ("search contents now") searches over folders whose category has
+// NOT opted into permanent caching keep their extracted text here instead of
+// SQLite: keyed by path|mtime|size so edits invalidate naturally, bounded,
+// and gone on app exit.
+const liveContentCache = new Map(); // key → { text: string|null }
+const LIVE_CACHE_MAX_ENTRIES = 300;
+
+async function getLiveContentText(entry, sizeCapBytes) {
+	const key = `${entry.path}|${entry.dateModified}|${entry.size}`;
+	if (liveContentCache.has(key)) {
+		const hit = liveContentCache.get(key);
+		liveContentCache.delete(key);
+		liveContentCache.set(key, hit); // LRU bump
+		return hit.text;
+	}
+	let text = null;
+	try {
+		const result = await contentExtractor.extractContent(entry.path, { sizeCapBytes });
+		text = result.text; // null for skipped/error/unsupported
+	} catch (err) {
+		logger.warn(`[deepSearch] Live extraction failed for ${entry.path}: ${err.message}`);
+	}
+	liveContentCache.set(key, { text });
+	if (liveContentCache.size > LIVE_CACHE_MAX_ENTRIES) {
+		liveContentCache.delete(liveContentCache.keys().next().value);
+	}
+	return text;
+}
 
 // ─── Inlined scoring helpers (mirrors path-autocomplete.js) ───────────────────
 
@@ -177,6 +208,52 @@ function parseTags(tagsJson) {
 }
 
 /**
+ * Parse a raw query into content-search terms.
+ * Quoted strings ("like this") become contiguous phrases; the remainder is
+ * split into keywords. An unbalanced quote is treated as a literal character.
+ * All terms are lowercased. A file content-matches iff EVERY term is a
+ * case-insensitive substring of its cached text.
+ */
+function parseContentTerms(query) {
+	const phrases = [];
+	const rest = query.replace(/"([^"]+)"/g, (_m, p) => {
+		const t = p.trim().toLowerCase();
+		if (t) phrases.push(t);
+		return ' ';
+	});
+	const keywords = rest.replace(/"/g, ' ').split(/\s+/)
+		.map(s => s.trim().toLowerCase()).filter(Boolean);
+	return { phrases, keywords, terms: [...phrases, ...keywords] };
+}
+
+/**
+ * Build a short display snippet around the first term hit: ±radius chars,
+ * snapped to word boundaries, whitespace collapsed, ellipsized.
+ */
+function buildContentSnippet(text, terms, radius = 60) {
+	const lower = text.toLowerCase();
+	let idx = -1;
+	let len = 0;
+	for (const t of terms) {
+		const i = lower.indexOf(t);
+		if (i !== -1 && (idx === -1 || i < idx)) { idx = i; len = t.length; }
+	}
+	if (idx === -1) return '';
+	let start = Math.max(0, idx - radius);
+	let end = Math.min(text.length, idx + len + radius);
+	if (start > 0) {
+		const sp = text.indexOf(' ', start);
+		if (sp !== -1 && sp < idx) start = sp + 1;
+	}
+	if (end < text.length) {
+		const sp = text.lastIndexOf(' ', end);
+		if (sp > idx + len) end = sp;
+	}
+	const snippet = text.slice(start, end).replace(/\s+/g, ' ').trim();
+	return (start > 0 ? '…' : '') + snippet + (end < text.length ? '…' : '');
+}
+
+/**
  * Compute a search score for a DB entry, incorporating filename, tag, and attribute matches.
  * Returns an integer 0–100 or null (exclude from results).
  */
@@ -209,9 +286,48 @@ function queryDbPhase1(rootPath, query) {
 	if (!db.db) return [];
 
 	const results = [];
-	const qLower   = query.toLowerCase();
+	// Quotes drive phrase semantics for content matching; strip them for
+	// filename/tag/attribute matching so "foo bar" still matches foo bar.txt.
+	const nameQuery = query.replace(/"/g, ' ').trim() || query;
+	const qLower   = nameQuery.toLowerCase();
 	const likePat  = `%${qLower}%`;
 	const rootLike = rootPath + path.sep + '%';
+
+	// ── Content matches (cache-only) ─────────────────────────────────────────
+	// SQL instr() on the longest term is a coarse prefilter (SQLite lower() is
+	// ASCII-only); every term is then verified in JS with correct case folding.
+	const contentHits = new Map();
+	try {
+		const { terms } = parseContentTerms(query);
+		if (terms.length > 0) {
+			const longest = terms.reduce((a, b) => (b.length > a.length ? b : a));
+			const contentRows = db.db.prepare(`
+				SELECT f.inode, f.filename, f.dateModified, f.dateCreated, f.size,
+				       f.tags, f.attributes, f.checksumValue, f.checksumStatus,
+				       d.id AS dir_id, d.dirname, c.text, c.status AS contentStatus
+				FROM file_content c
+				JOIN files f ON f.id = c.file_id
+				JOIN dirs d ON f.dir_id = d.id
+				WHERE f.deleted_at IS NULL
+				  AND f.filename != '.'
+				  AND (d.dirname = ? OR d.dirname LIKE ?)
+				  AND c.text IS NOT NULL
+				  AND instr(lower(c.text), ?) > 0
+			`).all(rootPath, rootLike, longest);
+
+			for (const row of contentRows) {
+				const textLower = row.text.toLowerCase();
+				if (!terms.every(t => textLower.includes(t))) continue;
+				contentHits.set(path.join(row.dirname, row.filename), {
+					row,
+					snippet: buildContentSnippet(row.text, terms),
+					contentStatus: row.contentStatus
+				});
+			}
+		}
+	} catch (err) {
+		logger.warn(`[deepSearch] Phase 1 content query error: ${err.message}`);
+	}
 
 	// ── Files ─────────────────────────────────────────────────────────────────
 	try {
@@ -231,12 +347,20 @@ function queryDbPhase1(rootPath, query) {
 		`).all(rootPath, rootLike, likePat, likePat, likePat);
 
 		for (const row of fileRows) {
-			const score = scoreDbEntry(query, row.filename, row.tags, row.attributes);
-			if (score === null) continue;
+			const entryPath = path.join(row.dirname, row.filename);
+			const hit = contentHits.get(entryPath);
+			let score = scoreDbEntry(nameQuery, row.filename, row.tags, row.attributes);
+			if (score === null && !hit) continue;
+			// Content hit boosts a name/tag/attr match; content-only sits at 28
+			// (between attribute-only 30 and notes-only 25).
+			if (hit) {
+				score = score !== null ? Math.min(100, score + 8) : 28;
+				contentHits.delete(entryPath);
+			}
 
 			results.push({
 				filename:      row.filename,
-				path:          path.join(row.dirname, row.filename),
+				path:          entryPath,
 				relPath:       path.relative(rootPath, row.dirname),
 				isDirectory:   false,
 				score,
@@ -254,10 +378,44 @@ function queryDbPhase1(rootPath, query) {
 				todoCounts:    null,
 				changeState:   null,
 				perms:         null,
+				contentMatch:   !!hit,
+				contentSnippet: hit ? hit.snippet : null,
+				contentStatus:  hit ? hit.contentStatus : null,
 			});
 		}
 	} catch (err) {
 		logger.warn(`[deepSearch] Phase 1 files query error: ${err.message}`);
+	}
+
+	// ── Content-only matches ──────────────────────────────────────────────────
+	// Files whose cached text matched but whose name/tags/attributes did not —
+	// they were never selected by the files query above.
+	for (const [entryPath, hit] of contentHits) {
+		const row = hit.row;
+		results.push({
+			filename:      row.filename,
+			path:          entryPath,
+			relPath:       path.relative(rootPath, row.dirname),
+			isDirectory:   false,
+			score:         28,
+			inode:         row.inode,
+			dir_id:        row.dir_id,
+			tags:          row.tags   || null,
+			attributes:    row.attributes || null,
+			checksumStatus: row.checksumStatus || null,
+			checksumValue:  row.checksumValue  || null,
+			dateCreated:   row.dateCreated   || null,
+			dateModified:  row.dateModified  || null,
+			size:          row.size || null,
+			initials:      null,
+			hasNotes:      false,
+			todoCounts:    null,
+			changeState:   null,
+			perms:         null,
+			contentMatch:   true,
+			contentSnippet: hit.snippet,
+			contentStatus:  hit.contentStatus,
+		});
 	}
 
 	// ── Directories ───────────────────────────────────────────────────────────
@@ -275,7 +433,7 @@ function queryDbPhase1(rootPath, query) {
 
 		for (const row of dirRows) {
 			const basename = path.basename(row.dirname);
-			const score = scoreDbEntry(query, basename, row.tags, row.attributes);
+			const score = scoreDbEntry(nameQuery, basename, row.tags, row.attributes);
 			if (score === null) continue;
 
 			let initials = row.initials || null;
@@ -364,17 +522,30 @@ function queryDbPhase1(rootPath, query) {
  * @param {string}   query          Search term (raw, not pre-lowercased).
  * @param {Function} onBatch        Callback `(batch, done, phase, orphans)`.
  * @param {{ cancelled: boolean }} cancellationRef
+ * @param {{ contentMode?: 'cached'|'live', sizeCapBytes?: number }} [options]
+ *   contentMode 'cached' (default): content matches come only from the
+ *   permanent file_content cache (Phase 1). 'live' (promoted search): Phase 2
+ *   additionally extracts text on the fly for uncached supported files,
+ *   caching results in the session-scoped memory LRU — never in SQLite.
  */
-async function startDeepSearch(rootPath, query, onBatch, cancellationRef) {
+async function startDeepSearch(rootPath, query, onBatch, cancellationRef, options = {}) {
 	if (!query || !query.trim()) {
 		onBatch([], true, 2, []);
 		return;
 	}
 
 	const q      = query.trim();
-	const qLower = q.toLowerCase();
+	// Quotes are phrase delimiters for content matching (handled inside
+	// queryDbPhase1); Phase 2 scores filenames/tags/notes, so strip them here.
+	const nameQ  = q.replace(/"/g, ' ').trim() || q;
+	const qLower = nameQ.toLowerCase();
+	const liveContent  = options.contentMode === 'live';
+	const sizeCapBytes = options.sizeCapBytes || (10 * 1024 * 1024);
+	const contentTerms = liveContent ? parseContentTerms(q).terms : [];
 
 	// ── Phase 1: DB query ────────────────────────────────────────────────────
+	// Content matching is Phase 1 / cache-only by design: disk-only files seen
+	// in Phase 2 have no file_content row, so Phase 2 never reads file bodies.
 	const phase1Entries = queryDbPhase1(rootPath, q);
 	const phase1Paths   = new Set(phase1Entries.map(e => e.path));
 	if (phase1Entries.length > 0) {
@@ -422,13 +593,32 @@ async function startDeepSearch(rootPath, query, onBatch, cancellationRef) {
 
 			const fileRow = enrichment.fileRows[entry.filename];
 			const tagsJson = entry.isDirectory ? null : (fileRow ? fileRow.tags : null);
-			const baseScore = scoreFilename(q, entry.filename);
+			const baseScore = scoreFilename(nameQ, entry.filename);
 			const tags = parseTags(tagsJson);
-			const tagMatches = tags.some(t => scoreCandidate(q, t) !== null);
+			const tagMatches = tags.some(t => scoreCandidate(nameQ, t) !== null);
 			const noteSectionContent = (notesSections && notesSections[entry.filename]) || '';
 			const notesMatches = noteSectionContent.toLowerCase().includes(qLower);
 
-			if (baseScore === null && !tagMatches && !notesMatches) continue;
+			// Promoted live search: when nothing else matched, extract text on
+			// the fly (session LRU) and test the content terms. Files with a
+			// permanent cache row were already content-matched in Phase 1.
+			let liveContentMatch = false;
+			let liveContentSnippet = null;
+			if (liveContent && !entry.isDirectory &&
+				baseScore === null && !tagMatches && !notesMatches &&
+				contentTerms.length > 0 && contentExtractor.isSupported(entry.filename)) {
+				const text = await getLiveContentText(entry, sizeCapBytes);
+				if (text) {
+					const textLower = text.toLowerCase();
+					if (contentTerms.every(t => textLower.includes(t))) {
+						liveContentMatch = true;
+						liveContentSnippet = buildContentSnippet(text, contentTerms);
+					}
+				}
+				if (cancellationRef.cancelled) break;
+			}
+
+			if (baseScore === null && !tagMatches && !notesMatches && !liveContentMatch) continue;
 
 			let score;
 			if (baseScore !== null) {
@@ -438,8 +628,10 @@ async function startDeepSearch(rootPath, query, onBatch, cancellationRef) {
 			} else if (tagMatches) {
 				score = 35;
 				if (notesMatches) score = Math.min(100, score + 10);
-			} else {
+			} else if (notesMatches) {
 				score = 25; // notes-only match
+			} else {
+				score = 28; // content-only match (live), same tier as cached content-only
 			}
 
 			pendingBatch.push({
@@ -461,6 +653,8 @@ async function startDeepSearch(rootPath, query, onBatch, cancellationRef) {
 				hasNotes:       entry.isDirectory ? false : !!(noteSectionContent),
 				todoCounts:     null,  // computed below
 				notesMatch:     notesMatches,
+				contentMatch:   liveContentMatch,
+				contentSnippet: liveContentSnippet,
 				changeState:    null,
 				perms:          null,
 			});
@@ -507,4 +701,5 @@ async function startDeepSearch(rootPath, query, onBatch, cancellationRef) {
 	}
 }
 
-module.exports = { startDeepSearch };
+// parseContentTerms / buildContentSnippet exported for unit tests.
+module.exports = { startDeepSearch, parseContentTerms, buildContentSnippet };

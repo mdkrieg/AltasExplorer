@@ -269,6 +269,8 @@ export async function initializeBrowserSettingsForm() {
 	const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
 	const backgroundRefreshInterval = settings.background_refresh_interval || 30;
 	const checksumMaxConcurrent = settings.checksum_max_concurrent || 1;
+	const deepSearchMaxConcurrent = settings.deep_search_max_concurrent || 1;
+	const deepSearchSizeCapMb = settings.deep_search_size_cap_mb || 10;
 	const titleDefaultFormat = settings.title_default_format || 'folder-name';
 	const titleDisplayNameFormat = settings.title_display_name_format || 'name-relative-path';
 	const cacheBrowsing = settings.cache_browsing || 'enabled';
@@ -283,6 +285,8 @@ export async function initializeBrowserSettingsForm() {
 	$('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
 	$('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
 	$('#browser-checksum-max-concurrent').val(checksumMaxConcurrent);
+	$('#browser-deep-search-max-concurrent').val(deepSearchMaxConcurrent);
+	$('#browser-deep-search-size-cap-mb').val(deepSearchSizeCapMb);
 	$('#browser-title-default-format').val(titleDefaultFormat);
 	$('#browser-title-display-name-format').val(titleDisplayNameFormat);
 	$('#browser-cache-browsing').val(cacheBrowsing);
@@ -332,6 +336,8 @@ async function saveBrowserSettings() {
 		const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
 		let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
 		let checksumMaxConcurrent = parseInt($('#browser-checksum-max-concurrent').val() || '1');
+		let deepSearchMaxConcurrent = parseInt($('#browser-deep-search-max-concurrent').val() || '1');
+		let deepSearchSizeCapMb = parseInt($('#browser-deep-search-size-cap-mb').val() || '10');
 		const titleDefaultFormat = $('#browser-title-default-format').val() || 'folder-name';
 		const titleDisplayNameFormat = $('#browser-title-display-name-format').val() || 'name-relative-path';
 		const cacheBrowsing = $('#browser-cache-browsing').val() || 'enabled';
@@ -362,6 +368,22 @@ async function saveBrowserSettings() {
 			$('#browser-checksum-max-concurrent').val(checksumMaxConcurrent);
 		}
 
+		if (isNaN(deepSearchMaxConcurrent) || deepSearchMaxConcurrent < 1) {
+			deepSearchMaxConcurrent = 1;
+			$('#browser-deep-search-max-concurrent').val(deepSearchMaxConcurrent);
+		} else if (deepSearchMaxConcurrent > 2) {
+			deepSearchMaxConcurrent = 2;
+			$('#browser-deep-search-max-concurrent').val(deepSearchMaxConcurrent);
+		}
+
+		if (isNaN(deepSearchSizeCapMb) || deepSearchSizeCapMb < 1) {
+			deepSearchSizeCapMb = 10;
+			$('#browser-deep-search-size-cap-mb').val(deepSearchSizeCapMb);
+		} else if (deepSearchSizeCapMb > 500) {
+			deepSearchSizeCapMb = 500;
+			$('#browser-deep-search-size-cap-mb').val(deepSearchSizeCapMb);
+		}
+
 		const settings = await window.electronAPI.getSettings();
 		settings.home_directory = homeDirectory;
 		settings.file_format = fileFormat;
@@ -373,6 +395,8 @@ async function saveBrowserSettings() {
 		settings.show_folder_name_with_dot_entries = showFolderNameWithDotEntries;
 		settings.pin_meta_dirs = pinMetaDirs;
 		settings.checksum_max_concurrent = checksumMaxConcurrent;
+		settings.deep_search_max_concurrent = deepSearchMaxConcurrent;
+		settings.deep_search_size_cap_mb = deepSearchSizeCapMb;
 		settings.title_default_format = titleDefaultFormat;
 		settings.title_display_name_format = titleDisplayNameFormat;
 		settings.cache_browsing = cacheBrowsing;
@@ -614,6 +638,7 @@ async function initializeCategoriesGrid() {
 		textColor: category.textColor,
 		categoryName: category.name,
 		enableChecksum: category.enableChecksum || false,
+		deepSearchEnabled: category.deepSearchEnabled || false,
 		autoAssignCategory: category.autoAssignCategory || '',
 		atlasJsonSync: category.atlasJsonSync || 'disabled',
 		iconUrl: null,
@@ -645,6 +670,7 @@ async function initializeCategoriesGrid() {
 		textColor: '',
 		categoryName: null,
 		enableChecksum: false,
+		deepSearchEnabled: false,
 		autoAssignCategory: '',
 		atlasJsonSync: 'disabled',
 		iconUrl: null,
@@ -761,6 +787,7 @@ function populateCategoryForm(record) {
 
 	$('#form-cat-description').val(record.description || '');
 	$('#form-cat-enableChecksum').prop('checked', record.enableChecksum || false);
+	$('#form-cat-deepSearch').prop('checked', record.deepSearchEnabled || false);
 	$('#form-cat-displayMode').val(record.displayMode || 'details');
 	$('#form-cat-atlasJsonSync').val(record.atlasJsonSync || 'disabled');
 	syncCategoryAutoAssignField(record.autoAssignCategory || '');
@@ -782,6 +809,7 @@ export function clearCategoryForm() {
 
 	$('#form-cat-description').val('');
 	$('#form-cat-enableChecksum').prop('checked', false);
+	$('#form-cat-deepSearch').prop('checked', false);
 	$('#form-cat-displayMode').val('details');
 	$('#form-cat-atlasJsonSync').val('disabled');
 	syncCategoryAutoAssignField('');
@@ -821,6 +849,7 @@ async function updateGridAfterCategorySave(updatedCategory, isNew = false, oldNa
 				textColor: updatedCategory.textColor,
 				categoryName: updatedCategory.name,
 				enableChecksum: updatedCategory.enableChecksum || false,
+				deepSearchEnabled: updatedCategory.deepSearchEnabled || false,
 				autoAssignCategory: updatedCategory.autoAssignCategory || '',
 				atlasJsonSync: updatedCategory.atlasJsonSync || 'disabled',
 				iconUrl,
@@ -838,6 +867,7 @@ async function updateGridAfterCategorySave(updatedCategory, isNew = false, oldNa
 				record.textColor = updatedCategory.textColor;
 				record.categoryName = updatedCategory.name;
 				record.enableChecksum = updatedCategory.enableChecksum || false;
+				record.deepSearchEnabled = updatedCategory.deepSearchEnabled || false;
 				record.autoAssignCategory = updatedCategory.autoAssignCategory || '';
 				record.atlasJsonSync = updatedCategory.atlasJsonSync || 'disabled';
 				record.iconUrl = iconUrl;
@@ -890,6 +920,7 @@ export async function saveCategoryFromForm() {
 			description,
 			autoAssignCategory: $('#form-cat-autoAssignCategory').val() || null,
 			enableChecksum: $('#form-cat-enableChecksum').prop('checked'),
+			deepSearchEnabled: $('#form-cat-deepSearch').prop('checked'),
 			displayMode: $('#form-cat-displayMode').val() || 'details',
 			atlasJsonSync: $('#form-cat-atlasJsonSync').val() || 'disabled',
 			attributes: selectedAttributes

@@ -264,6 +264,33 @@ button:active {
   border-radius: 3px;
 }
 
+/* Deep content search: filename badge on rows whose match was in file content */
+.content-match-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background-color: rgba(33, 150, 243, 0.15);
+  color: #1a6bbf;
+  font-size: 10px;
+  cursor: help;
+}
+
+/* Deep content search: extraction status dot appended to the filename cell */
+.content-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 5px;
+  border-radius: 50%;
+  vertical-align: middle;
+  cursor: help;
+}
+.content-dot-pending   { background-color: #bbb; }
+.content-dot-skipped   { background-color: #e6a23c; }
+.content-dot-truncated { background-color: #e6d33c; }
+.content-dot-error     { background-color: #e05252; }
+
 .panel-tb-depth {
   display: inline-flex;
   align-items: center;

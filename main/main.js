@@ -2,6 +2,7 @@
 const path = require('path');
 const os = require('os');
 const fsSync = require('fs');
+const crypto = require('crypto');
 const pty = require('node-pty');
 
 // Import service modules
@@ -13,6 +14,7 @@ const tags = require('../src/tags');
 const filetypes = require('../src/filetypes');
 const icons = require('../src/icons');
 const checksum = require('../src/checksum');
+const contentExtractor = require('../src/contentExtractor');
 const attributes = require('../src/attributes');
 const notesParser = require('../src/notesParser');
 const todoAggregator     = require('../src/todoAggregator');
@@ -108,6 +110,8 @@ function emitWindowFocus(win) {
 
 let checksumInFlight = 0;
 const checksumWaiters = [];
+let extractionInFlight = 0;
+const extractionWaiters = [];
 let monitoringTimer = null;
 let monitoringPassInProgress = false;
 
@@ -136,6 +140,30 @@ async function acquireChecksumSlot() {
   return () => {
     checksumInFlight--;
     const next = checksumWaiters.shift();
+    if (next) next();
+  };
+}
+
+// Same promise-semaphore pattern as checksums, with its own budget so content
+// extraction and hashing can't starve each other.
+async function acquireExtractionSlot() {
+  const settings = categories.getSettings();
+  const maxConcurrent = Math.max(1, Math.min(2, Number(settings.deep_search_max_concurrent) || 1));
+
+  if (extractionInFlight < maxConcurrent) {
+    extractionInFlight++;
+    return () => {
+      extractionInFlight--;
+      const next = extractionWaiters.shift();
+      if (next) next();
+    };
+  }
+
+  await new Promise(resolve => extractionWaiters.push(resolve));
+  extractionInFlight++;
+  return () => {
+    extractionInFlight--;
+    const next = extractionWaiters.shift();
     if (next) next();
   };
 }
@@ -1324,17 +1352,17 @@ ipcMain.handle('get-categories-list', () => {
  */
 ipcMain.handle('save-category', (event, categoryData) => {
   try {
-    const { name, bgColor, textColor, description, patterns, enableChecksum, attributes: attrs, autoAssignCategory, displayMode, atlasJsonSync } = categoryData;
-    
+    const { name, bgColor, textColor, description, patterns, enableChecksum, deepSearchEnabled, attributes: attrs, autoAssignCategory, displayMode, atlasJsonSync } = categoryData;
+
     // Check if category exists
     const existing = categories.getCategory(name);
-    
+
     if (existing) {
       // Update existing
-      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || null, atlasJsonSync || 'disabled');
+      return categories.updateCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || null, atlasJsonSync || 'disabled', deepSearchEnabled || false);
     } else {
       // Create new
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details', atlasJsonSync || 'disabled');
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details', atlasJsonSync || 'disabled', deepSearchEnabled || false);
     }
   } catch (err) {
     logger.error('Error saving category:', err.message);
@@ -1347,16 +1375,17 @@ ipcMain.handle('save-category', (event, categoryData) => {
  */
 ipcMain.handle('update-category', (event, categoryData) => {
   try {
-    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, attributes: attrs, autoAssignCategory, displayMode, atlasJsonSync } = categoryData;
+    const { name, oldName, bgColor, textColor, patterns, description, enableChecksum, deepSearchEnabled, attributes: attrs, autoAssignCategory, displayMode, atlasJsonSync } = categoryData;
     const updateName = name || oldName;
-    
+
     // If name changed, delete old and create new
     if (oldName && name && oldName !== name) {
       categories.deleteCategory(oldName);
-      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details', atlasJsonSync || 'disabled');
+      return categories.createCategory(name, bgColor, textColor, patterns || [], description || '', enableChecksum || false, attrs || [], autoAssignCategory, displayMode || 'details', atlasJsonSync || 'disabled', deepSearchEnabled || false);
     } else {
-      // Just update
-      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || [], autoAssignCategory, displayMode || null, atlasJsonSync || 'disabled');
+      // Just update — deepSearchEnabled passes through un-defaulted (like
+      // enableChecksum) so null preserves the existing value.
+      return categories.updateCategory(updateName, bgColor, textColor, patterns || [], description || '', enableChecksum, attrs || [], autoAssignCategory, displayMode || null, atlasJsonSync || 'disabled', deepSearchEnabled ?? null);
     }
   } catch (err) {
     logger.error('Error updating category:', err.message);
@@ -4552,14 +4581,21 @@ ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNaviga
  * Deep Search: start a recursive BFS search from rootPath.
  * Results are pushed to the renderer via 'deep-search-batch' events.
  */
-ipcMain.handle('start-deep-search', (event, panelId, rootPath, query) => {
-  logger.info(`[deepSearch] start-deep-search IPC: panelId=${panelId} query="${query}" root="${rootPath}"`);
+ipcMain.handle('start-deep-search', (event, panelId, rootPath, query, contentMode = 'cached') => {
+  logger.info(`[deepSearch] start-deep-search IPC: panelId=${panelId} query="${query}" root="${rootPath}" contentMode=${contentMode}`);
   // Cancel any existing search for this panel.
   const prev = activeDeepSearches.get(panelId);
   if (prev) prev.cancelled = true;
 
   const ref = { cancelled: false };
   activeDeepSearches.set(panelId, ref);
+
+  const settings = categories.getSettings();
+  const sizeCapMb = Math.max(1, Number(settings.deep_search_size_cap_mb) || 10);
+  const searchOptions = {
+    contentMode: contentMode === 'live' ? 'live' : 'cached',
+    sizeCapBytes: sizeCapMb * 1024 * 1024
+  };
 
   // Fire-and-forget — results stream back via push events.
   deepSearch.startDeepSearch(rootPath, query, (batch, done, phase, orphans) => {
@@ -4569,7 +4605,7 @@ ipcMain.handle('start-deep-search', (event, panelId, rootPath, query) => {
         event.sender.send('deep-search-batch', { panelId, batch, done, phase: phase || 2, orphans: orphans || null });
       }
     } catch (_) { /* renderer may have been destroyed */ }
-  }, ref).catch(err => {
+  }, ref, searchOptions).catch(err => {
     logger.error(`[deep-search] Error in panelId=${panelId}: ${err.message}`);
   });
 
@@ -4740,6 +4776,64 @@ ipcMain.handle('calculate-file-checksum', async (event, { filePath, inode, dirId
     };
   } finally {
     releaseChecksumSlot();
+  }
+});
+
+/**
+ * Deep Content Search: extract text from a file and cache it in file_content.
+ * Driven one file at a time by the renderer's content queue (mirrors the
+ * checksum flow); bounded by the extraction semaphore.
+ */
+ipcMain.handle('extract-file-content', async (event, { filePath, inode, dirId }) => {
+  const releaseExtractionSlot = await acquireExtractionSlot();
+  try {
+    const fileRecord = db.getFileByInode(inode, dirId);
+    if (!fileRecord) {
+      return { success: false, status: 'error', error: 'File record not found' };
+    }
+
+    // Capture mtime in the exact representation the scanner stores as
+    // dateModified (stats.mtime.getTime()) — any mismatch would re-mark the
+    // file pending on every scan.
+    const stats = await fsSync.promises.stat(filePath);
+    const sourceMtime = stats.mtime.getTime();
+
+    const settings = categories.getSettings();
+    const sizeCapMb = Math.max(1, Number(settings.deep_search_size_cap_mb) || 10);
+    const result = await contentExtractor.extractContent(filePath, {
+      sizeCapBytes: sizeCapMb * 1024 * 1024,
+      truncateChars: 2000000
+    });
+
+    const contentHash = result.text !== null
+      ? crypto.createHash('sha1').update(result.text).digest('hex')
+      : null;
+
+    // No-op re-extraction (mtime touch, same content): refresh freshness
+    // columns only, skip rewriting megabytes of identical text into WAL.
+    const existing = db.getFileContentStatus(fileRecord.id);
+    if (existing && contentHash && existing.content_hash === contentHash && existing.status === result.status) {
+      db.touchFileContent(fileRecord.id, sourceMtime);
+      return { success: true, status: result.status, truncated: result.truncated, unchanged: true };
+    }
+
+    db.upsertFileContent({
+      file_id: fileRecord.id,
+      text: result.text,
+      content_hash: contentHash,
+      source_mtime: sourceMtime,
+      source_size: stats.size,
+      extractor: result.extractor,
+      status: result.status,
+      error: result.error
+    });
+
+    return { success: result.status !== 'error', status: result.status, truncated: result.truncated, error: result.error };
+  } catch (err) {
+    logger.error('Error extracting file content:', err.message);
+    return { success: false, status: 'error', error: err.message };
+  } finally {
+    releaseExtractionSlot();
   }
 });
 

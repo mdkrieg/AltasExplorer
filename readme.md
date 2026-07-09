@@ -62,7 +62,7 @@ Philosophy:
 
 [-] Fix the context menu configurator - the fitler feature doesn't work in a very practical way. It should be designed to simulate what will happen on a real selection
 
-[ ] Improve the layout saving, the save icon should change to the layout icon and it should indicate if the layout is from the global default, the category default, or locally specified. Consider if local layouts should be saved in the folder with some name like Default.ALY - QUESTION: is our current layout format robust enough to specify only a single panel layout (and does it even include column sizes and sort ordering) but the layouts at hand here apply only to a single panel and can be applied to any one file panel. Regardless I think the column sizing and sorting should be kept as files in the user's home dir, ideally as JSON text files.
+[x] Improve the layout saving, the save icon should change to the layout icon and it should indicate if the layout is from the global default, the category default, or locally specified. Consider if local layouts should be saved in the folder with some name like Default.ALY - QUESTION: is our current layout format robust enough to specify only a single panel layout (and does it even include column sizes and sort ordering) but the layouts at hand here apply only to a single panel and can be applied to any one file panel. Regardless I think the column sizing and sorting should be kept as files in the user's home dir, ideally as JSON text files.
 
 [-] When drag and dropping a file into a subfolder, leave the old file with a label (moved to [new location]) instead of refreshing the grid view.
 

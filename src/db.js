@@ -226,6 +226,19 @@ class DatabaseService {
       );
       CREATE INDEX IF NOT EXISTS idx_reminder_items_notes_file ON reminder_items(notes_file_id);
       CREATE INDEX IF NOT EXISTS idx_reminder_items_due ON reminder_items(due_datetime);
+
+      CREATE TABLE IF NOT EXISTS file_content (
+        file_id INTEGER PRIMARY KEY,
+        text TEXT,
+        content_hash TEXT,
+        source_mtime INTEGER,
+        source_size INTEGER,
+        extractor TEXT,
+        status TEXT NOT NULL,
+        error TEXT,
+        extracted_at INTEGER NOT NULL,
+        FOREIGN KEY (file_id) REFERENCES files(id)
+      );
     `;
 
     this.db.exec(schema);
@@ -398,6 +411,14 @@ class DatabaseService {
     // atlas.json so the absorption check can skip files we wrote ourselves.
     if (!latestDirCols.has('atlas_json_mtime')) {
       this.db.exec('ALTER TABLE dirs ADD COLUMN atlas_json_mtime INTEGER');
+    }
+
+    // Startup sweep: file_content has no enforced FK (PRAGMA foreign_keys is
+    // never enabled), so reclaim rows whose files row is gone.
+    try {
+      this.db.exec('DELETE FROM file_content WHERE file_id NOT IN (SELECT id FROM files)');
+    } catch (err) {
+      logger.error('Error sweeping orphaned file_content rows:', err.message);
     }
   }
 
@@ -767,6 +788,9 @@ class DatabaseService {
    * user-managed columns are preserved; checksum is reset since content changed.
    */
   replaceFileInode(fileId, newInode, fileData) {
+    // Content changed with the replacement — drop the cached extraction so
+    // the next scan re-marks it pending.
+    this.db.prepare('DELETE FROM file_content WHERE file_id = ?').run(fileId);
     this.db.prepare(`
       UPDATE files
       SET inode = ?, filename = ?, dateModified = ?, dateCreated = ?, size = ?, mode = ?,
@@ -838,6 +862,68 @@ class DatabaseService {
     return result ? result.checksumValue : null;
   }
 
+  // ---------- Deep content search cache (file_content) ----------
+
+  /**
+   * Extraction metadata for every cached file in a directory, keyed by file_id.
+   * Deliberately never selects the text column — this runs on the scan path
+   * to derive contentPending, so it must stay cheap.
+   * @returns {Map<number, { source_mtime: number, status: string, content_hash: string }>}
+   */
+  getContentMetaForDir(dirId) {
+    const rows = this.db.prepare(`
+      SELECT c.file_id, c.source_mtime, c.status, c.content_hash
+      FROM file_content c
+      JOIN files f ON f.id = c.file_id
+      WHERE f.dir_id = ?
+    `).all(dirId);
+    const map = new Map();
+    for (const row of rows) {
+      map.set(row.file_id, { source_mtime: row.source_mtime, status: row.status, content_hash: row.content_hash });
+    }
+    return map;
+  }
+
+  /**
+   * Insert or update the cached extracted text for a file.
+   */
+  upsertFileContent({ file_id, text, content_hash, source_mtime, source_size, extractor, status, error }) {
+    return this.db.prepare(`
+      INSERT INTO file_content (file_id, text, content_hash, source_mtime, source_size, extractor, status, error, extracted_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(file_id) DO UPDATE SET
+        text = excluded.text,
+        content_hash = excluded.content_hash,
+        source_mtime = excluded.source_mtime,
+        source_size = excluded.source_size,
+        extractor = excluded.extractor,
+        status = excluded.status,
+        error = excluded.error,
+        extracted_at = excluded.extracted_at
+    `).run(file_id, text ?? null, content_hash ?? null, source_mtime ?? null,
+      source_size ?? null, extractor ?? null, status, error ?? null, Date.now());
+  }
+
+  /**
+   * Refresh only the freshness columns after a no-op re-extraction (content
+   * hash unchanged) so megabytes of identical text aren't rewritten into WAL.
+   */
+  touchFileContent(file_id, source_mtime) {
+    return this.db.prepare(
+      'UPDATE file_content SET source_mtime = ?, extracted_at = ? WHERE file_id = ?'
+    ).run(source_mtime, Date.now(), file_id);
+  }
+
+  /**
+   * Extraction status row for a single file (no text column).
+   */
+  getFileContentStatus(fileId) {
+    return this.db.prepare(`
+      SELECT file_id, content_hash, source_mtime, source_size, extractor, status, error, extracted_at
+      FROM file_content WHERE file_id = ?
+    `).get(fileId);
+  }
+
   /**
    * Get all files in a directory (by dirname)
    */
@@ -893,10 +979,17 @@ class DatabaseService {
    * Delete all files for a directory (used before re-scanning)
    */
   clearDirectory(dirname) {
-    const stmt = this.db.prepare(`
-      DELETE FROM files WHERE dir_id = (SELECT id FROM dirs WHERE dirname = ?)
-    `);
-    return stmt.run(dirname);
+    const clear = this.db.transaction((dirnameIn) => {
+      this.db.prepare(`
+        DELETE FROM file_content WHERE file_id IN (
+          SELECT id FROM files WHERE dir_id = (SELECT id FROM dirs WHERE dirname = ?)
+        )
+      `).run(dirnameIn);
+      return this.db.prepare(`
+        DELETE FROM files WHERE dir_id = (SELECT id FROM dirs WHERE dirname = ?)
+      `).run(dirnameIn);
+    });
+    return clear(dirname);
   }
 
   /**
@@ -904,10 +997,17 @@ class DatabaseService {
    * Note: Does not delete file_history records to preserve audit trail
    */
   deleteFile(inode, dir_id) {
-    const stmt = this.db.prepare(`
-      DELETE FROM files WHERE inode = ? AND dir_id = ?
-    `);
-    return stmt.run(inode, dir_id);
+    const del = this.db.transaction((inodeIn, dirIdIn) => {
+      this.db.prepare(`
+        DELETE FROM file_content WHERE file_id IN (
+          SELECT id FROM files WHERE inode = ? AND dir_id = ?
+        )
+      `).run(inodeIn, dirIdIn);
+      return this.db.prepare(`
+        DELETE FROM files WHERE inode = ? AND dir_id = ?
+      `).run(inodeIn, dirIdIn);
+    });
+    return del(inode, dir_id);
   }
 
   // ---------- Trash staging (user-initiated deletions) ----------

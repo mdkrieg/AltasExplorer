@@ -60,8 +60,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCachedDirectoryEntries: (dirPath) => ipcRenderer.invoke('get-cached-directory-entries', dirPath),
 
   // File change detection
-  calculateFileChecksum: (filePath, inode, dirId, isManual = false) => 
+  calculateFileChecksum: (filePath, inode, dirId, isManual = false) =>
     ipcRenderer.invoke('calculate-file-checksum', { filePath, inode, dirId, isManual }),
+  extractFileContent: (filePath, inode, dirId) =>
+    ipcRenderer.invoke('extract-file-content', { filePath, inode, dirId }),
   updateFileModificationDate: (dirPath, inode, newDateModified) => 
     ipcRenderer.invoke('update-file-modification-date', { dirPath, inode, newDateModified }),
 
@@ -373,8 +375,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Deep Search — recursive filesystem search with fuzzy scoring.
   // Results stream back via 'deep-search-batch' push events.
-  startDeepSearch: (panelId, rootPath, query) =>
-    ipcRenderer.invoke('start-deep-search', panelId, rootPath, query),
+  startDeepSearch: (panelId, rootPath, query, contentMode = 'cached') =>
+    ipcRenderer.invoke('start-deep-search', panelId, rootPath, query, contentMode),
   cancelDeepSearch: (panelId) =>
     ipcRenderer.invoke('cancel-deep-search', panelId),
   /**

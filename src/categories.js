@@ -105,6 +105,7 @@ class CategoryService {
         patterns: [],
         description: '',
         enableChecksum: false,
+        deepSearchEnabled: false,
         attributes: [],
         autoAssignCategory: null,
         displayMode: 'details',
@@ -173,6 +174,10 @@ class CategoryService {
           if (category.enableChecksum === undefined) {
             category.enableChecksum = false;
           }
+          // Ensure backward compatibility: add deepSearchEnabled if missing
+          if (category.deepSearchEnabled === undefined) {
+            category.deepSearchEnabled = false;
+          }
           // Ensure backward compatibility: add attributes if missing
           if (!category.attributes) {
             category.attributes = [];
@@ -220,7 +225,7 @@ class CategoryService {
   /**
    * Create a new category
    */
-  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = [], autoAssignCategory = null, displayMode = 'details', atlasJsonSync = 'disabled') {
+  createCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = false, attributes = [], autoAssignCategory = null, displayMode = 'details', atlasJsonSync = 'disabled', deepSearchEnabled = false) {
     if (name === 'Default') {
       throw new Error('Cannot create a category named "Default" - it already exists');
     }
@@ -234,6 +239,7 @@ class CategoryService {
       patterns,
       description,
       enableChecksum,
+      deepSearchEnabled: !!deepSearchEnabled,
       attributes,
       autoAssignCategory: normalizedAutoAssignCategory,
       displayMode: displayMode || 'details',
@@ -250,10 +256,11 @@ class CategoryService {
   /**
    * Update an existing category
    */
-  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null, autoAssignCategory = undefined, displayMode = null, atlasJsonSync = null) {
+  updateCategory(name, bgColor, textColor, patterns = [], description = '', enableChecksum = null, attributes = null, autoAssignCategory = undefined, displayMode = null, atlasJsonSync = null, deepSearchEnabled = null) {
     // Get existing category to preserve fields if not specified
     const existingCategory = this.getCategory(name);
     const checksumSetting = enableChecksum !== null ? enableChecksum : (existingCategory?.enableChecksum || false);
+    const deepSearchSetting = deepSearchEnabled !== null ? !!deepSearchEnabled : (existingCategory?.deepSearchEnabled || false);
     const attributesSetting = attributes !== null ? attributes : (existingCategory?.attributes || []);
     const autoAssignSetting = autoAssignCategory !== undefined
       ? this.validateAutoAssignCategory(name, autoAssignCategory)
@@ -268,6 +275,7 @@ class CategoryService {
       patterns,
       description,
       enableChecksum: checksumSetting,
+      deepSearchEnabled: deepSearchSetting,
       attributes: attributesSetting,
       autoAssignCategory: autoAssignSetting,
       displayMode: displayModeSetting,
@@ -376,6 +384,12 @@ class CategoryService {
       if (typeof settings.checksum_max_concurrent === 'undefined') {
         settings.checksum_max_concurrent = 1;
       }
+      if (typeof settings.deep_search_max_concurrent === 'undefined') {
+        settings.deep_search_max_concurrent = 1;
+      }
+      if (typeof settings.deep_search_size_cap_mb === 'undefined') {
+        settings.deep_search_size_cap_mb = 10;
+      }
       if (typeof settings.title_default_format === 'undefined') {
         settings.title_default_format = 'folder-name';
       }
@@ -419,6 +433,8 @@ class CategoryService {
         background_refresh_enabled: false,
         background_refresh_interval: 30,
         checksum_max_concurrent: 1,
+        deep_search_max_concurrent: 1,
+        deep_search_size_cap_mb: 10,
         title_default_format: 'folder-name',
         title_display_name_format: 'name-relative-path',
         monitoring_enabled: false,

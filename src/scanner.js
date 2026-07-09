@@ -30,6 +30,9 @@ const notesParser        = require('./notesParser');
 const todoAggregator     = require('./todoAggregator');
 const reminderAggregator = require('./reminderAggregator');
 const atlasJson          = require('./atlasJson');
+// Top-level require is safe: contentExtractor lazy-requires its parsers, so
+// only the extension map is loaded here (matters for the standalone server).
+const contentExtractor   = require('./contentExtractor');
 
 // ---------------------------------------------------------------------------
 // Alert-rule helpers
@@ -268,6 +271,12 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     const existingDbFiles = db.getFilesByDirId(dirId);
     const dbFileMap = new Map(existingDbFiles.map(f => [f.inode, f]));
 
+    // Deep content search: one cheap metadata-only query per dir, only when
+    // the category opts in. Extraction itself never runs on the scan path.
+    const contentMeta = (category && category.deepSearchEnabled)
+      ? db.getContentMetaForDir(dirId)
+      : null;
+
     const ignoreFilenames = isBackgroundRefresh
       ? existingDbFiles.filter(f => f.inode.startsWith('-1:')).map(f => f.filename)
       : [];
@@ -350,9 +359,23 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           }
         }
 
+        // Deep content search: a separate pending boolean (NOT a changeState —
+        // a file can need both checksum and content extraction at once).
+        let contentPending = false;
+        let contentStatus = null;
+        if (contentMeta && contentExtractor.isSupported(entry.filename)) {
+          const meta = dbFile ? contentMeta.get(dbFile.id) : null;
+          contentStatus = meta ? meta.status : null;
+          if (!meta || meta.source_mtime !== entry.dateModified) {
+            contentPending = true;
+          }
+        }
+
         entriesWithChanges.push({
           ...entry,
           changeState,
+          contentPending,
+          contentStatus,
           dir_id: dirId,
           checksumValue: (dbFile && dbFile.checksumValue) ? dbFile.checksumValue : null,
           checksumStatus: (dbFile && dbFile.checksumStatus) ? dbFile.checksumStatus : null,
@@ -1020,6 +1043,10 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       category: categoryName,
       categoryData: category,
       hasChanges,
+      // Separate from hasChanges (which drives dir-history "changed" records):
+      // signals the renderer to repopulate so the content queue sees the
+      // pending rows even when nothing changed on disk.
+      hasContentPending: entriesWithChanges.some(e => e.contentPending),
       alertsCreated,
       orphanCount,
       trashCount,

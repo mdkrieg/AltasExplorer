@@ -542,6 +542,23 @@
                   work.</span>
               </div>
               <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="font-weight: bold; font-size: 13px;">Deep Content Search</div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                  <label style="font-size: 12px; font-weight: bold;">Maximum concurrent extraction jobs:</label>
+                  <input id="browser-deep-search-max-concurrent" type="number" min="1" max="2" placeholder="1"
+                    style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 80px;">
+                  <span style="color: #666; font-size: 12px;">jobs (1-2)</span>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                  <label style="font-size: 12px; font-weight: bold;">Skip files larger than:</label>
+                  <input id="browser-deep-search-size-cap-mb" type="number" min="1" max="500" placeholder="10"
+                    style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 80px;">
+                  <span style="color: #666; font-size: 12px;">MB (1-500)</span>
+                </div>
+                <span style="color: #666; font-size: 12px;">Text extraction for categories with Deep Content Search
+                  enabled. Skipped files are flagged in the file list.</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
                 <div style="font-weight: bold; font-size: 13px;">Cache-Browsing</div>
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                   <select id="browser-cache-browsing"
@@ -1046,6 +1063,16 @@
                   <label for="form-cat-enableChecksum"
                     style="font-size: 11px; font-weight: bold; cursor: pointer; margin: 0;">Enable Checksum
                     Tracking</label>
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="form-cat-deepSearch" style="cursor: pointer;">
+                    <label for="form-cat-deepSearch"
+                      style="font-size: 11px; font-weight: bold; cursor: pointer; margin: 0;">Enable Deep Content
+                      Search</label>
+                  </div>
+                  <span style="font-size: 10px; color: #888; margin-top: 2px;">Extract text from documents (PDF, Word,
+                    Excel, text files) in the background so deep search can match file contents.</span>
                 </div>
                 <div style="display: flex; flex-direction: column;">
                   <label style="font-size: 11px; margin-bottom: 3px; font-weight: bold;">Attributes</label>
