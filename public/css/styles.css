@@ -291,6 +291,53 @@ button:active {
 .content-dot-truncated { background-color: #e6d33c; }
 .content-dot-error     { background-color: #e05252; }
 
+/* Mirror items: sync-state badge appended to the filename cell */
+.mirror-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 14px;
+  vertical-align: middle;
+  cursor: help;
+  color: #fff;
+}
+.mirror-badge-in-sync      { background-color: #4c9a52; }
+.mirror-badge-remote-newer { background-color: #3a7bd5; }
+.mirror-badge-local-newer  { background-color: #e6a23c; }
+.mirror-badge-conflict     { background-color: #e05252; }
+.mirror-badge-tombstone    { background-color: #8a8a8a; }
+.mirror-badge-error        { background-color: #e05252; }
+.mirror-badge-unknown      { background-color: #bbb; }
+.mirror-badge-syncing {
+  background-color: #3a7bd5;
+  animation: mirror-badge-spin 1.2s linear infinite;
+}
+@keyframes mirror-badge-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Mirror adoption review modal */
+.mirror-adopt-modal { padding: 12px; overflow: auto; height: 100%; font-size: 12px; }
+.mirror-adopt-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.mirror-adopt-table th, .mirror-adopt-table td {
+  text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(128,128,128,0.25);
+  vertical-align: top;
+}
+.mirror-adopt-remote { word-break: break-all; max-width: 320px; }
+.mirror-adopt-row.is-invalid { opacity: 0.55; }
+.mirror-adopt-note { font-size: 11px; color: #888; margin-top: 2px; }
+.mirror-adopt-note.is-error { color: #e05252; }
+.mirror-adopt-upload-flag {
+  display: inline-block; margin-left: 6px; padding: 0 4px;
+  background-color: #e6a23c; color: #fff; border-radius: 3px; font-size: 10px;
+}
+.mirror-adopt-diff-block { margin: 8px 0; }
+.mirror-adopt-diff-block ul { margin: 4px 0 4px 18px; }
+
 .panel-tb-depth {
   display: inline-flex;
   align-items: center;

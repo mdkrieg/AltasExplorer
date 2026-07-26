@@ -696,10 +696,109 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 		}
 	}
 
-	// Determine operation: move (default) or copy (Ctrl/Cmd). External drops
-	// (from another application) always copy — moving files out of another
-	// app's folder without explicit consent would be surprising.
-	const isCopy = payload.external ? true : !!(event.ctrlKey || event.metaKey);
+	const ctx = { panelState, navigateToDirectory, dropContext };
+
+	// Shift+drop: Windows-style drop-choice menu (Copy / Move / Mirror). The
+	// right-drag gesture ends in this same menu — see rightDrag.js. In-app
+	// drags only: external drops keep their always-copy contract.
+	if (event.shiftKey && !payload.external) {
+		showDropChoiceMenu(event.clientX, event.clientY, { payload, items, targetDirPath, targetPanelId, ctx });
+		return;
+	}
+
+	// Move (default) or copy (Ctrl/Cmd). External drops (from another
+	// application) always copy — moving files out of another app's folder
+	// without explicit consent would be surprising.
+	const op = payload.external ? 'copy' : ((event.ctrlKey || event.metaKey) ? 'copy' : 'move');
+	await performDropOperation({ payload, items, targetDirPath, targetPanelId, ctx, op });
+}
+
+/**
+ * The drop-choice menu shared by Shift+drop and right-drag. Items carry
+ * onClick thunks, so contexts.js's menu machinery renders it without routing
+ * through the registry-based click dispatcher.
+ */
+export function showDropChoiceMenu(x, y, opArgs) {
+	// Dynamic import: dragdrop is imported by panels which is imported by
+	// contexts — a static import here would close that cycle at module-eval
+	// time. The menu is a rare interaction, so the lazy load costs nothing.
+	import('./contexts.js').then(({ showCustomContextMenu }) => {
+		const mk = (op, text) => ({
+			id: `drop-${op}`,
+			text,
+			onClick: () => { performDropOperation({ ...opArgs, op }); }
+		});
+		const menuItems = [
+			mk('copy', 'Copy here'),
+			mk('move', 'Move here'),
+			{ id: 'drop-sep-1', text: '--' },
+			mk('mirror-follow-source', 'Mirror here (follows source)'),
+			mk('mirror-source-follows', 'Mirror here (source follows this copy)'),
+			{ id: 'drop-sep-2', text: '--' },
+			{ id: 'drop-cancel', text: 'Cancel', onClick: () => {} }
+		];
+		showCustomContextMenu(menuItems, x, y, opArgs.targetPanelId);
+	}).catch(() => { /* menu is optional sugar; a failed load just drops nothing */ });
+}
+
+/**
+ * Execute a drop as a concrete operation. `op` is one of 'copy' | 'move' |
+ * 'mirror-follow-source' | 'mirror-source-follows'. Mirror ops create
+ * tracked mirror items instead of plain files: 'follow-source' pins the
+ * dropped copy to the dragged file (dragged side stays the authority);
+ * 'source-follows' inverts authority — the copy landing here becomes the
+ * authority and the dragged file will be overwritten by future syncs.
+ */
+export async function performDropOperation({ payload, items, targetDirPath, targetPanelId, ctx, op }) {
+	const { panelState, navigateToDirectory, dropContext } = ctx;
+
+	let result;
+	let isCopy = true;
+
+	if (op === 'mirror-follow-source' || op === 'mirror-source-follows') {
+		const direction = op === 'mirror-follow-source' ? 'remote-mirror' : 'local-mirror';
+		const fileItems = items.filter(it => !it.isFolder);
+		if (fileItems.length < items.length) {
+			w2utils.notify('Folders skipped — directory mirrors are not supported yet', { timeout: 4000 });
+		}
+		if (fileItems.length === 0) return;
+
+		let res;
+		try {
+			res = await window.electronAPI.mirrorCreate({
+				items: fileItems.map(it => ({ remotePath: it.path })),
+				localDir: targetDirPath,
+				origin: 'drag',
+				direction
+			});
+		} catch (err) {
+			w2utils.notify(`Mirror failed: ${err?.message || 'unknown error'}`, { error: true, timeout: 5000 });
+			return;
+		}
+		const all = res?.results || [];
+		const okResults = all.filter(r => r.ok);
+		for (const f of all.filter(r => !r.ok)) {
+			w2utils.notify(`Mirror failed: ${f.error}`, { error: true, timeout: 5000 });
+		}
+		if (okResults.length === 0) return;
+		const conflicts = okResults.filter(r => r.initialStatus === 'conflict').length;
+		w2utils.notify(
+			`Created ${okResults.length} mirror${okResults.length === 1 ? '' : 's'}` +
+			(conflicts > 0 ? ` — ${conflicts} in conflict (both sides differ)` : ''),
+			{ timeout: 3500 }
+		);
+		// Synthesize a copy-shaped result so the shared refresh/flash logic
+		// below treats landed mirrors like landed copies (source untouched).
+		const dirBase = String(targetDirPath).replace(/[\\/]+$/, '');
+		result = {
+			succeeded: okResults.map(r => ({
+				sourcePath: null,
+				targetPath: `${dirBase}\\${r.mirror.local_name}`
+			})),
+			failed: []
+		};
+	} else {
+		isCopy = op === 'copy';
 
 	// Pre-flight collision check.
 	let collisions = [];
@@ -719,7 +818,6 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 	}
 
 	// Dispatch.
-	let result;
 	try {
 		result = isCopy
 			? await window.electronAPI.copyItems(items, targetDirPath, onCollision)
@@ -734,6 +832,7 @@ async function handleDrop(event, targetDirPath, targetPanelId, { panelState, nav
 		w2alert(`Failed to ${isCopy ? 'copy' : 'move'}:\n` +
 			result.failed.map(f => `${f.path}: ${f.error}`).join('\n'));
 	}
+	} // end copy/move branch
 
 	// Refresh destination panels; apply "moved-out" ghost rows on source panels.
 	// For a move: source panels are NOT refreshed — the moved items stay visible

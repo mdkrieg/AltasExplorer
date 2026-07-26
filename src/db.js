@@ -239,6 +239,49 @@ class DatabaseService {
         extracted_at INTEGER NOT NULL,
         FOREIGN KEY (file_id) REFERENCES files(id)
       );
+
+      CREATE TABLE IF NOT EXISTS mirrors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        local_dir   TEXT NOT NULL,
+        local_name  TEXT NOT NULL,
+        remote_path TEXT NOT NULL,
+        direction   TEXT NOT NULL,
+        policy      TEXT,
+        sync_status       TEXT NOT NULL DEFAULT 'unknown',
+        last_synced_at    INTEGER,
+        last_synced_mtime INTEGER,
+        last_synced_size  INTEGER,
+        last_synced_md5   TEXT,
+        tombstone_at      INTEGER,
+        error_message     TEXT,
+        last_evaluated_at      INTEGER,
+        last_eval_remote_mtime INTEGER,
+        last_eval_remote_size  INTEGER,
+        origin     TEXT,
+        created_at INTEGER NOT NULL,
+        UNIQUE(local_dir, local_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mirrors_local_dir   ON mirrors(local_dir);
+      CREATE INDEX IF NOT EXISTS idx_mirrors_remote_path ON mirrors(remote_path);
+
+      CREATE TABLE IF NOT EXISTS mirror_sidecars (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dir_path      TEXT NOT NULL UNIQUE,
+        sidecar_mtime REAL,
+        cached_copy   TEXT,
+        updated_at    INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS mirror_adoptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dir_path    TEXT NOT NULL,
+        source      TEXT NOT NULL,
+        payload     TEXT NOT NULL,
+        created_at  INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolution  TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_mirror_adoptions_dir ON mirror_adoptions(dir_path);
     `;
 
     this.db.exec(schema);
@@ -2323,6 +2366,135 @@ class DatabaseService {
   _buildFilePath(dirId, filename) {
     const dir = this.getDirById(dirId);
     return dir ? path.join(dir.dirname, filename) : filename;
+  }
+
+  // ============================================
+  // Mirror items (see src/mirrors.js and agent-docs/DECISIONS.md)
+  // ============================================
+  //
+  // mirrors.local_dir is a plain path string, deliberately NOT a dirs(id) FK:
+  // the sidecar file is the recovery seed after a DB rebuild, so mirror rows
+  // must be reconstructable without the dirs table surviving.
+
+  getMirrorsForDir(dirPath) {
+    return this.db.prepare(
+      'SELECT * FROM mirrors WHERE local_dir = ? ORDER BY local_name ASC'
+    ).all(dirPath);
+  }
+
+  getMirrorByLocal(dirPath, localName) {
+    return this.db.prepare(
+      'SELECT * FROM mirrors WHERE local_dir = ? AND local_name = ?'
+    ).get(dirPath, localName) || null;
+  }
+
+  getMirrorById(id) {
+    return this.db.prepare('SELECT * FROM mirrors WHERE id = ?').get(id) || null;
+  }
+
+  getAllMirrorDirs() {
+    return this.db.prepare('SELECT DISTINCT local_dir FROM mirrors').all().map(r => r.local_dir);
+  }
+
+  insertMirror(decl) {
+    const result = this.db.prepare(`
+      INSERT INTO mirrors (local_dir, local_name, remote_path, direction, policy,
+                           sync_status, origin, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      decl.localDir, decl.localName, decl.remotePath, decl.direction,
+      decl.policy ? JSON.stringify(decl.policy) : null,
+      decl.syncStatus || 'unknown', decl.origin || null, Date.now()
+    );
+    return { id: result.lastInsertRowid };
+  }
+
+  /**
+   * Patch state columns on a mirror row. Whitelisted so callers can't touch
+   * declaration columns through the state path — declarations only change via
+   * the adoption flow (updateMirrorDeclaration).
+   */
+  updateMirrorState(id, patch) {
+    const allowed = [
+      'sync_status', 'last_synced_at', 'last_synced_mtime', 'last_synced_size',
+      'last_synced_md5', 'tombstone_at', 'error_message',
+      'last_evaluated_at', 'last_eval_remote_mtime', 'last_eval_remote_size'
+    ];
+    const cols = Object.keys(patch).filter(k => allowed.includes(k));
+    if (cols.length === 0) return;
+    const setClause = cols.map(c => `${c} = ?`).join(', ');
+    this.db.prepare(`UPDATE mirrors SET ${setClause} WHERE id = ?`)
+      .run(...cols.map(c => patch[c]), id);
+  }
+
+  updateMirrorDeclaration(id, patch) {
+    const allowed = ['local_name', 'remote_path', 'direction', 'policy'];
+    const cols = Object.keys(patch).filter(k => allowed.includes(k));
+    if (cols.length === 0) return;
+    const setClause = cols.map(c => `${c} = ?`).join(', ');
+    this.db.prepare(`UPDATE mirrors SET ${setClause} WHERE id = ?`)
+      .run(...cols.map(c => patch[c]), id);
+  }
+
+  deleteMirror(id) {
+    return this.db.prepare('DELETE FROM mirrors WHERE id = ?').run(id);
+  }
+
+  getMirrorSidecar(dirPath) {
+    return this.db.prepare('SELECT * FROM mirror_sidecars WHERE dir_path = ?').get(dirPath) || null;
+  }
+
+  /**
+   * Upsert sidecar bookkeeping: the mtime of the last file we wrote/absorbed
+   * (atlasJson-style self-write skip) and the full text of the last-written
+   * copy. Full text — not a hash — because the off-app-edit flow needs to
+   * diff AND restore the previous content, not merely detect a change.
+   */
+  setMirrorSidecar(dirPath, { mtime, cachedCopy }) {
+    this.db.prepare(`
+      INSERT INTO mirror_sidecars (dir_path, sidecar_mtime, cached_copy, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(dir_path) DO UPDATE SET
+        sidecar_mtime = excluded.sidecar_mtime,
+        cached_copy   = excluded.cached_copy,
+        updated_at    = excluded.updated_at
+    `).run(dirPath, mtime ?? null, cachedCopy ?? null, Date.now());
+  }
+
+  deleteMirrorSidecar(dirPath) {
+    return this.db.prepare('DELETE FROM mirror_sidecars WHERE dir_path = ?').run(dirPath);
+  }
+
+  createMirrorAdoption(dirPath, source, payload) {
+    const result = this.db.prepare(`
+      INSERT INTO mirror_adoptions (dir_path, source, payload, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(dirPath, source, JSON.stringify(payload), Date.now());
+    return { id: result.lastInsertRowid };
+  }
+
+  getPendingAdoptionForDir(dirPath) {
+    const row = this.db.prepare(`
+      SELECT * FROM mirror_adoptions
+      WHERE dir_path = ? AND resolved_at IS NULL
+      ORDER BY created_at DESC LIMIT 1
+    `).get(dirPath);
+    if (!row) return null;
+    try { row.payload = JSON.parse(row.payload); } catch { row.payload = null; }
+    return row;
+  }
+
+  getMirrorAdoptionById(id) {
+    const row = this.db.prepare('SELECT * FROM mirror_adoptions WHERE id = ?').get(id);
+    if (!row) return null;
+    try { row.payload = JSON.parse(row.payload); } catch { row.payload = null; }
+    return row;
+  }
+
+  resolveMirrorAdoption(id, resolution) {
+    return this.db.prepare(
+      'UPDATE mirror_adoptions SET resolved_at = ?, resolution = ? WHERE id = ?'
+    ).run(Date.now(), resolution, id);
   }
 
   close() {

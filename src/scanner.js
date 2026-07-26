@@ -30,6 +30,7 @@ const notesParser        = require('./notesParser');
 const todoAggregator     = require('./todoAggregator');
 const reminderAggregator = require('./reminderAggregator');
 const atlasJson          = require('./atlasJson');
+const mirrors            = require('./mirrors');
 // Top-level require is safe: contentExtractor lazy-requires its parsers, so
 // only the extension map is loaded here (matters for the standalone server).
 const contentExtractor   = require('./contentExtractor');
@@ -236,6 +237,12 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     // This runs on every navigate AND on explicit Refresh (which also calls this
     // function), so the user gets up-to-date data in both cases.
     atlasJson.maybeAbsorb(normalizedPath);
+
+    // Mirror sidecar discovery follows the same lazy pattern, but never
+    // writes mirrors directly — it surfaces a pending adoption for the UI.
+    // Cheap and local-only (one stat on this machine's own sidecar); remote
+    // evaluation is deferred to an async pass after the scan returns.
+    const mirrorAbsorb = mirrors.maybeAbsorbSidecar(normalizedPath);
 
     const dirStats = fs.getStats(normalizedPath);
     if (!dirStats) {
@@ -1050,6 +1057,12 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       alertsCreated,
       orphanCount,
       trashCount,
+      // Cached mirror states paint instantly; fresh states arrive later via
+      // the mirror-state-updated push (remote stats must not block a scan).
+      mirrorInfo: {
+        mirrors: db.getMirrorsForDir(path.resolve(normalizedPath)),
+        pendingAdoption: mirrorAbsorb?.pendingAdoption || null
+      },
     };
   } catch (err) {
     logger.error('Error scanning directory with comparison:', err.message);

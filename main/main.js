@@ -25,6 +25,7 @@ const layouts = require('../src/layouts');
 const gridLayoutStore = require('../src/gridLayoutStore');
 const autoLabels = require('../src/autoLabels');
 const atlasJson = require('../src/atlasJson');
+const mirrors = require('../src/mirrors');
 const { execFile } = require('child_process');
 const { createClipboardWatcher } = require('../src/clipboardWatcher');
 const ffmpegBin = require('ffmpeg-static');
@@ -4574,7 +4575,94 @@ ipcMain.handle('notify-sibling-refresh', (event, { panelId, dirPath }) => {
  * File Change Detection: Scan directory with comparison (IPC handler)
  */
 ipcMain.handle('scan-directory-with-comparison', (event, dirPath, isManualNavigation = true) => {
-  return doScanDirectoryWithComparison(dirPath, isManualNavigation);
+  const result = doScanDirectoryWithComparison(dirPath, isManualNavigation);
+  // Mirror evaluation is fire-and-forget: remote stats can hang on a dead
+  // SMB share, so the scan returns cached mirror states immediately and
+  // fresh ones arrive via the mirror-state-updated push (deep-search-batch
+  // pattern). evaluateMirrorsForDir de-dups in-flight work per directory.
+  if (result?.success && result.mirrorInfo?.mirrors?.length > 0) {
+    mirrors.evaluateMirrorsForDir(dirPath, { emit: broadcast })
+      .catch(err => logger.warn(`mirror evaluation for ${dirPath}: ${err.message}`));
+  }
+  return result;
+});
+
+// ============================================
+// Mirror items (see src/mirrors.js)
+// ============================================
+
+function mirrorStatePayload(dirPath) {
+  const resolved = path.resolve(dirPath);
+  return {
+    dirPath: resolved,
+    mirrors: db.getMirrorsForDir(resolved).map(m => ({
+      id: m.id, localName: m.local_name, syncStatus: m.sync_status,
+      remotePath: m.remote_path, direction: m.direction, errorMessage: m.error_message
+    }))
+  };
+}
+
+ipcMain.handle('mirror-create', async (event, { items, localDir, origin, direction } = {}) => {
+  const list = Array.isArray(items) ? items : [];
+  const results = [];
+  for (const item of list) {
+    const res = await mirrors.createMirror({
+      origin: origin || 'unknown',
+      remotePath: item.remotePath || item.path,
+      localDir,
+      localName: item.localName,
+      direction: direction || item.direction || null,
+      emit: broadcast
+    });
+    results.push({ remotePath: item.remotePath || item.path, ...res });
+  }
+  if (localDir) broadcast('mirror-state-updated', mirrorStatePayload(localDir));
+  return { results };
+});
+
+ipcMain.handle('mirror-sync', async (event, { mirrorId } = {}) => {
+  const res = await mirrors.syncMirror(mirrorId, { emit: broadcast });
+  const mirror = db.getMirrorById(mirrorId);
+  if (mirror) broadcast('mirror-state-updated', mirrorStatePayload(mirror.local_dir));
+  return res;
+});
+
+ipcMain.handle('mirror-get-for-dir', (event, { dirPath } = {}) => {
+  const resolved = path.resolve(dirPath || '');
+  return {
+    mirrors: db.getMirrorsForDir(resolved),
+    pendingAdoption: db.getPendingAdoptionForDir(resolved)
+  };
+});
+
+ipcMain.handle('mirror-evaluate-dir', (event, { dirPath } = {}) => {
+  mirrors.evaluateMirrorsForDir(dirPath, { emit: broadcast })
+    .catch(err => logger.warn(`mirror-evaluate-dir ${dirPath}: ${err.message}`));
+  return { ok: true };
+});
+
+ipcMain.handle('mirror-adoption-get', async (event, { dirPath } = {}) => {
+  const resolved = path.resolve(dirPath || '');
+  const adoption = db.getPendingAdoptionForDir(resolved);
+  if (!adoption) return { adoption: null };
+  // Direction guesses need stats on both sides (remote included) — done here,
+  // when the review modal opens, never during the scan.
+  const entries = await mirrors.prepareAdoptionEntries(resolved, adoption.payload);
+  return { adoption, entries };
+});
+
+ipcMain.handle('mirror-adoption-resolve', async (event, { adoptionId, resolution, entries } = {}) => {
+  const adoption = db.getMirrorAdoptionById(adoptionId);
+  const res = await mirrors.resolveAdoption(adoptionId, resolution, entries, { emit: broadcast });
+  if (adoption) broadcast('mirror-state-updated', mirrorStatePayload(adoption.dir_path));
+  return res;
+});
+
+ipcMain.handle('mirror-detach', async (event, { mirrorId, deleteLocal } = {}) => {
+  const mirror = db.getMirrorById(mirrorId);
+  const res = await mirrors.detachMirror(mirrorId, { deleteLocal });
+  if (mirror) broadcast('mirror-state-updated', mirrorStatePayload(mirror.local_dir));
+  return res;
 });
 
 /**

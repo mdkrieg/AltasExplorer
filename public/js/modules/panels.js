@@ -26,6 +26,7 @@ import * as clipboard from './clipboard.js';
 import { w2grid, w2ui, w2utils, w2confirm, w2alert, w2field, w2tooltip, w2popup } from './vendor/w2ui.es6.min.js';
 import * as autoLabels from './auto-labels.js';
 import * as gridLayoutSettings from './gridLayoutSettings.js';
+import * as mirrorsUi from './mirrorsUi.js';
 import { getPathSuggestions, scoreCandidate } from './path-autocomplete.js';
 import {
 	panelState,
@@ -3660,7 +3661,7 @@ function buildWindowTitle(dirPath, labels, settings) {
 	return `${resolvedDisplayName} (${folderBasename})`;
 }
 
-function showPanelRefreshBanner(panelId, message, onShow = null) {
+export function showPanelRefreshBanner(panelId, message, onShow = null) {
 	const panelEl = document.getElementById(`panel-${panelId}`);
 	if (!panelEl) return;
 	const container = panelEl.querySelector(':scope > .panel-content') || panelEl;
@@ -4841,6 +4842,10 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 					panelState[panelId].orphanCount = bgScan.orphanCount ?? 0;
 					panelState[panelId].trashCount  = bgScan.trashCount  ?? 0;
 
+					if (bgScan.mirrorInfo) {
+						mirrorsUi.applyMirrorInfo(panelId, bgRcPath, bgScan.mirrorInfo);
+					}
+
 					const changedCount = (bgScan.entries || []).filter(
 						e => e.changeState === 'new' ||
 						     e.changeState === 'dateModified' ||
@@ -5160,6 +5165,12 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		} else {
 			await populateFileGrid(entries, category, panelId);
 			setTimeout(() => { clipboard.updateClipboardFooter(panelId); clipboard.reapplyClipboardClasses(panelId, panelState); }, 0);
+		}
+
+		// Mirror badges paint from the scan's cached states; fresh states come
+		// through the mirror-state-updated push once remote stats finish.
+		if (scanResult.mirrorInfo) {
+			mirrorsUi.applyMirrorInfo(panelId, normalizedPath, scanResult.mirrorInfo);
 		}
 
 		// Apply per-directory saved grid layout (columns, sort) for grid views.

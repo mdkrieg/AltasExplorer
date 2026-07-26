@@ -293,6 +293,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startActiveMonitoring: () => ipcRenderer.invoke('start-active-monitoring'),
   stopActiveMonitoring: () => ipcRenderer.invoke('stop-active-monitoring'),
   
+  // Mirror items (virtual sync — src/mirrors.js)
+  mirrorCreate: (payload) => ipcRenderer.invoke('mirror-create', payload),
+  mirrorSync: (mirrorId) => ipcRenderer.invoke('mirror-sync', { mirrorId }),
+  mirrorGetForDir: (dirPath) => ipcRenderer.invoke('mirror-get-for-dir', { dirPath }),
+  mirrorEvaluateDir: (dirPath) => ipcRenderer.invoke('mirror-evaluate-dir', { dirPath }),
+  mirrorAdoptionGet: (dirPath) => ipcRenderer.invoke('mirror-adoption-get', { dirPath }),
+  mirrorAdoptionResolve: (adoptionId, resolution, entries) => ipcRenderer.invoke('mirror-adoption-resolve', { adoptionId, resolution, entries }),
+  mirrorDetach: (mirrorId, deleteLocal) => ipcRenderer.invoke('mirror-detach', { mirrorId, deleteLocal }),
+  onMirrorStateUpdated: (callback) => ipcRenderer.on('mirror-state-updated', (event, data) => callback(data)),
+  onMirrorTransferProgress: (callback) => ipcRenderer.on('mirror-transfer-progress', (event, data) => callback(data)),
+
   // Custom Actions
   getCustomActions: () => ipcRenderer.invoke('get-custom-actions'),
   saveCustomAction: (entry) => ipcRenderer.invoke('save-custom-action', entry),

@@ -18,7 +18,8 @@ import * as panels from './panels.js';
 import * as sidebar from './sidebar.js';
 import * as terminal from './terminal.js';
 import * as clipboard from './clipboard.js';
-import { w2utils } from './vendor/w2ui.es6.min.js';
+import * as mirrorsUi from './mirrorsUi.js';
+import { w2utils, w2confirm } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
 	selectedItemState,
@@ -62,6 +63,8 @@ export const CONTEXT_MENU_REGISTRY = [
 	{ id: 'view-notes', label: 'Notes', group: 4, description: 'Opens the Notes editor for the selected item.', conditions: { singleOnly: true, files: true, dirs: true } },
 	{ id: 'view-todo', label: 'TODO', group: 4, description: 'Opens the TODO checklist for the selected item. The label shows completion progress when tasks exist.', conditions: { singleOnly: true, files: true, dirs: true } },
 	{ id: 'view-properties', label: 'Properties', group: 4, description: 'Opens the Properties panel for the selected item(s). For multi-select, shows the trigger item with a count of additional items.', conditions: { singleOnly: false, files: true, dirs: true } },
+	{ id: 'mirror-to-panel', label: 'Mirror to Panel', group: 5, description: 'Creates a mirror of the selected file(s) in another panel\'s directory: a tracked local copy pinned to this file, kept in sync with per-item state badges. Follows the P1-Pn panel-targeting pattern.', conditions: { singleOnly: false, files: true, dirs: false, note: 'Directory mirrors are not supported yet. Only panels currently showing a directory are offered.' } },
+	{ id: 'mirror-item-label', label: 'Mirror', group: 5, description: 'Actions for an existing mirror item: shows the pinned remote path, Sync Now, and Detach (with or without deleting the local copy). The remote side is never deleted.', conditions: { singleOnly: true, files: true, dirs: false, note: 'Only shown for records that are mirror items.' } },
 	{ id: 'calculate-checksum', label: 'Calculate Checksum', group: 5, description: 'Calculates and stores the SHA-256 checksum for the selected file(s). Flags files whose checksum has changed since last recorded.', conditions: { singleOnly: false, files: true, dirs: false } },
 	{ id: 'copy-as-path', label: 'Copy as Path', group: 5, description: 'Copies the full filesystem path(s) of the selected item(s) to the clipboard.', conditions: { singleOnly: false, files: true, dirs: true } },
 	{ id: 'clipboard-copy', label: 'Copy', group: 6, description: 'Stages the selected item(s) for clipboard copy. Items can then be pasted into another directory.', conditions: { singleOnly: false, files: true, dirs: true, note: 'Not available for the . and .. navigation entries.' } },
@@ -84,7 +87,7 @@ export const DEFAULT_CONTEXT_MENU_ORDER = [
 	'separator-3',
 	'view-notes', 'view-todo', 'view-properties',
 	'separator-4',
-	'calculate-checksum', 'copy-as-path',
+	'mirror-item-label', 'mirror-to-panel', 'calculate-checksum', 'copy-as-path',
 	'separator-5',
 	'clipboard-copy', 'clipboard-cut', 'clipboard-paste',
 	'separator-6',
@@ -104,6 +107,8 @@ const _REGISTRY_ALIASES = {
 const _REGISTRY_PREFIXES = [
 	['acknowledge-orphan-', 'acknowledge-orphan'],
 	['run-custom-action-', 'run-custom-action'],
+	['mirror-to-panel-', 'mirror-to-panel'],
+	['mirror-', 'mirror-item-label'],
 ];
 
 function _getRegistryEntry(itemId) {
@@ -436,6 +441,40 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		}
 	}
 
+	// Mirror items: create mirrors of selected files into another panel's
+	// directory (P1-Pn pattern), and manage an existing mirror record.
+	if (fileCount > 0 && directoryCount === 0) {
+		const mirrorTargets = availablePanels.filter(p =>
+			p !== activePanelId && panelState[p]?.currentPath);
+		if (mirrorTargets.length > 0) {
+			contextMenu.push({
+				id: 'mirror-to-panel',
+				text: isMultiSelect ? 'Mirror to Panel (all)' : 'Mirror to Panel',
+				items: mirrorTargets.map(panelNumber => ({
+					id: `mirror-to-panel-${panelNumber}`,
+					text: `Panel ${panelNumber}`
+				}))
+			});
+		}
+	}
+	if (!isMultiSelect && selectedRecords[0]?.mirrorId) {
+		const rec = selectedRecords[0];
+		const pinned = rec.mirrorRemotePath || '';
+		const pinnedShort = pinned.length > 60 ? `…${pinned.slice(-57)}` : pinned;
+		contextMenu.push({
+			id: 'mirror-item-label',
+			text: 'Mirror',
+			items: [
+				// Staleness must be legible: a pin is blind to renamed successors
+				// (Rev4 problem), so the pinned path is shown right in the menu.
+				{ id: 'mirror-pinned-info', text: `Pinned to ${pinnedShort}`, disabled: true },
+				{ id: 'mirror-sync-now', text: 'Sync Now' },
+				{ id: 'mirror-detach-keep', text: 'Detach (keep local copy)' },
+				{ id: 'mirror-detach-delete', text: 'Detach and delete local copy' }
+			]
+		});
+	}
+
 	if (allTags.length > 0) {
 		contextMenu.push({
 			id: 'add-tag-label',
@@ -656,6 +695,57 @@ async function handleContextMenuClick(event, panelId) {
 		} catch (err) {
 			alert('Error opening in panel: ' + err.message);
 		}
+	}
+
+	if (menuItemId.startsWith('mirror-to-panel-')) {
+		const targetPanel = parseInt(menuItemId.split('-').pop());
+		const targetDir = panelState[targetPanel]?.currentPath;
+		if (!targetDir) {
+			w2utils.notify('Target panel has no directory open', { error: true, timeout: 4000 });
+			return;
+		}
+		const items = selectedRecords
+			.filter(r => !r.isFolder && r.path && r.filenameRaw !== '.' && r.filenameRaw !== '..')
+			.map(r => ({ remotePath: r.path }));
+		if (items.length === 0) return;
+		try {
+			// Context-menu creation is one-directional by design: the selected
+			// (existing) file is the authority, the target panel hosts the copy.
+			// Direction choice lives in the drag drop-menu.
+			const res = await window.electronAPI.mirrorCreate({
+				items, localDir: targetDir, origin: 'context-menu', direction: 'remote-mirror'
+			});
+			const ok = (res?.results || []).filter(r => r.ok).length;
+			const failed = (res?.results || []).filter(r => !r.ok);
+			if (ok > 0) w2utils.notify(`Mirrored ${ok} file${ok === 1 ? '' : 's'} to Panel ${targetPanel}`, { timeout: 3000 });
+			for (const f of failed) {
+				w2utils.notify(`Mirror failed: ${f.error}`, { error: true, timeout: 5000 });
+			}
+			if (ok > 0) {
+				try { await panels.navigateToDirectory(targetDir, targetPanel, false, false, true); } catch (_) { /* best-effort */ }
+			}
+		} catch (err) {
+			w2utils.notify(`Mirror failed: ${err.message}`, { error: true, timeout: 5000 });
+		}
+		return;
+	}
+
+	if (menuItemId === 'mirror-sync-now' || menuItemId === 'mirror-detach-keep' || menuItemId === 'mirror-detach-delete') {
+		const rec = panelContextMenuState.triggerRecord || selectedRecords[0];
+		if (!rec?.mirrorId) return;
+		if (menuItemId === 'mirror-sync-now') {
+			await mirrorsUi.syncMirrorNow(rec.mirrorId);
+		} else if (menuItemId === 'mirror-detach-keep') {
+			await mirrorsUi.detachMirror(rec.mirrorId, false);
+		} else {
+			w2confirm(`Delete the local copy "${rec.filenameRaw}" and detach its mirror?<br>The remote file is not touched.`)
+				.yes(async () => {
+					await mirrorsUi.detachMirror(rec.mirrorId, true);
+					const dir = panelState[panelId]?.currentPath;
+					if (dir) { try { await panels.navigateToDirectory(dir, panelId, false, false, true); } catch (_) { /* best-effort */ } }
+				});
+		}
+		return;
 	}
 
 	if (menuItemId === 'open-in') {
