@@ -1,5 +1,6 @@
 const fs = require('fs');
-const sharp = require('sharp');
+const { Jimp } = require('jimp');
+const { Resvg } = require('@resvg/resvg-js');
 const path = require('path');
 const os = require('os');
 const logger = require('./logger');
@@ -134,13 +135,17 @@ class IconService {
       svgMarkup = svgMarkup.replace(/fill:\s*#[0-9a-fA-F]{6}/g, `fill:${bgHex}`);
       svgMarkup = svgMarkup.replace(/stroke:\s*#[0-9a-fA-F]{6}/g, `stroke:${outlineHex}`);
 
-      const baseIcon = await sharp(Buffer.from(svgMarkup))
-        .resize(iconSize, iconSize, { fit: 'contain', kernel: 'lanczos3' })
-        .png()
-        .toBuffer();
-
-      // --- Build composite layers array ---
-      const compositeLayers = [];
+      // Render the folder SVG at iconSize, preserving aspect ratio (equivalent to fit: 'contain')
+      const folderRender = new Resvg(svgMarkup, { fitTo: { mode: 'width', value: iconSize } });
+      const folderPng = folderRender.render().asPng();
+      let baseIconImg = await Jimp.read(folderPng);
+      if (baseIconImg.bitmap.width !== iconSize || baseIconImg.bitmap.height !== iconSize) {
+        const canvas = new Jimp({ width: iconSize, height: iconSize, color: 0x00000000 });
+        const offsetX = Math.round((iconSize - baseIconImg.bitmap.width) / 2);
+        const offsetY = Math.round((iconSize - baseIconImg.bitmap.height) / 2);
+        canvas.composite(baseIconImg, offsetX, offsetY);
+        baseIconImg = canvas;
+      }
 
       // --- Optionally overlay initials as SVG text ---
       // Render at 2× native canvas size for crisp text, then downscale
@@ -157,26 +162,21 @@ class IconService {
         const cy = Math.round(sh * 0.68);
         const textHex = `#${outlineRGB.r.toString(16).padStart(2,'0')}${outlineRGB.g.toString(16).padStart(2,'0')}${outlineRGB.b.toString(16).padStart(2,'0')}`;
         // Use Impact/Arial Black for dense, pixel-friendly rendering
-        const svgText = Buffer.from(
+        const svgText =
           `<svg xmlns="http://www.w3.org/2000/svg" width="${sw}" height="${sh}">` +
           `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle"` +
           ` font-family="Verdana, Tahoma, 'Segoe UI', sans-serif" font-size="${fontSize}" font-weight="700"` +
           ` fill="${textHex}" letter-spacing="-1">${label}</text>` +
-          `</svg>`
-        );
+          `</svg>`;
         // Render text at 2× then downscale to native size for sharpness
-        const textLayer = await sharp(svgText)
-          .resize(w, h, { fit: 'fill', kernel: 'lanczos3' })
-          .png()
-          .toBuffer();
-        compositeLayers.push({ input: textLayer, blend: 'over' });
+        const textRender = new Resvg(svgText, { fitTo: { mode: 'original' } });
+        const textPng = textRender.render().asPng();
+        const textLayer = await Jimp.read(textPng);
+        textLayer.resize({ w, h });
+        baseIconImg.composite(textLayer, 0, 0);
       }
 
-      // --- Composite the optional text over the rendered folder SVG ---
-      const iconPng = await sharp(baseIcon)
-        .composite(compositeLayers)
-        .png()
-        .toBuffer();
+      const iconPng = await baseIconImg.getBuffer('image/png');
 
       this._folderIconCache.set(cacheKey, iconPng);
       return iconPng;
@@ -208,8 +208,8 @@ class IconService {
       const outlineRGB = this.parseRGB(outlineColor);
 
       // Tint tag-internal.png with bgColor
-      const { data: internalData, info: internalInfo } = await sharp(internalSource)
-        .raw().toBuffer({ resolveWithObject: true });
+      const internalImg = await Jimp.read(internalSource);
+      const internalData = internalImg.bitmap.data;
 
       for (let i = 0; i < internalData.length; i += 4) {
         if (internalData[i + 3] > 10) {
@@ -219,13 +219,9 @@ class IconService {
         }
       }
 
-      const internalColored = await sharp(internalData, {
-        raw: { width: internalInfo.width, height: internalInfo.height, channels: internalInfo.channels }
-      }).png().toBuffer();
-
       // Tint tag.png dark pixels with outlineColor
-      const { data: outlineData, info: outlineInfo } = await sharp(outlineSource)
-        .raw().toBuffer({ resolveWithObject: true });
+      const outlineImg = await Jimp.read(outlineSource);
+      const outlineData = outlineImg.bitmap.data;
 
       for (let i = 0; i < outlineData.length; i += 4) {
         const brightness = (outlineData[i] + outlineData[i + 1] + outlineData[i + 2]) / 3;
@@ -236,14 +232,8 @@ class IconService {
         }
       }
 
-      const outlineColored = await sharp(outlineData, {
-        raw: { width: outlineInfo.width, height: outlineInfo.height, channels: outlineInfo.channels }
-      }).png().toBuffer();
-
-      const iconPng = await sharp(internalColored)
-        .composite([{ input: outlineColored, blend: 'over' }])
-        .png()
-        .toBuffer();
+      internalImg.composite(outlineImg, 0, 0);
+      const iconPng = await internalImg.getBuffer('image/png');
 
       return iconPng;
     } catch (err) {

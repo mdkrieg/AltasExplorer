@@ -1,5 +1,6 @@
 jest.mock('fs');
-jest.mock('sharp', () => jest.fn());
+jest.mock('jimp', () => ({ Jimp: { read: jest.fn() } }));
+jest.mock('@resvg/resvg-js', () => ({ Resvg: jest.fn() }));
 jest.mock('../logger', () => ({
   warn: jest.fn(),
   error: jest.fn()

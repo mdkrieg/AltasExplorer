@@ -3066,7 +3066,7 @@ ipcMain.handle('render-markdown', async (event, arg) => {
 });
 
 /**
- * EXIF: Extract image metadata from a file using sharp.
+ * EXIF: Extract image metadata from a file using image-size + exifr.
  * Returns exif fields if found, or null if file has no EXIF / is not an image.
  */
 ipcMain.handle('get-exif-data', async (event, filePath) => {
@@ -3078,59 +3078,65 @@ ipcMain.handle('get-exif-data', async (event, filePath) => {
       return { success: false, exif: null };
     }
 
-    const sharp = require('sharp');
-    const meta = await sharp(filePath).metadata();
-    if (!meta) {
-      return { success: true, exif: null };
-    }
-
-    const exif = meta.exif ? require('sharp').metadata : null;
-
-    // sharp exposes the parsed EXIF fields directly on metadata for common tags
     const result = {};
 
-    if (meta.width)             result.width            = meta.width;
-    if (meta.height)            result.height           = meta.height;
-    if (meta.format)            result.format           = meta.format;
-    if (meta.space)             result.colorSpace       = meta.space;
-    if (meta.channels)          result.channels         = meta.channels;
-    if (meta.density)           result.density          = `${meta.density} PPI`;
-    if (meta.hasProfile)        result.hasIccProfile    = meta.hasProfile ? 'Yes' : 'No';
-    if (meta.orientation)       result.orientation      = meta.orientation;
-
-    // Parse raw EXIF buffer with exif-reader if available, otherwise surface what sharp provides
-    if (meta.exif) {
-      try {
-        const ExifReader = require('exif-reader');
-        const parsed = ExifReader(meta.exif);
-        const image   = parsed.image   || {};
-        const photo   = parsed.Photo   || parsed.exif || {};
-        const gps     = parsed.GPSInfo || parsed.gps  || {};
-
-        if (image.Make)              result.make              = String(image.Make);
-        if (image.Model)             result.model             = String(image.Model);
-        if (image.Software)          result.software          = String(image.Software);
-        if (image.Artist)            result.artist            = String(image.Artist);
-        if (image.Copyright)         result.copyright         = String(image.Copyright);
-        if (image.DateTime)          result.dateTime          = String(image.DateTime);
-        if (photo.DateTimeOriginal)  result.dateTimeOriginal  = String(photo.DateTimeOriginal);
-        if (photo.ExposureTime)      result.exposureTime      = String(photo.ExposureTime);
-        if (photo.FNumber)           result.fNumber           = String(photo.FNumber);
-        if (photo.ISOSpeedRatings)   result.iso               = String(photo.ISOSpeedRatings);
-        if (photo.FocalLength)       result.focalLength       = String(photo.FocalLength);
-        if (photo.Flash !== undefined) result.flash           = String(photo.Flash);
-        if (photo.ExposureProgram !== undefined) result.exposureProgram = String(photo.ExposureProgram);
-        if (photo.WhiteBalance !== undefined)    result.whiteBalance    = String(photo.WhiteBalance);
-        if (gps.GPSLatitude && gps.GPSLongitude) {
-          result.gpsLatitude  = String(gps.GPSLatitude);
-          result.gpsLongitude = String(gps.GPSLongitude);
-          if (gps.GPSLatitudeRef)  result.gpsLatRef  = String(gps.GPSLatitudeRef);
-          if (gps.GPSLongitudeRef) result.gpsLonRef  = String(gps.GPSLongitudeRef);
-          if (gps.GPSAltitude)     result.gpsAltitude = String(gps.GPSAltitude);
-        }
-      } catch (_) {
-        // exif-reader not installed or parse failed — image geometry from sharp is still returned
+    // Basic image geometry — works for any recognized image, with or without EXIF
+    try {
+      const { imageSizeFromFile } = require('image-size/fromFile');
+      const size = await imageSizeFromFile(filePath);
+      if (size) {
+        if (size.width)       result.width       = size.width;
+        if (size.height)      result.height      = size.height;
+        if (size.type)        result.format      = size.type;
+        if (size.orientation) result.orientation = size.orientation;
       }
+    } catch (_) {
+      // Not a format image-size recognizes — fall through to EXIF-only data below
+    }
+
+    // Full EXIF/GPS/ICC metadata
+    try {
+      const exifr = require('exifr');
+      const tags = await exifr.parse(filePath, { tiff: true, ifd0: true, exif: true, gps: true, icc: true });
+      if (tags) {
+        if (tags.Make)             result.make             = String(tags.Make);
+        if (tags.Model)            result.model            = String(tags.Model);
+        if (tags.Software)         result.software         = String(tags.Software);
+        if (tags.Artist)           result.artist           = String(tags.Artist);
+        if (tags.Copyright)        result.copyright        = String(tags.Copyright);
+        if (tags.ModifyDate)       result.dateTime         = String(tags.ModifyDate);
+        if (tags.DateTimeOriginal) result.dateTimeOriginal = String(tags.DateTimeOriginal);
+        if (tags.ExposureTime !== undefined)    result.exposureTime    = String(tags.ExposureTime);
+        if (tags.FNumber !== undefined)         result.fNumber         = String(tags.FNumber);
+        if (tags.ISO !== undefined)             result.iso             = String(tags.ISO);
+        if (tags.FocalLength !== undefined)     result.focalLength     = String(tags.FocalLength);
+        if (tags.Flash !== undefined)           result.flash           = String(tags.Flash);
+        if (tags.ExposureProgram !== undefined) result.exposureProgram = String(tags.ExposureProgram);
+        if (tags.WhiteBalance !== undefined)    result.whiteBalance    = String(tags.WhiteBalance);
+        if (tags.ColorSpace !== undefined)      result.colorSpace      = String(tags.ColorSpace);
+
+        // Density (PPI) — derived from the standard EXIF/TIFF resolution tags
+        if (typeof tags.XResolution === 'number') {
+          const unit = typeof tags.ResolutionUnit === 'string' ? tags.ResolutionUnit.toLowerCase() : '';
+          const ppi = unit.includes('cm') ? tags.XResolution * 2.54 : tags.XResolution;
+          result.density = `${Math.round(ppi)} PPI`;
+        }
+
+        // ICC profile presence — signalled by any decoded ICC tag showing up in the merged output
+        if (tags.ProfileDescription || tags.ColorSpaceData || tags.DeviceModel) {
+          result.hasIccProfile = 'Yes';
+        }
+
+        if (typeof tags.latitude === 'number' && typeof tags.longitude === 'number') {
+          result.gpsLatitude  = String(tags.latitude);
+          result.gpsLongitude = String(tags.longitude);
+          if (tags.GPSLatitudeRef)            result.gpsLatRef   = String(tags.GPSLatitudeRef);
+          if (tags.GPSLongitudeRef)           result.gpsLonRef   = String(tags.GPSLongitudeRef);
+          if (tags.GPSAltitude !== undefined) result.gpsAltitude = String(tags.GPSAltitude);
+        }
+      }
+    } catch (_) {
+      // No EXIF/GPS/ICC segment present or parse failed — geometry from image-size is still returned
     }
 
     const hasData = Object.keys(result).length > 0;
@@ -4165,10 +4171,9 @@ ipcMain.handle('save-layout-to-path', async (event, { filePath, layoutData, thum
     if (thumbnailBase64) {
       thumbnailBuffer = Buffer.from(thumbnailBase64, 'base64');
     } else {
-      const sharp = require('sharp');
       const win = senderWindow(event) || getActiveWindow();
       const nimg = await win.webContents.capturePage();
-      thumbnailBuffer = await sharp(nimg.toPNG()).resize(400).png().toBuffer();
+      thumbnailBuffer = nimg.resize({ width: 400 }).toPNG();
     }
     layouts.saveLayout(filePath, layoutData, thumbnailBuffer);
     return { success: true, filePath };
@@ -4180,11 +4185,9 @@ ipcMain.handle('save-layout-to-path', async (event, { filePath, layoutData, thum
 
 ipcMain.handle('capture-thumbnail', async (event) => {
   try {
-    const sharp = require('sharp');
     const win = senderWindow(event) || getActiveWindow();
     const nimg = await win.webContents.capturePage();
-    const fullPng = nimg.toPNG();
-    const thumbnailBuffer = await sharp(fullPng).resize(400).png().toBuffer();
+    const thumbnailBuffer = nimg.resize({ width: 400 }).toPNG();
     return { success: true, thumbnailBase64: thumbnailBuffer.toString('base64') };
   } catch (err) {
     logger.error('Error capturing thumbnail:', err.message);
@@ -4194,18 +4197,13 @@ ipcMain.handle('capture-thumbnail', async (event) => {
 
 ipcMain.handle('save-layout', async (event, layoutData) => {
   try {
-    const sharp = require('sharp');
     const win = senderWindow(event) || getActiveWindow();
 
     // Capture screenshot of current window
     const nimg = await win.webContents.capturePage();
-    const fullPng = nimg.toPNG();
 
     // Resize to 400px wide thumbnail
-    const thumbnailBuffer = await sharp(fullPng)
-      .resize(400)
-      .png()
-      .toBuffer();
+    const thumbnailBuffer = nimg.resize({ width: 400 }).toPNG();
 
     // Show save dialog
     const result = await dialog.showSaveDialog(win, {
@@ -4231,10 +4229,9 @@ ipcMain.handle('save-layout-global-named', async (event, { name, layoutData, thu
     if (thumbnailBase64) {
       thumbnailBuffer = Buffer.from(thumbnailBase64, 'base64');
     } else {
-      const sharp = require('sharp');
       const win = senderWindow(event) || getActiveWindow();
       const nimg = await win.webContents.capturePage();
-      thumbnailBuffer = await sharp(nimg.toPNG()).resize(400).png().toBuffer();
+      thumbnailBuffer = nimg.resize({ width: 400 }).toPNG();
     }
 
     // Ensure name ends with .aly and contains no path separators
