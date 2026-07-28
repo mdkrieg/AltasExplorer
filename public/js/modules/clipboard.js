@@ -76,7 +76,7 @@ export function updateClipboardFooter(panelId) {
 	const text = getClipboardFooterText(panelId);
 	setTimeout(() => {
 		const viewType = getPanelViewType(panelId);
-		if (viewType === 'grid') {
+		if (viewType === 'list') {
 			const el = document.querySelector(`#grid_grid-panel-${panelId}_footer .w2ui-footer-left`);
 			if (el) el.textContent = text;
 		} else if (viewType === 'gallery') {

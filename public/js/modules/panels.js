@@ -27,6 +27,8 @@ import { w2grid, w2ui, w2utils, w2confirm, w2alert, w2field, w2tooltip, w2popup 
 import * as autoLabels from './auto-labels.js';
 import * as gridLayoutSettings from './gridLayoutSettings.js';
 import * as mirrorsUi from './mirrorsUi.js';
+import * as viewTypes from './viewTypes.js';
+import * as board from './board.js';
 import { getPathSuggestions, scoreCandidate } from './path-autocomplete.js';
 import {
 	panelState,
@@ -1342,6 +1344,93 @@ function toggleNavParam(current, param) {
 }
 
 /**
+ * Identity used to decide whether a per-panel view override still applies.
+ * Categories are compared by id where available; unassigned directories all share
+ * the null key so moving between two uncategorised directories keeps the override.
+ * @param {object|null} category
+ * @returns {string|null}
+ */
+function categoryKeyOf(category) {
+	if (!category) return null;
+	return String(category.id ?? category.name ?? '');
+}
+
+/**
+ * Resolve which view type a panel should render.
+ *
+ * Precedence: active virtual view > per-panel session override > the category's
+ * displayMode > list. The override is cleared by clearStaleViewOverride when the
+ * category changes, so by the time it is read here it is already known to be in
+ * scope.
+ *
+ * @param {number} panelId
+ * @returns {string} a valid view type id
+ */
+export function resolvePanelViewType(panelId) {
+	const state = panelState[panelId];
+	if (!state) return viewTypes.DEFAULT_VIEW_TYPE;
+	// Orphans/Trash are cross-directory reports of records that no longer have a
+	// file on disk. Only the w2ui grid can express them, so a panel showing one IS
+	// showing a list whatever the category default says — reporting anything else
+	// would put a checkmark next to a view that is not on screen. The underlying
+	// override is left intact so leaving the virtual view restores it.
+	const navParams = state.currentNavParams;
+	if (navParams && (navParams.has('orphans') || navParams.has('trash'))) {
+		return 'list';
+	}
+	if (state.viewTypeOverride && viewTypes.isValidViewType(state.viewTypeOverride)) {
+		return state.viewTypeOverride;
+	}
+	return viewTypes.normalizeDisplayMode(state.currentCategory?.displayMode);
+}
+
+/**
+ * Drop a per-panel view override when the panel has moved into a different
+ * category. The override is scoped to a category rather than to a directory so
+ * that back/forward and drilling into subdirectories keep the user's choice —
+ * only crossing a category boundary hands control back to that category's default.
+ * @param {number} panelId
+ * @param {object|null} category
+ */
+function clearStaleViewOverride(panelId, category) {
+	const state = panelState[panelId];
+	if (!state) return;
+	const key = categoryKeyOf(category);
+	if (state.viewTypeOverride && state.viewCategoryKey !== key) {
+		state.viewTypeOverride = null;
+		state.suspendedNavParams = null;
+	}
+	state.viewCategoryKey = key;
+}
+
+/**
+ * Show exactly one view container and hide the rest.
+ *
+ * Containers are not uniform: .panel-grid is shown/hidden via display, while
+ * .panel-gallery and .panel-board are toggled with an .active class because their
+ * CSS relies on that class for layout, not just visibility. The descriptor's
+ * `activation` field records which, so this stays a loop over the registry rather
+ * than a chain of per-view special cases.
+ * @param {number} panelId
+ * @param {string} activeViewId
+ */
+function activateViewContainer(panelId, activeViewId) {
+	const $panel = $(`#panel-${panelId}`);
+	for (const view of viewTypes.listViewTypes()) {
+		const $el = $panel.find(view.containerSelector);
+		if (!$el.length) continue;
+		const isActive = view.id === activeViewId;
+		if (view.activation === 'class') {
+			$el.toggleClass('active', isActive);
+		} else if (isActive) {
+			$el.show();
+		} else {
+			$el.hide();
+		}
+	}
+}
+
+/**
  * Encode a list of absolute paths as a pipe-delimited string of paths relative
  * to baseDirname for use in the auxitems URI param.
  *
@@ -1386,12 +1475,221 @@ function getPanelToolbarElement(panelId) {
 	return document.querySelector(`#panel-${panelId} .panel-toolbar`);
 }
 
+// ---------------------------------------------------------------------------
+// View menu (view type selector + virtual view toggles)
+//
+// Orphans and Trash used to be two standalone toolbar buttons. They moved in here
+// alongside the view types because all three answer the same user question —
+// "what am I looking at?" — and the toolbar had no room for a third view control.
+// Built on w2tooltip for the same reason the column filter menus are: it handles
+// anchoring, flipping, and doc-click dismissal that a hand-rolled popover would
+// have to reimplement.
+// ---------------------------------------------------------------------------
+
+function getPanelViewMenuName(panelId) {
+	return `view-menu-panel-${panelId}`;
+}
+
+function buildViewMenuHtml(panelId) {
+	const state = panelState[panelId] || {};
+	const activeViewId = resolvePanelViewType(panelId);
+	const activeView = viewTypes.getViewType(activeViewId);
+	const navParams = state.currentNavParams || new Set();
+
+	const viewRows = viewTypes.listViewTypes().map(view => {
+		const checked = view.id === activeViewId;
+		return `
+			<button type="button" class="view-menu-row${checked ? ' is-checked' : ''}" role="menuitemradio"
+				aria-checked="${checked}" data-view-menu-action="set-view" data-view-id="${view.id}">
+				<span class="view-menu-mark">${checked ? '&#9679;' : ''}</span>
+				<span class="view-menu-label">${utils.escapeHtml(view.label)}</span>
+			</button>
+		`;
+	}).join('');
+
+	// Hidden, not disabled, when the active view cannot express them. A disabled
+	// row reads as "temporarily unavailable"; these are inapplicable, and showing
+	// them greyed out would imply the board is missing a feature it should have.
+	let toggleRows = '';
+	if (activeView?.supportsVirtualViews !== false) {
+		const rows = [
+			{ param: 'orphans', label: 'Orphans', count: state.orphanCount || 0, title: 'Orphaned files/dirs' },
+			{ param: 'trash',   label: 'Trash',   count: state.trashCount  || 0, title: 'Deleted files/dirs' }
+		];
+		toggleRows = '<div class="view-menu-sep"></div>' + rows.map(row => {
+			const checked = navParams.has(row.param);
+			return `
+				<button type="button" class="view-menu-row${checked ? ' is-checked' : ''}" role="menuitemcheckbox"
+					aria-checked="${checked}" title="${utils.escapeHtml(row.title)}"
+					data-view-menu-action="toggle-param" data-param="${row.param}">
+					<span class="view-menu-mark">${checked ? '&#10003;' : ''}</span>
+					<span class="view-menu-label">${utils.escapeHtml(row.label)}</span>
+					${row.count ? `<span class="panel-tb-badge">${row.count}</span>` : ''}
+				</button>
+			`;
+		}).join('');
+	}
+
+	return `
+		<div class="view-menu" data-panel-id="${panelId}" role="menu">
+			${viewRows}
+			${toggleRows}
+		</div>
+	`;
+}
+
+function initViewMenuControls(panelId) {
+	const overlayEl = document.querySelector(`#w2overlay-${getPanelViewMenuName(panelId)}`);
+	if (!overlayEl) return;
+	// w2tooltip dismisses on doc-click; without this every row click would close
+	// the menu before its own handler ran. Same guard the filter menus use.
+	if (overlayEl.dataset.viewMenuInitialized !== 'true') {
+		overlayEl.addEventListener('mousedown', (event) => event.stopPropagation());
+		overlayEl.addEventListener('click', (event) => event.stopPropagation());
+		overlayEl.dataset.viewMenuInitialized = 'true';
+	}
+	overlayEl.querySelectorAll('[data-view-menu-action]').forEach(button => {
+		if (button.dataset.viewActionBound === 'true') return;
+		button.addEventListener('click', (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			const action = button.getAttribute('data-view-menu-action');
+			if (action === 'set-view') {
+				// Picking a view is a terminal choice — close so the result is visible.
+				hidePanelViewMenu(panelId);
+				applyViewTypeSelection(panelId, button.getAttribute('data-view-id'));
+			} else if (action === 'toggle-param') {
+				// Orphans and Trash compose, so the menu stays open for a second pick.
+				toggleVirtualViewParam(panelId, button.getAttribute('data-param'));
+			}
+		});
+		button.dataset.viewActionBound = 'true';
+	});
+}
+
+function hidePanelViewMenu(panelId) {
+	w2tooltip.hide(getPanelViewMenuName(panelId));
+}
+
+/**
+ * Put the view menu back on a freshly rendered toolbar.
+ *
+ * w2tooltip anchors to a specific node and hides the overlay once that node
+ * leaves the DOM. renderPanelToolbar replaces the toolbar's innerHTML wholesale,
+ * so every render — navigation, badge refresh, the async auto-label pass —
+ * dismisses a menu the user is still working in. Re-pointing `overlay.anchor` is
+ * not enough because the queued hide fires regardless; the overlay has to be torn
+ * down and rebuilt on the new node.
+ *
+ * @param {number} panelId
+ */
+function restoreViewMenuAfterRender(panelId) {
+	w2tooltip.hide(getPanelViewMenuName(panelId));
+	// Deferred so w2ui's own hide has finished before the replacement is shown,
+	// otherwise the new overlay is swallowed by the pending teardown.
+	setTimeout(() => {
+		const anchor = document.querySelector(`#panel-${panelId} .panel-tb-view-btn`);
+		if (anchor) openViewMenu(panelId, anchor);
+	}, 0);
+}
+
+/**
+ * Repaint an open view menu in place so checked state and badge counts stay
+ * current after a navigation the menu itself triggered.
+ * @param {number} panelId
+ */
+function refreshOpenViewMenu(panelId) {
+	const name = getPanelViewMenuName(panelId);
+	const overlay = w2tooltip.get(name);
+	if (!overlay?.displayed) return;
+	w2tooltip.update(name, buildViewMenuHtml(panelId));
+	setTimeout(() => initViewMenuControls(panelId), 0);
+}
+
+function openViewMenu(panelId, anchorEl) {
+	if (!anchorEl) return;
+	w2tooltip.show({
+		name: getPanelViewMenuName(panelId),
+		anchor: anchorEl,
+		html: buildViewMenuHtml(panelId),
+		class: 'view-menu-overlay',
+		position: 'bottom|top',
+		align: 'left',
+		arrowSize: 10,
+		hideOn: ['doc-click'],
+		maxWidth: 280,
+		onShow: () => setTimeout(() => initViewMenuControls(panelId), 0),
+		onUpdate: () => setTimeout(() => initViewMenuControls(panelId), 0)
+	});
+	setTimeout(() => initViewMenuControls(panelId), 0);
+}
+
+function toggleVirtualViewParam(panelId, param) {
+	const state = panelState[panelId];
+	if (!state?.currentBasePath || !param) return;
+	const newParams = toggleNavParam(state.currentNavParams || new Set(), param);
+	navigateToDirectory(buildNavUri(state.currentBasePath, newParams), panelId);
+}
+
+/**
+ * Apply a user-chosen view type to a panel.
+ *
+ * Views that cannot express virtual listings (Board) SUSPEND any active
+ * ?orphans/?trash rather than dropping them, so switching away and back is
+ * lossless — the user never has to re-enable what they had turned on.
+ *
+ * Navigation is history-replacing (isHistoryNav = true): choosing a view is not
+ * a location change, and pushing it would make Back undo a view switch instead
+ * of returning to the previous directory.
+ *
+ * Tradeoff: this re-navigates rather than re-rendering cached records in place,
+ * which costs a directory re-scan. Accepted because a dedicated re-render path
+ * would have to duplicate the container-activation and populate dispatch; revisit
+ * if view switching proves slow on large directories.
+ *
+ * @param {number} panelId
+ * @param {string} viewId
+ */
+function applyViewTypeSelection(panelId, viewId) {
+	const state = panelState[panelId];
+	if (!state || !viewTypes.isValidViewType(viewId)) return;
+	if (resolvePanelViewType(panelId) === viewId) return;
+
+	state.viewTypeOverride = viewId;
+	state.viewCategoryKey = categoryKeyOf(state.currentCategory);
+
+	const view = viewTypes.getViewType(viewId);
+	const basePath = state.currentBasePath || state.currentPath;
+	if (!basePath) return;
+	const activeParams = state.currentNavParams || new Set();
+
+	let targetUri;
+	if (view.supportsVirtualViews === false) {
+		if (activeParams.size > 0) state.suspendedNavParams = new Set(activeParams);
+		targetUri = basePath;
+	} else if (state.suspendedNavParams?.size) {
+		targetUri = buildNavUri(basePath, state.suspendedNavParams);
+		state.suspendedNavParams = null;
+	} else {
+		targetUri = buildNavUri(basePath, activeParams);
+	}
+
+	navigateToDirectory(targetUri, panelId, true, true);
+}
+
 export function renderPanelToolbar(panelId, mode = 'detail') {
 	const container = getPanelToolbarElement(panelId);
 	if (!container) return;
+	// Must be read before the innerHTML swap below destroys the menu's anchor.
+	// If the menu is on screen now it should still be on screen afterwards — a
+	// toolbar repaint is never the user asking to dismiss it.
+	const viewMenuWasOpen = !!w2tooltip.get(getPanelViewMenuName(panelId))?.displayed;
 	const isDeepSearch = !!(panelState[panelId]?.deepSearchQuery);
 	const isLiveContentSearch = isDeepSearch && panelState[panelId]?.deepSearchContentMode === 'live';
-	const showDepth = mode !== 'gallery' && !isDeepSearch;
+	// Depth is a capability of the view type, not a property of this function's
+	// caller — asking the registry keeps new views from having to edit this line.
+	const activeView = viewTypes.getViewType(resolvePanelViewType(panelId));
+	const showDepth = (activeView?.supportsDepth !== false) && !isDeepSearch;
 	const depth = panelState[panelId]?.depth || 0;
 	const searchValue = panelState[panelId]?.toolbarSearch || '';
 	const state = panelState[panelId] || {};
@@ -1401,6 +1699,8 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 	const navParams   = state.currentNavParams || new Set();
 	const orphanActive = navParams.has('orphans');
 	const trashActive  = navParams.has('trash');
+	const activeViewLabel = activeView?.label || 'View';
+	const anyVirtualActive = orphanActive || trashActive;
 
 	container.innerHTML = `
 		<button class="panel-tb-btn" data-action="back" title="Back">
@@ -1428,11 +1728,9 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 			</div>
 		` : ''}
 		<span class="panel-tb-break"></span>
-		<button class="panel-tb-btn panel-tb-virtual-btn${orphanActive ? ' is-active' : ''}" data-action="toggle-orphans" title="Orphaned files/dirs${orphanCount ? ` (${orphanCount})` : ''}">
-			Orphans${orphanCount ? `<span class="panel-tb-badge">${orphanCount}</span>` : ''}
-		</button>
-		<button class="panel-tb-btn panel-tb-virtual-btn${trashActive ? ' is-active' : ''}" data-action="toggle-trash" title="Deleted files/dirs${trashCount ? ` (${trashCount})` : ''}">
-			Trash${trashCount ? `<span class="panel-tb-badge">${trashCount}</span>` : ''}
+		<button class="panel-tb-btn panel-tb-view-btn${anyVirtualActive ? ' is-active' : ''}" data-action="open-view-menu" title="View options">
+			${utils.escapeHtml(activeViewLabel)}
+			<span class="panel-tb-view-caret">&#9662;</span>
 		</button>
 		<span class="panel-tb-break"></span>
 		<button id="btn-toolbar-terminal-${panelId}" class="panel-tb-btn" title="Terminal">
@@ -1454,6 +1752,7 @@ export function renderPanelToolbar(panelId, mode = 'detail') {
 	container.style.display = '';
 	container.classList.add('active');
 	attachPanelToolbarEventListeners(panelId);
+	if (viewMenuWasOpen) restoreViewMenuAfterRender(panelId);
 }
 
 export function hidePanelToolbar(panelId) {
@@ -1485,20 +1784,9 @@ function attachPanelToolbarEventListeners(panelId) {
 		}
 	});
 
-	$tb.find('[data-action="toggle-orphans"]').off('click').on('click', function () {
+	$tb.find('[data-action="open-view-menu"]').off('click').on('click', function () {
 		setActivePanelId(panelId);
-		const state = panelState[panelId];
-		if (!state?.currentBasePath) return;
-		const newParams = toggleNavParam(state.currentNavParams || new Set(), 'orphans');
-		navigateToDirectory(buildNavUri(state.currentBasePath, newParams), panelId);
-	});
-
-	$tb.find('[data-action="toggle-trash"]').off('click').on('click', function () {
-		setActivePanelId(panelId);
-		const state = panelState[panelId];
-		if (!state?.currentBasePath) return;
-		const newParams = toggleNavParam(state.currentNavParams || new Set(), 'trash');
-		navigateToDirectory(buildNavUri(state.currentBasePath, newParams), panelId);
+		openViewMenu(panelId, this);
 	});
 
 	// Promote/demote the current deep search to/from a live content search.
@@ -4394,8 +4682,12 @@ async function refreshBadgeCounts(panelId) {
 		if (!result?.success) return;
 		state.orphanCount = result.orphanCount ?? 0;
 		state.trashCount  = result.trashCount  ?? 0;
-		const mode = state.currentCategory?.displayMode === 'gallery' ? 'gallery' : 'detail';
+		// Must resolve through the registry, not category.displayMode — otherwise a
+		// panel using a per-panel view override gets its toolbar rebuilt in the
+		// category's mode and silently loses the override's toolbar shape.
+		const mode = viewTypes.getViewType(resolvePanelViewType(panelId))?.toolbarMode || 'detail';
 		renderPanelToolbar(panelId, mode);
+		refreshOpenViewMenu(panelId);
 	} catch (err) {
 		console.warn('[refreshBadgeCounts] failed:', err);
 	}
@@ -4687,9 +4979,15 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			hidePanelLoading(panelId);
 			const $panel = $(`#panel-${panelId}`);
 			$panel.find('.panel-landing-page').hide();
-			$panel.find('.panel-gallery').removeClass('active');
-			$panel.find('.panel-grid').show();
+			// Virtual views always render into the w2ui grid; going through the
+			// registry here (rather than poking .panel-gallery directly) guarantees a
+			// board container left over from the previous view is deactivated too.
+			activateViewContainer(panelId, 'list');
+			board.disposeBoard(panelId);
 			renderPanelToolbar(panelId, 'detail');
+			// Toggling Orphans/Trash lands here, and that navigation rebuilt the
+			// toolbar out from under the open View menu.
+			refreshOpenViewMenu(panelId);
 
 			await populateFileGrid(entries, category, panelId);
 			setTimeout(() => { clipboard.updateClipboardFooter(panelId); clipboard.reapplyClipboardClasses(panelId, panelState); }, 0);
@@ -5094,6 +5392,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		const category = await window.electronAPI.getCategoryForDirectory(normalizedPath);
 		const prevCategory = state.currentCategory;
 		state.currentCategory = category;
+		clearStaleViewOverride(panelId, category);
 		const prevAttrs = JSON.stringify((prevCategory && prevCategory.attributes) || []);
 		const newAttrs = JSON.stringify((category && category.attributes) || []);
 		if (prevAttrs !== newAttrs) {
@@ -5143,23 +5442,28 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 		const entries = (scanResult.success ? scanResult.entries : [])
 			.filter(e => e.changeState !== 'orphan' && e.changeState !== 'moved');
 		const depth = panelState[panelId].depth || 0;
-		const isGallery = category && category.displayMode === 'gallery';
+		const viewTypeId = resolvePanelViewType(panelId);
+		const isGrid = viewTypeId === 'list';
 
 		// Show the appropriate view container
 		hidePanelLoading(panelId);
 		const $panel = $(`#panel-${panelId}`);
 		$panel.find('.panel-landing-page').hide();
-		if (isGallery) {
-			$panel.find('.panel-grid').hide();
-			$panel.find('.panel-gallery').addClass('active');
-		} else {
-			$panel.find('.panel-gallery').removeClass('active');
-			$panel.find('.panel-grid').show();
-		}
-		renderPanelToolbar(panelId, isGallery ? 'gallery' : 'detail');
+		activateViewContainer(panelId, viewTypeId);
+		// Leaving board view must surrender the edit lock and flush pending geometry —
+		// a lock held by a panel that is no longer showing a board would block every
+		// other panel with no visible cause.
+		if (viewTypeId !== 'board') board.disposeBoard(panelId);
+		renderPanelToolbar(panelId, viewTypes.getViewType(viewTypeId)?.toolbarMode || 'detail');
+		// Toggling Orphans/Trash navigates, which rebuilds the toolbar and detaches
+		// the menu's anchor. Re-point and repaint it so the menu survives the
+		// round-trip with correct checkmarks and badge counts.
+		refreshOpenViewMenu(panelId);
 
-		if (isGallery) {
+		if (viewTypeId === 'gallery') {
 			await populateGalleryView(entries, category, panelId);
+		} else if (viewTypeId === 'board') {
+			await populateBoardView(entries, category, panelId, normalizedPath);
 		} else if (depth > 0) {
 			await scanDirectoryTreeStreaming(normalizedPath, depth, panelId);
 		} else {
@@ -5175,7 +5479,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 
 		// Apply per-directory saved grid layout (columns, sort) for grid views.
 		// Session layout (in-memory, from this run) takes priority over the DB layout.
-		if (!isGallery && depth === 0) {
+		if (isGrid && depth === 0) {
 			const sessionLayout = (panelState[panelId].sessionDirLayouts || {})[normalizedPath];
 			if (sessionLayout) {
 				applySessionDirLayout(panelId, sessionLayout);
@@ -6390,12 +6694,22 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 	}
 }
 
-async function populateGalleryView(entries, currentDirCategory, panelId = activePanelId) {
+/**
+ * Build the display records for an entry list: folder icons resolved per-category,
+ * thumbnail kind classified, dot-entry settings applied.
+ *
+ * Extracted from populateGalleryView so Board can render the same items without a
+ * second, drifting copy of this logic. Anything that is genuinely gallery-specific
+ * (selection sets, DOM) stays in the caller.
+ *
+ * @param {object[]} entries
+ * @param {object|null} currentDirCategory
+ * @param {number} panelId
+ * @returns {Promise<object[]>}
+ */
+async function buildViewRecords(entries, currentDirCategory, panelId) {
 	const state = panelState[panelId];
-	const [settings, tagDefs] = await Promise.all([
-		window.electronAPI.getSettings(),
-		window.electronAPI.loadTags()
-	]);
+	const settings = await window.electronAPI.getSettings();
 
 	const hideDotDirectory = settings.hide_dot_directory || false;
 	const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
@@ -6430,7 +6744,7 @@ async function populateGalleryView(entries, currentDirCategory, panelId = active
 	const folders = filteredEntries.filter(e => e.isDirectory);
 	const files = filteredEntries.filter(e => !e.isDirectory);
 
-	const galleryRecords = [];
+	const records = [];
 	let recordId = 1;
 
 	// Build folder records
@@ -6452,20 +6766,20 @@ async function populateGalleryView(entries, currentDirCategory, panelId = active
 			iconUrl = 'assets/icons/folder-icon.png';
 		}
 		// Build display filename with direct (non-inherited) display name
-		let galleryFilename = folder.displayFilename || folder.filename;
+		let recordFilename = folder.displayFilename || folder.filename;
 		if (folder.displayName && !folder.displayNameIsInherited) {
 			if (folder.filename === '.') {
-				galleryFilename = `. [${folder.displayName}] (${folder.filename})`;
+				recordFilename = `. [${folder.displayName}] (${folder.filename})`;
 			} else if (folder.filename === '..') {
-				galleryFilename = `.. [${folder.displayName}] (${folder.filename})`;
+				recordFilename = `.. [${folder.displayName}] (${folder.filename})`;
 			} else {
-				galleryFilename = `[${folder.displayName}] ${folder.filename}`;
+				recordFilename = `[${folder.displayName}] ${folder.filename}`;
 			}
 		}
-		galleryRecords.push({
+		records.push({
 			recid: recordId++,
 			icon: iconUrl,
-			filename: galleryFilename,
+			filename: recordFilename,
 			filenameRaw: folder.filename,
 			path: folder.path,
 			isFolder: true,
@@ -6491,7 +6805,7 @@ async function populateGalleryView(entries, currentDirCategory, panelId = active
 		const isVideoType = (matchedFt && matchedFt.type === 'Video') || VIDEO_EXTS.has(ext);
 		const thumbnailType = file.changeState === 'moved' ? 'icon'
 			: isImageType ? 'image' : isVideoType ? 'video' : 'icon';
-		galleryRecords.push({
+		records.push({
 			recid: recordId++,
 			icon: iconUrl,
 			filename: file.displayFilename || file.filename,
@@ -6506,6 +6820,81 @@ async function populateGalleryView(entries, currentDirCategory, panelId = active
 			thumbnailType
 		});
 	}
+
+	return records;
+}
+
+/**
+ * Open a record the way List and Gallery do — folders navigate, shortcuts resolve,
+ * files go to the OS default app.
+ *
+ * Shared so Board's double-click is literally the same behaviour rather than a
+ * lookalike that drifts. Board's mode contract means this only ever runs in view
+ * mode; see agent-docs/DECISIONS.md#board-mode-contract.
+ * @param {object} record
+ * @param {number} panelId
+ */
+function openRecord(record, panelId) {
+	if (!record) return;
+	if (record.isFolder && record.changeState !== 'moved') {
+		navigateToDirectory(record.path, panelId);
+		return;
+	}
+	if (record.path && record.path.toLowerCase().endsWith('.lnk')) {
+		window.electronAPI.resolveShortcut(record.path).then(res => {
+			if (res && res.success) navigateToDirectory(res.targetPath, panelId);
+		});
+		return;
+	}
+	if (!record.isFolder) {
+		window.electronAPI.openInDefaultApp(record.path);
+	}
+}
+
+/**
+ * Show the standard item context menu for a set of records.
+ * @param {object[]} records
+ * @param {number} clientX
+ * @param {number} clientY
+ * @param {number} panelId
+ */
+async function showRecordContextMenu(records, clientX, clientY, panelId) {
+	if (!records?.length) return;
+	const { items: menuItems, pendingDefaultApp, pendingViewMode } =
+		await generateW2UIContextMenu(records, visiblePanels);
+	showCustomContextMenu(menuItems, clientX, clientY, panelId, pendingDefaultApp, pendingViewMode);
+}
+
+/**
+ * Host callbacks handed to the board module.
+ *
+ * Board is given functions rather than importing them so panels.js stays the only
+ * module that knows how navigation, selection, and context menus are wired. It also
+ * keeps the panels <-> board import cycle one-directional.
+ * @param {number} panelId
+ */
+function boardHostDeps(panelId) {
+	return {
+		setActivePanelId,
+		navigateToDirectory,
+		openRecord,
+		showRecordContextMenu,
+		updateSelectedItemFromRecord
+	};
+}
+
+async function populateBoardView(entries, currentDirCategory, panelId, dirPath) {
+	const records = await buildViewRecords(entries, currentDirCategory, panelId);
+	await board.populateBoardView(records, panelId, dirPath, boardHostDeps(panelId));
+	setTimeout(() => { clipboard.updateClipboardFooter(panelId); }, 0);
+}
+
+async function populateGalleryView(entries, currentDirCategory, panelId = activePanelId) {
+	const state = panelState[panelId];
+	const [tagDefs, galleryRecords] = await Promise.all([
+		window.electronAPI.loadTags(),
+		buildViewRecords(entries, currentDirCategory, panelId)
+	]);
 
 	state.galleryRecords = galleryRecords;
 	state.gallerySelectedRecids = new Set();
@@ -6684,20 +7073,7 @@ function renderGallery(panelId, tagDefs) {
 		setActivePanelId(panelId);
 		const recid = parseInt($(this).data('recid'), 10);
 		const record = (state.galleryRecords || []).find(r => r.recid === recid);
-		if (!record) return;
-		if (record.isFolder && record.changeState !== 'moved') {
-			navigateToDirectory(record.path, panelId);
-			return;
-		}
-		if (record.path && record.path.toLowerCase().endsWith('.lnk')) {
-			window.electronAPI.resolveShortcut(record.path).then(res => {
-				if (res && res.success) navigateToDirectory(res.targetPath, panelId);
-			});
-			return;
-		}
-		if (!record.isFolder) {
-			window.electronAPI.openInDefaultApp(record.path);
-		}
+		openRecord(record, panelId);
 	});
 
 	$gallery.on('contextmenu.gallery', '.gallery-item', async function (e) {
@@ -7309,6 +7685,19 @@ export function setGridFocusedPanelId(panelId) {
 	gridFocusedPanelId = panelId;
 }
 
+/**
+ * Classify what a panel is currently showing.
+ *
+ * This is a panel-CONTENT classifier, not a view-type resolver: 'properties' and
+ * 'file' are not view types and never appear in the view registry. Use
+ * resolvePanelViewType when you want "which directory view is selected"; use this
+ * when you want "what is on screen right now", which is the question keyboard,
+ * clipboard, and context-menu code actually ask.
+ *
+ * Returns 'list' (not 'grid') so directory-view results line up with view type ids.
+ * @param {number} panelId
+ * @returns {'properties'|'file'|'gallery'|'board'|'list'}
+ */
 export function getPanelViewType(panelId) {
 	const $panel = $(`#panel-${panelId}`);
 	// ip-widget or fv-widget hosted inside this panel
@@ -7316,7 +7705,8 @@ export function getPanelViewType(panelId) {
 	if ($panel.find('#fv-widget').length > 0) return 'file';
 	if ($panel.find('.panel-file-view').is(':visible')) return 'file';
 	if ($panel.find('.panel-gallery').hasClass('active')) return 'gallery';
-	if ($panel.find('.panel-grid').is(':visible')) return 'grid';
+	if ($panel.find('.panel-board').hasClass('active')) return 'board';
+	if ($panel.find('.panel-grid').is(':visible')) return 'list';
 	return 'properties';
 }
 

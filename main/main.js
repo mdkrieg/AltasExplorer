@@ -4162,6 +4162,43 @@ ipcMain.handle('set-grid-layout-layer', (event, { scope, key, layer }) => {
 });
 
 // ============================================
+// Board Layout (per-directory item geometry)
+// ============================================
+
+ipcMain.handle('get-dir-board', (event, dirPath) => {
+  try {
+    return { success: true, board: dirPath ? db.getDirBoard(dirPath) : null };
+  } catch (err) {
+    logger.error('Error getting dir board:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// The renderer always sends a complete snapshot; see db.saveDirBoard for why this
+// is a wholesale replace rather than a diff.
+ipcMain.handle('save-dir-board', (event, { dirPath, board }) => {
+  try {
+    if (!dirPath) throw new Error('dirPath is required');
+    db.saveDirBoard(dirPath, board);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error saving dir board:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('delete-dir-board', (event, dirPath) => {
+  try {
+    if (!dirPath) throw new Error('dirPath is required');
+    db.deleteDirBoard(dirPath);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error deleting dir board:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ============================================
 // Layout Save/Load (.aly files)
 // ============================================
 

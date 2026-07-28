@@ -201,6 +201,27 @@ button:active {
   background: #155da0;
 }
 
+/* View menu button. Carries .is-active whenever any virtual view is on, because
+   Orphans/Trash no longer have buttons of their own — without it, the fact that
+   the listing is filtered would only be visible after opening the menu. */
+.panel-tb-view-btn {
+  font-size: 12px;
+  gap: 5px;
+}
+.panel-tb-view-btn.is-active {
+  background: #1e6db5;
+  border-color: #1555a0;
+  color: #fff;
+}
+.panel-tb-view-btn.is-active:hover {
+  background: #155da0;
+}
+.panel-tb-view-caret {
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
 /* Badge count on toolbar buttons */
 .panel-tb-badge {
   display: inline-flex;
@@ -734,6 +755,269 @@ button:active {
 .panel-item > .panel-gallery.active,
 .panel-content > .panel-gallery.active {
   display: flex;
+}
+
+/* =====================
+   Board view
+   ===================== */
+.panel-item > .panel-board,
+.panel-content > .panel-board {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: none;
+  position: relative;
+  overflow: hidden;
+  background: #fbfbfb;
+}
+.panel-item > .panel-board.active,
+.panel-content > .panel-board.active {
+  display: block;
+}
+
+/* The canvas scrolls; the tray and footer overlay it. Docking must never resize
+   this element — item coordinates are absolute within it and would all shift.
+   See agent-docs/DECISIONS.md#board-tray-overlay. */
+.board-canvas {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+}
+
+.panel-board.board-edit-mode .board-canvas {
+  /* Grid is only shown while editing: it is an alignment aid, and leaving it on
+     in view mode turns a deliberate arrangement into a spreadsheet. */
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.06) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.board-card {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: hidden;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #fff;
+  cursor: default;
+  user-select: none;
+}
+.board-card:hover {
+  border-color: #cfd8e0;
+}
+.board-card.is-selected {
+  border-color: #1e6db5;
+  background: #eaf3fb;
+}
+.board-card.is-dragging {
+  opacity: 0.75;
+  z-index: 5;
+}
+
+/* The icon is fixed-size and never scales with the card boundary — a card is a
+   container for detail, not a zoom control. */
+.board-card-icon-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+}
+.board-card-icon {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.board-card-name {
+  flex: 0 0 auto;
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Handles exist only in edit mode; in view mode they are not merely hidden but
+   non-interactive, so a view-mode click can never begin a resize. */
+.board-card-handle {
+  position: absolute;
+  display: none;
+  background: #1e6db5;
+  opacity: 0.6;
+}
+.panel-board.board-edit-mode .board-card-handle {
+  display: block;
+}
+.board-card-handle-e {
+  top: 25%;
+  right: 0;
+  width: 4px;
+  height: 50%;
+  cursor: ew-resize;
+}
+.board-card-handle-s {
+  left: 25%;
+  bottom: 0;
+  height: 4px;
+  width: 50%;
+  cursor: ns-resize;
+}
+.board-card-handle-se {
+  right: 0;
+  bottom: 0;
+  width: 7px;
+  height: 7px;
+  cursor: nwse-resize;
+}
+
+.panel-board.board-edit-mode .board-card {
+  cursor: move;
+}
+
+.board-drag-ghost {
+  position: absolute;
+  z-index: 6;
+  border: 2px dashed #1e6db5;
+  border-radius: 4px;
+  background: rgba(30, 109, 181, 0.12);
+  pointer-events: none;
+}
+
+/* --- Tray --- */
+.board-tray {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border: 1px solid #c8d2da;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+.board-tray-dock-right { top: 8px; right: 8px; bottom: 40px; }
+.board-tray-dock-left { top: 8px; left: 8px; bottom: 40px; }
+.board-tray-dock-top { top: 8px; left: 8px; right: 8px; }
+.board-tray-dock-bottom { bottom: 40px; left: 8px; right: 8px; }
+
+.board-tray-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid #e2e8ed;
+  background: #f2f5f8;
+  font-size: 11px;
+  font-weight: 600;
+  color: #445;
+}
+.board-tray-toggle {
+  padding: 0 3px;
+  border: none;
+  background: transparent;
+  color: #667;
+  font-size: 11px;
+  cursor: pointer;
+}
+.board-tray-title { flex: 1 1 auto; }
+
+.board-tray-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+/* Collapsing hides the body but keeps the header, so the tray never disappears.
+   A tray that vanished when empty would reappear and shift geometry the moment a
+   new file landed in the directory. */
+.board-tray.is-collapsed .board-tray-body { display: none; }
+.board-tray.is-collapsed { bottom: auto; height: auto; }
+
+.board-tray-empty {
+  padding: 8px 4px;
+  color: #99a;
+  font-size: 11px;
+  text-align: center;
+}
+
+.board-tray-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: default;
+  user-select: none;
+}
+.board-tray-item:hover { background: #eaf3fb; }
+.panel-board.board-edit-mode .board-tray-item { cursor: grab; }
+.board-tray-item-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+.board-tray-item-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* --- Footer --- */
+.board-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-top: 1px solid #e0e0e0;
+  background: #f5f5f5;
+  font-size: 11px;
+}
+.board-edit-btn {
+  padding: 3px 10px;
+  border: 1px solid #c4c4c4;
+  border-radius: 3px;
+  background: #fff;
+  font-size: 11px;
+  cursor: pointer;
+}
+.board-edit-btn:hover:not(:disabled) { background: #eaf3fb; }
+.board-edit-btn.is-active {
+  background: #1e6db5;
+  border-color: #1555a0;
+  color: #fff;
+}
+.board-edit-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.board-footer-note { color: #777; }
+.board-footer-attention {
+  color: #8a6100;
+  cursor: default;
 }
 
 .panel-content > .panel-landing-page,
@@ -3130,9 +3414,67 @@ hr {
 }
 
 /* =====================
-   Column Size Popover
+   View Menu Popover
    ===================== */
-.grid-size-overlay {
+.view-menu-overlay {
+  padding: 0;
+  background: #DDD !important;
+}
+
+.view-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: 5px 0;
+}
+
+.view-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px 5px 8px;
+  border: none;
+  background: transparent;
+  color: #333;
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.view-menu-row:hover {
+  background: #cfe4f5;
+}
+
+.view-menu-row.is-checked {
+  font-weight: 600;
+}
+
+/* Fixed-width so labels align whether or not a row is checked — the mark
+   appearing must not shift the text next to it. */
+.view-menu-mark {
+  flex: 0 0 12px;
+  font-size: 11px;
+  line-height: 1;
+  color: #1e6db5;
+  text-align: center;
+}
+
+.view-menu-label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+
+.view-menu-sep {
+  height: 1px;
+  margin: 5px 8px;
+  background: #bbb;
+}
+
+/* =====================
+   Column Size Popover
+   ===================== */.grid-size-overlay {
   padding: 0;
   background: #DDD !important;
 }

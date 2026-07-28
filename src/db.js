@@ -211,6 +211,58 @@ class DatabaseService {
         saved_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
       );
 
+      -- Board view geometry. Lives in SQLite rather than a flat sidecar; the
+      -- reasoning (and the two flat-file approaches that were tried and rejected)
+      -- is in agent-docs/DECISIONS.md#board-storage.
+      --
+      -- Unlike every other table here, these rows cannot be recomputed from the
+      -- filesystem — a board arrangement is user intent with no other source.
+      -- scripts/reinitialize-db.js must therefore back up before wiping.
+      CREATE TABLE IF NOT EXISTS dir_boards (
+        dirname TEXT PRIMARY KEY,
+        grid_size INTEGER NOT NULL DEFAULT 16,
+        tray_json TEXT NOT NULL DEFAULT '{}',
+        saved_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+      );
+
+      -- inode is stored alongside filename so a file renamed outside Atlas can be
+      -- re-linked to its coordinates instead of orphaning them.
+      CREATE TABLE IF NOT EXISTS board_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dirname TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        inode TEXT,
+        x INTEGER NOT NULL DEFAULT 0,
+        y INTEGER NOT NULL DEFAULT 0,
+        w INTEGER NOT NULL DEFAULT 0,
+        h INTEGER NOT NULL DEFAULT 0,
+        group_id INTEGER,
+        levels_json TEXT NOT NULL DEFAULT '[]',
+        UNIQUE(dirname, filename)
+      );
+      CREATE INDEX IF NOT EXISTS idx_board_items_dirname ON board_items(dirname);
+
+      CREATE TABLE IF NOT EXISTS board_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dirname TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        collapsed INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_board_groups_dirname ON board_groups(dirname);
+
+      -- Annotations are the one board object that is not a file. They live on a
+      -- separate layer, may overlap freely, and are non-interactive decoration.
+      CREATE TABLE IF NOT EXISTS board_annotations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dirname TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        points_json TEXT NOT NULL DEFAULT '[]',
+        stroke TEXT NOT NULL DEFAULT '#333333',
+        width INTEGER NOT NULL DEFAULT 2,
+        z INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_board_annotations_dirname ON board_annotations(dirname);
+
       CREATE TABLE IF NOT EXISTS reminder_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         notes_file_id INTEGER NOT NULL,
@@ -2139,6 +2191,143 @@ class DatabaseService {
 
   deleteDirGridLayout(dirname) {
     this.db.prepare('DELETE FROM dir_grid_layouts WHERE dirname = ?').run(dirname);
+  }
+
+  // ============================================
+  // Board layout (per-directory item geometry)
+  // ============================================
+
+  /**
+   * Read a directory's whole board in one call. Returns null when the directory
+   * has never been arranged, which callers treat as "everything is unplaced" —
+   * an empty board and a nonexistent board are the same thing to the renderer.
+   * @param {string} dirname
+   * @returns {{gridSize:number, tray:object, items:object[], groups:object[], annotations:object[]}|null}
+   */
+  getDirBoard(dirname) {
+    const board = this.db.prepare(
+      'SELECT grid_size, tray_json FROM dir_boards WHERE dirname = ?'
+    ).get(dirname);
+    if (!board) return null;
+
+    const items = this.db.prepare(
+      `SELECT filename, inode, x, y, w, h, group_id AS groupId, levels_json
+       FROM board_items WHERE dirname = ?`
+    ).all(dirname);
+
+    const groups = this.db.prepare(
+      'SELECT id, label, collapsed FROM board_groups WHERE dirname = ?'
+    ).all(dirname);
+
+    const annotations = this.db.prepare(
+      `SELECT id, kind, points_json, stroke, width, z
+       FROM board_annotations WHERE dirname = ? ORDER BY z ASC`
+    ).all(dirname);
+
+    // A malformed JSON column must not take down the whole board — an item that
+    // loses its detail levels is recoverable, an unrenderable directory is not.
+    const safeParse = (raw, fallback) => {
+      try { return JSON.parse(raw); } catch { return fallback; }
+    };
+
+    return {
+      gridSize: board.grid_size,
+      tray: safeParse(board.tray_json, {}),
+      items: items.map(it => ({
+        filename: it.filename,
+        inode: it.inode,
+        x: it.x, y: it.y, w: it.w, h: it.h,
+        groupId: it.groupId,
+        levels: safeParse(it.levels_json, [])
+      })),
+      groups: groups.map(g => ({ id: g.id, label: g.label, collapsed: !!g.collapsed })),
+      annotations: annotations.map(a => ({
+        id: a.id, kind: a.kind, points: safeParse(a.points_json, []),
+        stroke: a.stroke, width: a.width, z: a.z
+      }))
+    };
+  }
+
+  /**
+   * Replace a directory's board wholesale.
+   *
+   * Delete-then-insert rather than a per-row diff: a board is small (tens of
+   * items) and always saved as a complete snapshot from the renderer, so a diff
+   * would add reconciliation bugs for no measurable gain. Wrapped in a
+   * transaction so a partial write can never leave a half-arranged board.
+   *
+   * @param {string} dirname
+   * @param {{gridSize?:number, tray?:object, items?:object[], groups?:object[], annotations?:object[]}} boardData
+   */
+  saveDirBoard(dirname, boardData) {
+    const {
+      gridSize = 16, tray = {}, items = [], groups = [], annotations = []
+    } = boardData || {};
+    const now = Math.floor(Date.now() / 1000);
+
+    const write = this.db.transaction(() => {
+      this.db.prepare(
+        `INSERT INTO dir_boards (dirname, grid_size, tray_json, saved_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(dirname) DO UPDATE SET
+           grid_size = excluded.grid_size,
+           tray_json = excluded.tray_json,
+           saved_at = excluded.saved_at`
+      ).run(dirname, gridSize, JSON.stringify(tray), now);
+
+      this.db.prepare('DELETE FROM board_items WHERE dirname = ?').run(dirname);
+      this.db.prepare('DELETE FROM board_groups WHERE dirname = ?').run(dirname);
+      this.db.prepare('DELETE FROM board_annotations WHERE dirname = ?').run(dirname);
+
+      const insItem = this.db.prepare(
+        `INSERT INTO board_items (dirname, filename, inode, x, y, w, h, group_id, levels_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const it of items) {
+        insItem.run(
+          dirname, it.filename, it.inode ?? null,
+          it.x | 0, it.y | 0, it.w | 0, it.h | 0,
+          it.groupId ?? null, JSON.stringify(it.levels || [])
+        );
+      }
+
+      const insGroup = this.db.prepare(
+        'INSERT INTO board_groups (id, dirname, label, collapsed) VALUES (?, ?, ?, ?)'
+      );
+      for (const g of groups) {
+        insGroup.run(g.id ?? null, dirname, g.label || '', g.collapsed ? 1 : 0);
+      }
+
+      const insAnn = this.db.prepare(
+        `INSERT INTO board_annotations (dirname, kind, points_json, stroke, width, z)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      );
+      for (const a of annotations) {
+        insAnn.run(dirname, a.kind, JSON.stringify(a.points || []), a.stroke || '#333333', a.width | 0 || 2, a.z | 0);
+      }
+    });
+
+    write();
+  }
+
+  deleteDirBoard(dirname) {
+    const wipe = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM board_items WHERE dirname = ?').run(dirname);
+      this.db.prepare('DELETE FROM board_groups WHERE dirname = ?').run(dirname);
+      this.db.prepare('DELETE FROM board_annotations WHERE dirname = ?').run(dirname);
+      this.db.prepare('DELETE FROM dir_boards WHERE dirname = ?').run(dirname);
+    });
+    wipe();
+  }
+
+  /**
+   * Count arranged directories. Used by scripts/reinitialize-db.js to decide
+   * whether wiping the DB would destroy unrecoverable user intent.
+   * @returns {number}
+   */
+  countDirBoards() {
+    const row = this.db.prepare('SELECT COUNT(*) AS n FROM dir_boards').get();
+    return row?.n || 0;
   }
 
   // ---------- Virtual view helpers ----------

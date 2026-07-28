@@ -57,12 +57,19 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 // Panel state - tracks each panel's directory, grid, and navigation
+//
+// viewTypeOverride / viewCategoryKey / suspendedNavParams implement the per-panel
+// view choice. The category's displayMode remains the default; the override is a
+// session-scoped, per-panel departure from it, deliberately NOT persisted across
+// restarts (a view chosen for one task should not silently become permanent).
+// viewCategoryKey records which category the override was chosen under so it can be
+// cleared on category change while surviving back/forward within a category.
 export let panelState = {
-  0: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 },
-  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 },
-  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 },
-  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 },
-  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0 }
+  0: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0, viewTypeOverride: null, viewCategoryKey: null, suspendedNavParams: null },
+  1: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0, viewTypeOverride: null, viewCategoryKey: null, suspendedNavParams: null },
+  2: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0, viewTypeOverride: null, viewCategoryKey: null, suspendedNavParams: null },
+  3: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0, viewTypeOverride: null, viewCategoryKey: null, suspendedNavParams: null },
+  4: { currentPath: '', w2uiGrid: null, navigationHistory: [], navigationIndex: -1, currentCategory: null, selectMode: false, checksumQueue: null, checksumQueueIndex: 0, checksumCancelled: false, showDateCreated: false, hasBeenViewed: false, fileViewPath: null, depth: 0, scanCancelled: false, pendingDirs: [], scanInProgress: false, scanToken: 0, recidCounter: 1, attrEditMode: false, notesEditMode: false, notesMonacoEditor: null, notesFilePath: null, sectionCollapseState: null, currentItemOpenWith: null, labelsUiState: null, currentItemStats: null, filterVisible: false, filterValues: null, filterMenuField: null, sourceRecords: [], currentNavParams: null, currentBasePath: null, orphanCount: 0, trashCount: 0, viewTypeOverride: null, viewCategoryKey: null, suspendedNavParams: null }
 };
 
 export let selectedItemState = {
@@ -815,7 +822,7 @@ function attachEventListeners() {
       );
       if (!inRealInput) {
         const viewType = panels.getPanelViewType(activePanelId);
-        if (viewType === 'grid' || viewType === 'gallery') {
+        if (viewType === 'list' || viewType === 'gallery') {
           const gridPanelId = (panels.gridFocusedPanelId !== null && panels.gridFocusedPanelId !== undefined)
             ? panels.gridFocusedPanelId
             : activePanelId;
@@ -905,7 +912,7 @@ function attachEventListeners() {
       );
       if (!isRealInput) {
         const viewType = panels.getPanelViewType(activePanelId);
-        if (viewType === 'gallery' || viewType === 'grid') {
+        if (viewType === 'gallery' || viewType === 'list') {
           event.preventDefault();
           event.stopPropagation();
           panels.focusSearchBarWithChar(activePanelId, event.key);
@@ -1020,7 +1027,7 @@ function attachEventListeners() {
     if (isRealInput) return;
 
     const viewType = panels.getPanelViewType(activePanelId);
-    if (viewType !== 'grid' && viewType !== 'gallery') return;
+    if (viewType !== 'list' && viewType !== 'gallery') return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -1029,7 +1036,7 @@ function attachEventListeners() {
       const type = key === 'c' ? 'copy' : 'cut';
       // Gather selected records from grid or gallery.
       let selectedRecords = [];
-      if (viewType === 'grid') {
+      if (viewType === 'list') {
         const grid = panelState[activePanelId]?.w2uiGrid;
         if (grid) {
           const selectedIds = grid.getSelection();
@@ -1067,7 +1074,7 @@ function attachEventListeners() {
       );
       if (!inInput) {
         const viewType = panels.getPanelViewType(activePanelId);
-        if ((viewType === 'grid' || viewType === 'gallery') && panelState[activePanelId]?.toolbarSearch) {
+        if ((viewType === 'list' || viewType === 'gallery') && panelState[activePanelId]?.toolbarSearch) {
           panels.applyPanelToolbarSearch(activePanelId, '');
           const toolbar = document.querySelector(`#panel-${activePanelId} .panel-toolbar`);
           if (toolbar) {
@@ -1133,7 +1140,7 @@ function attachEventListeners() {
       );
       if (!inInput) {
         const vt = panels.getPanelViewType(activePanelId);
-        if (vt === 'grid' || vt === 'gallery') {
+        if (vt === 'list' || vt === 'gallery') {
           clipboard.clearClipboard(panelState);
           return;
         }

@@ -331,6 +331,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getGridLayoutLayers: (dirPath, categoryName) => ipcRenderer.invoke('get-grid-layout-layers', { dirPath, categoryName }),
   setGridLayoutLayer: (scope, key, layer) => ipcRenderer.invoke('set-grid-layout-layer', { scope, key, layer }),
 
+  // Board view layout (per-directory item geometry)
+  getDirBoard: (dirPath) => ipcRenderer.invoke('get-dir-board', dirPath),
+  saveDirBoard: (dirPath, board) => ipcRenderer.invoke('save-dir-board', { dirPath, board }),
+  deleteDirBoard: (dirPath) => ipcRenderer.invoke('delete-dir-board', dirPath),
+
   // Database operations
   reinitializeDatabase: () => ipcRenderer.invoke('reinitialize-database'),
 

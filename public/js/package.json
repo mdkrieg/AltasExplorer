@@ -1,0 +1,4 @@
+{
+  "//": "Everything under public/js is native ES modules. Declaring it here lets Node and Jest resolve these files as ESM even though the root package is CommonJS; the app itself loads them via <script type=\"module\">.",
+  "type": "module"
+}
