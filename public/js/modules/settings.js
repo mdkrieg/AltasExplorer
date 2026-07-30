@@ -3067,14 +3067,10 @@ function _showDeleteGroupModal(groupIndex) {
 }
 
 // ── Small in-modal dropdown menu (group/item right-click menus) ─────────────
-// Thin wrappers around the shared contextMenuWidget so call sites below didn't need to
+// Thin wrapper around the shared contextMenuWidget so call sites below didn't need to
 // change — same {label, onClick}/{label, items}/{separator} item shape as before.
 // See agent-docs/DECISIONS.md#unified-context-menu-widget for why this used to be an
 // independent clone (it had silently lost the submenu hide-timer, breaking submenu hover).
-function _hideSettingsContextMenu() {
-	contextMenuWidget.hideContextMenu();
-}
-
 function _showSettingsContextMenu(x, y, menuItems) {
 	contextMenuWidget.showContextMenu(menuItems, x, y);
 }

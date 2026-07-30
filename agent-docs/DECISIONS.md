@@ -89,6 +89,20 @@ parse. Use the npm scripts.
 reason. `board.js` imports the live `panelState` binding from `renderer.js`, which drags the
 whole renderer into any test that touches it; the geometry is a leaf module with no imports.
 
+**Amended 2026-07-30 — non-leaf renderer modules need a `.test.mjs`:** the `file:///`
+dynamic-import approach above only works for leaf modules. Testing `contexts.js` (which
+imports panels/sidebar/terminal/renderer/w2ui) fails at import time with
+`ReferenceError: Node is not defined`, because that graph expects a DOM. Neither escape
+hatch applies: `jest-environment-jsdom` is a devDependency, which this project avoids for
+the reason given above, and the `new Function` import trick deliberately bypasses Jest's
+module registry, so `jest.unstable_mockModule` cannot intercept anything loaded through it.
+The dependencies therefore have to be mocked, and `jest.unstable_mockModule` only sees
+imports resolved through Jest's ESM registry — which Jest uses only when the *test file
+itself* is ESM. Hence `jest.config.js` also matches `**/__tests__/**/*.test.mjs`; see
+`src/__tests__/context-menu.test.mjs`. Note that namespace imports (`import * as panels`)
+link against a partial mock fine, so those mocks only need the members actually reached;
+named imports are checked at link time and need every binding present.
+
 ---
 
 ## board-storage

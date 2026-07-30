@@ -4780,16 +4780,6 @@ hr {
   display: none;
 }
 
-.fav-menu-item-remove {
-  color: #c0392b !important;
-}
-
-.fav-menu-separator {
-  height: 1px;
-  background: #e0e0e0;
-  margin: 3px 0;
-}
-
 /* =====================
    Favorites Delete Group Modal
    ===================== */
