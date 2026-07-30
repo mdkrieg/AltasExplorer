@@ -5036,6 +5036,367 @@ hr {
   color: #c0392b;
 }
 
+/* Tabbed context menu (opt-in via 'tabbed' context_menu_display_mode setting) */
+.custom-ctx-menu-tabbed {
+  padding: 0;
+}
+
+.custom-ctx-tabbar {
+  display: flex;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 0 2px;
+}
+
+.custom-ctx-tab {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #555;
+  cursor: default;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin: 1px 1px 0 1px;
+  border-radius: 2px 2px 0 0;
+}
+
+.custom-ctx-tab.active {
+  background: #e3eef9;
+  color: #1a4a8a;
+  border-bottom-color: #1a4a8a;
+}
+
+/* Panes stack directly on top of one another (rather than in normal flow) so switching the
+   active pane never changes .custom-ctx-tab-content's box — width/height are locked in by
+   buildTabbedMenuEl() before the menu is first shown, which is what keeps the menu from
+   resizing (and the cursor from slipping off the tab strip) while hovering between tabs. */
+.custom-ctx-tab-content {
+  position: relative;
+  padding: 3px 0;
+}
+
+.custom-ctx-tab-pane {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: none;
+}
+
+/* .active additionally stretches to fill the fixed-width container (right: 0) so hover
+   highlights span the full box, matching flat mode's look. The transient .-measuring class
+   deliberately omits 'right' so getBoundingClientRect() reports each pane's true shrink-to-fit
+   (intrinsic) width rather than the container's width — that's what buildTabbedMenuEl() needs
+   to find the true max width across tabs before locking .custom-ctx-tab-content's size. */
+.custom-ctx-tab-pane.active {
+  display: block;
+  right: 0;
+}
+
+.custom-ctx-tab-pane-measuring {
+  display: block;
+}
+
+/* ── Context Menu Settings: grouped/collapsible tree (phase 2) ────────────── */
+/* Groups are keyed by array position (no ids) — see contexts.js initContextMenuConfig. */
+.cm-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.cm-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: #f9f9f9;
+  border-bottom: 1px solid #eee;
+}
+
+.cm-group-unassigned .cm-group-header {
+  background: #f3f1fb;
+}
+
+.cm-group-chevron {
+  display: inline-block;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #888;
+  transition: transform 0.15s ease;
+}
+
+.cm-group-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.cm-group-name {
+  font-weight: bold;
+  font-size: 12px;
+  color: #333;
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.cm-group-unassigned .cm-group-name {
+  color: #6a1b9a;
+}
+
+.cm-group-name-input {
+  font-weight: bold;
+  font-size: 12px;
+  padding: 1px 4px;
+  border: 1px solid #2196F3;
+  border-radius: 3px;
+  flex-shrink: 0;
+  width: 160px;
+}
+
+.cm-group-line {
+  flex: 1;
+  height: 1px;
+  background: #d8d8d8;
+}
+
+.cm-group-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.cm-group-empty {
+  padding: 10px 12px;
+  font-size: 11px;
+  color: #bbb;
+  font-style: italic;
+  text-align: center;
+}
+
+.cm-group-drop-target {
+  outline: 2px dashed #2196F3;
+  outline-offset: -2px;
+  background: #e3f2fd;
+}
+
+.cm-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px 7px 28px;
+  border-bottom: 1px solid #f5f5f5;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  background: white;
+}
+
+.cm-item-row.selected {
+  background: #e8f0fe;
+}
+
+.cm-item-row.dragging {
+  opacity: 0.4;
+}
+
+.cm-item-row.drop-before {
+  box-shadow: inset 0 2px 0 0 #2196F3;
+}
+
+.cm-item-row.drop-after {
+  box-shadow: inset 0 -2px 0 0 #2196F3;
+}
+
+.cm-item-row.cm-item-filtered {
+  opacity: 0.3;
+  height: 20px;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.cm-item-label {
+  flex: 1;
+}
+
+.cm-item-pills {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cm-pill {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.cm-pill-multi {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.cm-pill-file {
+  background: #f3e5f5;
+  color: #6a1b9a;
+}
+
+.cm-pill-dir {
+  background: #fff8e1;
+  color: #e65100;
+}
+
+/* ── Delete-group modal ─────────────────────────────────────────────────── */
+.cm-delete-group-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+  font-size: 12px;
+}
+
+.cm-delete-group-form label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.cm-delete-group-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cm-modal-btn-secondary {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #eee;
+  font-size: 12px;
+}
+
+.cm-modal-btn-danger {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #e53935;
+  color: white;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+/* ── User warning toast + details modal (userWarnings.js) ─────────────────── */
+.user-warning-toast {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 480px;
+  background: #333;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  z-index: 10500;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.user-warning-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.user-warning-toast-text {
+  flex: 1;
+}
+
+.user-warning-toast-link {
+  color: #90caf9;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+}
+
+.user-warning-toast-close {
+  background: none;
+  border: none;
+  color: #ccc;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+.user-warning-toast-close:hover {
+  color: #fff;
+}
+
+.user-warning-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.user-warning-modal-box {
+  background: white;
+  border-radius: 8px;
+  width: 460px;
+  max-width: calc(100vw - 40px);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.user-warning-modal-title {
+  font-weight: bold;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.user-warning-modal-list {
+  overflow-y: auto;
+  font-size: 12px;
+  color: #444;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.user-warning-modal-row {
+  padding: 4px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.user-warning-modal-close-btn {
+  align-self: flex-end;
+  margin-top: 14px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #eee;
+  font-size: 12px;
+}
+
 /* Item Overview Enhancements */
 .btn-section-toggle {
   background: none;

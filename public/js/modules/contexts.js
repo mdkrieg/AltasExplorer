@@ -122,59 +122,176 @@ function _getRegistryEntry(itemId) {
 	return null;
 }
 
-// Persistent order: array of registry IDs and 'separator-N' IDs.
-let _contextMenuOrder = null;
-export function getContextMenuOrder() { return _contextMenuOrder; }
-export function setContextMenuOrder(order) { _contextMenuOrder = order; }
-export function initContextMenuOrder(order) {
-	_contextMenuOrder = (Array.isArray(order) && order.length > 0)
-		? order
-		: DEFAULT_CONTEXT_MENU_ORDER.slice();
+// Human-readable default group names, keyed by CONTEXT_MENU_REGISTRY `group` number.
+// Only used to seed the default groups config (see _buildDefaultContextMenuConfig) — once
+// seeded, group names live entirely in the persisted config and are freely user-renameable.
+export const GROUP_LABELS = {
+	1: 'Open', 2: 'Organize', 3: 'Orphans', 4: 'Info',
+	5: 'Files', 6: 'Clipboard', 7: 'Delete', 8: 'Trash', 9: 'Custom',
+};
+
+// ── Context Menu Groups Config ─────────────────────────────────────────────
+// Persisted in ~/.atlas-explorer/context-menu.json (see src/contextMenuConfig.js),
+// deliberately decoupled from the generic settings.json blob (dedicated flat file,
+// matching the favorites.json/hotkeys.json precedent).
+//
+// Shape: { display_mode: 'flat'|'tabbed',
+//          groups: [ { name, collapsed, items: [registryId, ...] }, ... ],
+//          unassigned: { collapsed, items: [registryId, ...] } }
+//
+// Groups are keyed purely by their position in the `groups` array — no generated ids.
+// "Unassigned" is the exclude mechanism: any item not listed in a named group's `items`
+// (whether explicitly placed in `unassigned.items` or simply absent from the file
+// altogether) is hidden from the live right-click menu. See initContextMenuConfig for
+// how absent/invalid ids are reconciled/scrubbed on load.
+let _contextMenuConfig = null;
+
+export function getContextMenuConfig() { return _contextMenuConfig; }
+export function setContextMenuConfig(config) { _contextMenuConfig = config; }
+
+export function getContextMenuDisplayMode() { return _contextMenuConfig ? _contextMenuConfig.display_mode : 'flat'; }
+export function setContextMenuDisplayMode(mode) {
+	if (!_contextMenuConfig) return;
+	_contextMenuConfig.display_mode = mode === 'tabbed' ? 'tabbed' : 'flat';
 }
 
-function _sortContextMenuByOrder(items) {
-	if (!_contextMenuOrder || _contextMenuOrder.length === 0) return items;
+// Builds the canonical default groups config from the existing registry taxonomy
+// (DEFAULT_CONTEXT_MENU_ORDER + GROUP_LABELS + CONTEXT_MENU_REGISTRY.group), used both
+// for a fresh install (no context-menu.json yet) and the "Reset to Default Groups" button.
+export function buildDefaultContextMenuConfig() {
+	const groups = [];
+	const indexByGroupNum = new Map();
+	for (const orderId of DEFAULT_CONTEXT_MENU_ORDER) {
+		if (orderId.startsWith('separator-')) continue;
+		const entry = _getRegistryEntry(orderId);
+		if (!entry) continue;
+		if (!indexByGroupNum.has(entry.group)) {
+			groups.push({ name: GROUP_LABELS[entry.group] || `Group ${entry.group}`, collapsed: false, items: [] });
+			indexByGroupNum.set(entry.group, groups.length - 1);
+		}
+		groups[indexByGroupNum.get(entry.group)].items.push(entry.id);
+	}
+	return { display_mode: 'flat', groups, unassigned: { collapsed: true, items: [] } };
+}
 
-	// Group built menu items by registry ID so dynamic items (e.g. all
-	// run-custom-action-* entries) are emitted together at their order position.
-	const builtGroups = new Map(); // registryId → [item, ...]
-	const unmapped = [];
+// Loads/validates the persisted config (or seeds defaults if none exists yet).
+//
+// Validation model (per design decision — "absence = presumed unassigned" unifies both
+// cases below):
+//   - Any id that doesn't resolve against CONTEXT_MENU_REGISTRY (typo, stale id from a
+//     removed command, hand-edited garbage) is scrubbed from wherever it was found and
+//     reported in the returned `invalidItems` list, for the caller to surface as a toast.
+//   - Any known registry id NOT present in any group nor in `unassigned` (e.g. a newly
+//     added command the user's file predates) is appended into `unassigned.items` so
+//     it's visible/reassignable in the settings UI — it's still hidden from the live
+//     menu until the user moves it to a real group.
+// If anything was scrubbed or reconciled, the corrected config is written back to disk
+// immediately so the fix sticks and the warning doesn't repeat on next launch.
+export function initContextMenuConfig(rawConfig) {
+	if (!rawConfig || !Array.isArray(rawConfig.groups)) {
+		_contextMenuConfig = buildDefaultContextMenuConfig();
+		window.electronAPI?.saveContextMenuConfig?.(_contextMenuConfig);
+		return { invalidItems: [] };
+	}
+
+	const invalidItems = [];
+	const seen = new Set(); // canonical registry ids already placed somewhere
+	let changed = false;
+
+	const scrubList = (rawItems, foundIn) => {
+		const cleaned = [];
+		for (const rawId of (Array.isArray(rawItems) ? rawItems : [])) {
+			const entry = _getRegistryEntry(rawId);
+			if (!entry) {
+				invalidItems.push({ id: rawId, foundIn });
+				changed = true;
+				continue;
+			}
+			if (seen.has(entry.id)) {
+				// Same command listed in more than one place — keep the first placement.
+				changed = true;
+				continue;
+			}
+			seen.add(entry.id);
+			cleaned.push(entry.id);
+		}
+		return cleaned;
+	};
+
+	const groups = rawConfig.groups.map((g, i) => ({
+		name: (typeof g?.name === 'string' && g.name.trim()) ? g.name : `Group ${i + 1}`,
+		collapsed: !!g?.collapsed,
+		items: scrubList(g?.items, (typeof g?.name === 'string' && g.name.trim()) ? g.name : `Group ${i + 1}`),
+	}));
+
+	const unassigned = {
+		collapsed: rawConfig.unassigned ? !!rawConfig.unassigned.collapsed : true,
+		items: scrubList(rawConfig.unassigned?.items, 'Unassigned'),
+	};
+
+	// Reconcile: known ids absent from every group/unassigned are appended to Unassigned.
+	for (const entry of CONTEXT_MENU_REGISTRY) {
+		if (!seen.has(entry.id)) {
+			unassigned.items.push(entry.id);
+			seen.add(entry.id);
+			changed = true;
+		}
+	}
+
+	_contextMenuConfig = {
+		display_mode: rawConfig.display_mode === 'tabbed' ? 'tabbed' : 'flat',
+		groups,
+		unassigned,
+	};
+
+	if (changed) {
+		window.electronAPI?.saveContextMenuConfig?.(_contextMenuConfig);
+	}
+
+	return { invalidItems };
+}
+
+// Arranges built menu items (from generateW2UIContextMenu) according to the persisted
+// groups config for flat display: items are emitted group-by-group in stored order, with
+// exactly one separator between consecutive non-empty groups (empty groups contribute
+// nothing, so they never produce a stray double-separator). Items belonging to Unassigned
+// (or simply absent from the config) are excluded entirely — this is the exclude mechanism.
+function _arrangeItemsByGroups(items) {
+	const config = _contextMenuConfig;
+	if (!config) return items;
+
+	const builtByRegistryId = new Map(); // registryId -> [item, ...]
+	const unmapped = []; // items with no registry entry at all — always shown, defensive fallback
 	for (const item of items) {
-		if (item.id.startsWith('sep')) continue; // strip old auto-separators
+		if (item.id?.startsWith('sep')) continue;
 		const entry = _getRegistryEntry(item.id);
 		if (entry) {
-			if (!builtGroups.has(entry.id)) builtGroups.set(entry.id, []);
-			builtGroups.get(entry.id).push(item);
+			if (!builtByRegistryId.has(entry.id)) builtByRegistryId.set(entry.id, []);
+			builtByRegistryId.get(entry.id).push(item);
 		} else {
 			unmapped.push(item);
 		}
 	}
 
 	const result = [];
-	let lastWasSep = true; // suppress leading separator
-
-	for (const orderId of _contextMenuOrder) {
-		if (orderId.startsWith('separator-')) {
-			if (!lastWasSep) {
-				result.push({ id: `sep${result.length}`, text: '--' });
-				lastWasSep = true;
-			}
-		} else {
-			const group = builtGroups.get(orderId);
-			if (group && group.length > 0) {
-				for (const item of group) result.push(item);
-				builtGroups.delete(orderId);
-				lastWasSep = false;
+	for (const group of config.groups) {
+		let addedFromThisGroup = false;
+		for (const id of group.items) {
+			const built = builtByRegistryId.get(id);
+			if (built && built.length > 0) {
+				if (!addedFromThisGroup && result.length > 0) {
+					result.push({ id: `sep${result.length}`, text: '--' });
+				}
+				for (const b of built) result.push(b);
+				addedFromThisGroup = true;
 			}
 		}
 	}
 
-	// Items not in the saved order (e.g. newly added) appear at the end.
-	for (const group of builtGroups.values()) for (const item of group) result.push(item);
-	for (const item of unmapped) result.push(item);
-
-	// Strip trailing separator
-	while (result.length > 0 && result[result.length - 1].text === '--') result.pop();
+	if (unmapped.length > 0) {
+		if (result.length > 0) result.push({ id: `sep${result.length}`, text: '--' });
+		for (const item of unmapped) result.push(item);
+	}
 
 	return result;
 }
@@ -638,7 +755,7 @@ export async function generateW2UIContextMenu(selectedRecords, visiblePanelCount
 		}
 	} catch (_) { /* custom actions are non-critical */ }
 
-	return { items: _sortContextMenuByOrder(contextMenu), pendingDefaultApp, pendingViewMode: panelContextMenuState.pendingViewFileMode || null };
+	return { items: _arrangeItemsByGroups(contextMenu), pendingDefaultApp, pendingViewMode: panelContextMenuState.pendingViewFileMode || null };
 }
 
 async function handleContextMenuClick(event, panelId) {
@@ -1174,10 +1291,11 @@ export function hideCustomContextMenu() {
 	document.querySelectorAll('.custom-ctx-submenu').forEach(element => element.remove());
 }
 
-function buildMenuEl(items, panelId) {
-	const menu = document.createElement('div');
-	menu.className = 'custom-ctx-menu';
-
+// Builds item rows (separators, icons, labels, submenu-hover flyouts, click routing) into
+// `container`. Shared by buildMenuEl (single flat list) and buildTabbedMenuEl (one call per
+// tab pane) so hover/submenu/click behavior is identical between flat and tabbed display modes
+// — only the container differs.
+function _appendMenuItemRows(container, items, panelId) {
 	let activeSubEl = null;
 	let subHideTimer = null;
 
@@ -1195,7 +1313,7 @@ function buildMenuEl(items, panelId) {
 		if (item.text === '--') {
 			const sep = document.createElement('div');
 			sep.className = 'custom-ctx-separator';
-			menu.appendChild(sep);
+			container.appendChild(sep);
 			continue;
 		}
 
@@ -1225,7 +1343,7 @@ function buildMenuEl(items, panelId) {
 
 		row.addEventListener('mouseenter', () => {
 			clearHideTimer();
-			menu.querySelectorAll('.custom-ctx-item').forEach(itemRow => itemRow.classList.remove('active'));
+			container.querySelectorAll('.custom-ctx-item').forEach(itemRow => itemRow.classList.remove('active'));
 			row.classList.add('active');
 
 			if (!hasSub) {
@@ -1241,6 +1359,8 @@ function buildMenuEl(items, panelId) {
 				activeSubEl = null;
 			}
 
+			// Submenus always render flat regardless of the top-level display mode — tabbing an
+			// already-scoped flyout (e.g. "Set Category") would be scope creep, not a space saving.
 			const sub = buildMenuEl(item.items, panelId);
 			sub.classList.add('custom-ctx-submenu');
 			const rowRect = row.getBoundingClientRect();
@@ -1287,8 +1407,109 @@ function buildMenuEl(items, panelId) {
 			});
 		}
 
-		menu.appendChild(row);
+		container.appendChild(row);
 	}
+}
+
+function buildMenuEl(items, panelId) {
+	const menu = document.createElement('div');
+	menu.className = 'custom-ctx-menu';
+	_appendMenuItemRows(menu, items, panelId);
+	return menu;
+}
+
+// Tabbed variant: buckets items by the persisted groups config (see initContextMenuConfig)
+// into hover-activated tabs instead of one long flat list. Opt-in via the 'tabbed'
+// display_mode setting. Tab labels are the user's own (renameable) group names.
+function buildTabbedMenuEl(items, panelId) {
+	const config = _contextMenuConfig;
+	if (!config) return buildMenuEl(items, panelId);
+
+	const builtByRegistryId = new Map(); // registryId -> [item, ...]
+	const unmapped = []; // items with no registry entry — always shown, defensive fallback
+	for (const item of items) {
+		if (item.text === '--') continue; // separators are meaningless once items are split into tabs
+		const entry = _getRegistryEntry(item.id);
+		if (entry) {
+			if (!builtByRegistryId.has(entry.id)) builtByRegistryId.set(entry.id, []);
+			builtByRegistryId.get(entry.id).push(item);
+		} else {
+			unmapped.push(item);
+		}
+	}
+
+	const tabDefs = []; // { label, items }, insertion-ordered by the persisted group order
+	for (const group of config.groups) {
+		const groupItems = [];
+		for (const id of group.items) {
+			const built = builtByRegistryId.get(id);
+			if (built) groupItems.push(...built);
+		}
+		if (groupItems.length > 0) tabDefs.push({ label: group.name || 'Group', items: groupItems });
+	}
+	if (unmapped.length > 0) tabDefs.push({ label: 'Other', items: unmapped });
+
+	// A single (or zero) populated tab isn't worth a tab strip — fall back to the flat list.
+	if (tabDefs.length <= 1) return buildMenuEl(items, panelId);
+
+	const menu = document.createElement('div');
+	menu.className = 'custom-ctx-menu custom-ctx-menu-tabbed';
+
+	const tabbar = document.createElement('div');
+	tabbar.className = 'custom-ctx-tabbar';
+	const content = document.createElement('div');
+	content.className = 'custom-ctx-tab-content';
+	menu.appendChild(tabbar);
+	menu.appendChild(content);
+
+	const tabs = [];
+	const panes = [];
+	for (const tabDef of tabDefs) {
+		const tab = document.createElement('div');
+		tab.className = 'custom-ctx-tab';
+		tab.textContent = tabDef.label;
+
+		const pane = document.createElement('div');
+		pane.className = 'custom-ctx-tab-pane';
+		_appendMenuItemRows(pane, tabDef.items, panelId);
+
+		// Hover (not click) switches tabs, per the space-saving hover UX this feature exists for.
+		tab.addEventListener('mouseenter', () => {
+			tabs.forEach(t => t.classList.remove('active'));
+			panes.forEach(p => p.classList.remove('active'));
+			tab.classList.add('active');
+			pane.classList.add('active');
+		});
+
+		tabbar.appendChild(tab);
+		content.appendChild(pane);
+		tabs.push(tab);
+		panes.push(pane);
+	}
+
+	// Measure-then-fix sizing: briefly show every pane (invisibly, off the currently-displayed
+	// document flow via the .custom-ctx-tab-pane CSS being position:absolute) to find the
+	// largest natural width/height, then lock that size onto .custom-ctx-tab-content. Locking to
+	// the max across ALL tabs — not just the active one — is what keeps the menu from resizing
+	// as the user hovers across tabs; an unlocked resize would let the cursor slip off the tab
+	// strip mid-hover (the same class of bug as flaky OS Start-Menu flyouts).
+	menu.style.visibility = 'hidden';
+	document.body.appendChild(menu);
+	panes.forEach(p => p.classList.add('custom-ctx-tab-pane-measuring'));
+	let maxWidth = 0, maxHeight = 0;
+	panes.forEach(p => {
+		const rect = p.getBoundingClientRect();
+		maxWidth = Math.max(maxWidth, rect.width);
+		maxHeight = Math.max(maxHeight, rect.height);
+	});
+	panes.forEach(p => p.classList.remove('custom-ctx-tab-pane-measuring'));
+	document.body.removeChild(menu);
+	menu.style.visibility = '';
+	content.style.width = maxWidth + 'px';
+	content.style.height = maxHeight + 'px';
+
+	tabs[0].classList.add('active');
+	panes[0].classList.add('active');
 
 	return menu;
 }
@@ -1296,7 +1517,7 @@ function buildMenuEl(items, panelId) {
 export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp, pendingViewMode) {
 	hideCustomContextMenu();
 
-	const menu = buildMenuEl(items, panelId);
+	const menu = getContextMenuDisplayMode() === 'tabbed' ? buildTabbedMenuEl(items, panelId) : buildMenuEl(items, panelId);
 	menu.id = 'custom-ctx-menu';
 	menu.style.left = x + 'px';
 	menu.style.top = y + 'px';

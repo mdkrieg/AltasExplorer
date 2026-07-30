@@ -2719,22 +2719,41 @@ $(document).on('click.alIconSelClose', function (e) {
 	}
 });
 // ── Context Menu Tab ─────────────────────────────────────────────────────────
+//
+// Renders the persisted groups config (contexts.js `context-menu.json` model) as a
+// nested, collapsible tree: named groups (renameable, reorderable via right-click
+// "Move Before", deletable) each containing draggable item rows, plus a pinned
+// "Unassigned" bucket at the bottom whose contents are hidden from the live menu —
+// this is the include/exclude mechanism. See agent-docs/DECISIONS.md for the
+// superseded flat-order model this replaced.
 
 let _cmSelectedId = null;
 let _cmActiveFilters = new Set();
+// Carries {sourceGroupIndex, itemId} between a native dragstart and its drop —
+// module-level state (not dataTransfer) because dragover/dragenter need synchronous
+// access to it for live drop-target highlighting.
+let _cmDragState = null;
 
 export async function initializeContextMenuTab() {
 	const container = document.getElementById('context-menu-order-list');
 	if (!container) return;
 
-	// Ensure order is loaded from settings if not already initialised by renderer
-	if (!contexts.getContextMenuOrder()) {
-		const s = await window.electronAPI.getSettings();
-		contexts.initContextMenuOrder(s.context_menu_order || null);
+	if (!contexts.getContextMenuConfig()) {
+		const rawConfig = await window.electronAPI.getContextMenuConfig();
+		contexts.initContextMenuConfig(rawConfig);
 	}
 
-	const currentOrder = (contexts.getContextMenuOrder() || contexts.DEFAULT_CONTEXT_MENU_ORDER).slice();
-	_renderContextMenuList(container, currentOrder);
+	_renderContextMenuGroups(container);
+
+	document.querySelectorAll('#contextmenu-display-mode-bar .cm-mode-btn').forEach(btn => {
+		_updateModeBtn(btn, btn.dataset.mode === contexts.getContextMenuDisplayMode());
+		$(btn).off('click.cmmode').on('click.cmmode', async () => {
+			const mode = btn.dataset.mode;
+			contexts.setContextMenuDisplayMode(mode);
+			document.querySelectorAll('#contextmenu-display-mode-bar .cm-mode-btn').forEach(b => _updateModeBtn(b, b.dataset.mode === mode));
+			await _saveContextMenuConfig();
+		});
+	});
 
 	document.querySelectorAll('#contextmenu-filter-bar .cm-filter-btn').forEach(btn => {
 		const key = btn.dataset.filter;
@@ -2752,12 +2771,25 @@ export async function initializeContextMenuTab() {
 	});
 
 	$('#btn-contextmenu-reset').off('click.cmreset').on('click.cmreset', async () => {
-		const defaultOrder = contexts.DEFAULT_CONTEXT_MENU_ORDER.slice();
-		contexts.setContextMenuOrder(defaultOrder);
-		_renderContextMenuList(container, defaultOrder);
-		await _saveContextMenuOrder(defaultOrder);
-		showFormSuccess('#contextmenu-status', 'Reset to default order.');
+		const defaultConfig = contexts.buildDefaultContextMenuConfig();
+		contexts.setContextMenuConfig(defaultConfig);
+		_renderContextMenuGroups(container);
+		await _saveContextMenuConfig();
+		showFormSuccess('#contextmenu-status', 'Reset to default groups.');
 	});
+
+	$('#btn-contextmenu-add-group').off('click.cmaddgroup').on('click.cmaddgroup', async () => {
+		const config = contexts.getContextMenuConfig();
+		config.groups.push({ name: 'New Group', collapsed: false, items: [] });
+		contexts.setContextMenuConfig(config);
+		_renderContextMenuGroups(container);
+		await _saveContextMenuConfig();
+	});
+}
+
+
+function _updateModeBtn(btn, active) {
+	btn.style.cssText = `padding:3px 10px;border:none;border-radius:3px;cursor:pointer;font-size:11px;font-weight:bold;background:${active ? '#1565c0' : '#e3f2fd'};color:${active ? '#fff' : '#1565c0'};`;
 }
 
 function _updateFilterBtn(btn, active) {
@@ -2773,148 +2805,552 @@ function _updateFilterBtn(btn, active) {
 
 function _applyFilters(container) {
 	const regMap = new Map(contexts.CONTEXT_MENU_REGISTRY.map(e => [e.id, e]));
-	container.querySelectorAll('.cm-order-row').forEach(row => {
-		const id = row.dataset.id;
-		if (id.startsWith('separator-')) return;
+	container.querySelectorAll('.cm-item-row').forEach(row => {
+		const entry = regMap.get(row.dataset.id);
+		if (!entry) return;
 		if (_cmActiveFilters.size === 0) {
-			delete row.dataset.filtered;
-			row.style.cssText = row.dataset.normalCss || '';
-			row.style.background = row.dataset.id === _cmSelectedId ? '#e8f0fe' : '';
+			row.classList.remove('cm-item-filtered');
 			return;
 		}
-		const entry = regMap.get(id);
-		if (!entry) return;
 		let visible = true;
-		if (_cmActiveFilters.has('multi') && entry.conditions.singleOnly)  visible = false;
-		if (_cmActiveFilters.has('file')  && !entry.conditions.files)       visible = false;
-		if (_cmActiveFilters.has('dir')   && !entry.conditions.dirs)        visible = false;
-		if (visible) {
-			delete row.dataset.filtered;
-			row.style.cssText = row.dataset.normalCss || '';
-			row.style.background = row.dataset.id === _cmSelectedId ? '#e8f0fe' : '';
-		} else {
-			row.dataset.filtered = 'true';
-			row.style.cssText = 'height:20px;overflow:hidden;opacity:0.3;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;';
-		}
+		if (_cmActiveFilters.has('multi') && entry.conditions.singleOnly) visible = false;
+		if (_cmActiveFilters.has('file') && !entry.conditions.files) visible = false;
+		if (_cmActiveFilters.has('dir') && !entry.conditions.dirs) visible = false;
+		row.classList.toggle('cm-item-filtered', !visible);
 	});
 }
 
-function _renderContextMenuList(container, orderIds) {
-	const regMap = new Map(contexts.CONTEXT_MENU_REGISTRY.map(e => [e.id, e]));
-	const items = orderIds.map(id =>
-		id.startsWith('separator-') ? { id, isSeparator: true } : (regMap.get(id) || null)
-	).filter(Boolean);
+function _makePill(text) {
+	const p = document.createElement('span');
+	p.className = `cm-pill cm-pill-${text}`;
+	p.textContent = text;
+	return p;
+}
 
-	container.innerHTML = '';
-	let dragSrcIndex = null;
+// Moves an item id from one group's `items` array to another (or the same array, for
+// within-group reordering). Index -1 refers to the pinned Unassigned bucket. Shared by
+// both drag-and-drop and the "Move Before"/"Move To"/"Unassign" context-menu actions so
+// there's a single source of truth for the splice math.
+function _moveItem(sourceGroupIndex, itemId, targetGroupIndex, targetIndex) {
+	const config = contexts.getContextMenuConfig();
+	const sourceList = sourceGroupIndex === -1 ? config.unassigned.items : config.groups[sourceGroupIndex]?.items;
+	const targetList = targetGroupIndex === -1 ? config.unassigned.items : config.groups[targetGroupIndex]?.items;
+	if (!sourceList || !targetList) return;
 
-	const makePill = (text, bg, color) => {
-		const p = document.createElement('span');
-		p.textContent = text;
-		p.style.cssText = `font-size: 9px; padding: 2px 6px; background: ${bg}; color: ${color}; border-radius: 3px; font-weight: bold; white-space: nowrap;`;
-		return p;
+	const srcIdx = sourceList.indexOf(itemId);
+	if (srcIdx === -1) return;
+
+	let insertAt = (targetIndex === null || targetIndex === undefined) ? targetList.length : targetIndex;
+
+	sourceList.splice(srcIdx, 1);
+	if (sourceList === targetList && srcIdx < insertAt) insertAt--;
+	insertAt = Math.max(0, Math.min(insertAt, targetList.length));
+	targetList.splice(insertAt, 0, itemId);
+
+	contexts.setContextMenuConfig(config);
+	_renderContextMenuGroups(document.getElementById('context-menu-order-list'));
+	_saveContextMenuConfig();
+}
+
+function _moveGroup(fromIndex, toIndex) {
+	const config = contexts.getContextMenuConfig();
+	const [moved] = config.groups.splice(fromIndex, 1);
+	let insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
+	insertAt = Math.max(0, Math.min(insertAt, config.groups.length));
+	config.groups.splice(insertAt, 0, moved);
+	contexts.setContextMenuConfig(config);
+	_renderContextMenuGroups(document.getElementById('context-menu-order-list'));
+	_saveContextMenuConfig();
+}
+
+function _collapseOtherGroups(groupIndex) {
+	const config = contexts.getContextMenuConfig();
+	config.groups.forEach((g, i) => { g.collapsed = i !== groupIndex; });
+	config.unassigned.collapsed = true;
+	contexts.setContextMenuConfig(config);
+	_renderContextMenuGroups(document.getElementById('context-menu-order-list'));
+	_saveContextMenuConfig();
+}
+
+function _startGroupRename(nameEl, originalName, groupIndex) {
+	const input = document.createElement('input');
+	input.type = 'text';
+	input.className = 'cm-group-name-input';
+	input.value = originalName;
+	nameEl.replaceWith(input);
+	input.focus();
+	input.select();
+
+	let settled = false;
+	const commit = () => {
+		if (settled) return;
+		settled = true;
+		const newName = input.value.trim() || originalName;
+		const config = contexts.getContextMenuConfig();
+		config.groups[groupIndex].name = newName;
+		contexts.setContextMenuConfig(config);
+		_renderContextMenuGroups(document.getElementById('context-menu-order-list'));
+		_saveContextMenuConfig();
+	};
+	const cancel = () => {
+		if (settled) return;
+		settled = true;
+		_renderContextMenuGroups(document.getElementById('context-menu-order-list'));
 	};
 
-	items.forEach((entry, i) => {
-		const isSep = !!entry.isSeparator;
-		const row = document.createElement('div');
-		row.className = 'cm-order-row';
-		row.draggable = true;
-		row.dataset.id = entry.id;
+	input.addEventListener('keydown', (event) => {
+		if (event.key === 'Enter') { event.preventDefault(); commit(); }
+		else if (event.key === 'Escape') { event.preventDefault(); cancel(); }
+	});
+	input.addEventListener('blur', commit);
+	input.addEventListener('click', (event) => event.stopPropagation());
+}
 
-		if (isSep) {
-			row.style.cssText = 'display:flex;align-items:center;padding:0 12px;height:20px;border-bottom:1px solid #f0f0f0;cursor:default;user-select:none;gap:8px;';
+function _showGroupContextMenu(x, y, groupIndex) {
+	const config = contexts.getContextMenuConfig();
+	const group = config.groups[groupIndex];
+	if (!group) return;
 
-			const handle = document.createElement('span');
-			handle.textContent = '⠿';
-			handle.style.cssText = 'cursor:grab;color:#ddd;font-size:13px;flex-shrink:0;';
-			handle.title = 'Drag to reorder';
+	// A separator marks groupIndex's own current slot so the list still shows where
+	// "self" sits even though it's excluded as a clickable target.
+	const moveBeforeItems = [];
+	config.groups.forEach((g, i) => {
+		if (i === groupIndex) { moveBeforeItems.push({ separator: true }); return; }
+		moveBeforeItems.push({ label: g.name, onClick: () => _moveGroup(groupIndex, i) });
+	});
+	moveBeforeItems.push({ label: '— End —', onClick: () => _moveGroup(groupIndex, config.groups.length) });
 
-			const line = document.createElement('div');
-			line.style.cssText = 'flex:1;height:1px;background:#d0d0d0;';
+	_showSettingsContextMenu(x, y, [
+		{ label: 'Move Before', items: moveBeforeItems },
+		{ label: 'Collapse Others', onClick: () => _collapseOtherGroups(groupIndex) },
+		{ label: 'Rename', onClick: () => {
+			const nameEl = document.querySelector(`.cm-group[data-group-index="${groupIndex}"] .cm-group-name`);
+			if (nameEl) _startGroupRename(nameEl, group.name, groupIndex);
+		} },
+		{ separator: true },
+		{ label: 'Delete', onClick: () => _showDeleteGroupModal(groupIndex) },
+	]);
+}
 
-			row.appendChild(handle);
-			row.appendChild(line);
+function _showItemContextMenu(x, y, entry, groupIndex) {
+	const config = contexts.getContextMenuConfig();
+	const regMap = new Map(contexts.CONTEXT_MENU_REGISTRY.map(e => [e.id, e]));
+
+	// Unassigned items skip "Move Before" entirely — their order within Unassigned is
+	// alphabetized, not user-arranged — and go straight to "Move To" covering every real
+	// group, with the item's original taxonomy group flagged "(Default)".
+	if (groupIndex === -1) {
+		const moveToItems = config.groups
+			.map((g, i) => ({ g, i }))
+			.sort((a, b) => a.g.name.localeCompare(b.g.name))
+			.map(({ g, i }) => ({
+				label: g.name + (contexts.GROUP_LABELS[entry.group] === g.name ? ' (Default)' : ''),
+				onClick: () => _moveItem(groupIndex, entry.id, i, null),
+			}));
+		_showSettingsContextMenu(x, y, [{ label: 'Move To', items: moveToItems }]);
+		return;
+	}
+
+	const sourceList = config.groups[groupIndex].items;
+	// A separator marks entry.id's own current slot so the list still shows where "self"
+	// sits even though it's excluded as a clickable target.
+	const moveBeforeItems = [];
+	sourceList.forEach((id) => {
+		if (id === entry.id) { moveBeforeItems.push({ separator: true }); return; }
+		moveBeforeItems.push({
+			label: (regMap.get(id) || {}).label || id,
+			onClick: () => _moveItem(groupIndex, entry.id, groupIndex, sourceList.indexOf(id)),
+		});
+	});
+	moveBeforeItems.push({ label: '— End —', onClick: () => _moveItem(groupIndex, entry.id, groupIndex, sourceList.length) });
+
+	const menuItems = [{ label: 'Move Before', items: moveBeforeItems }];
+
+	const moveToItems = config.groups
+		.map((g, i) => ({ g, i }))
+		.filter(({ i }) => i !== groupIndex)
+		.map(({ g, i }) => ({ label: g.name, onClick: () => _moveItem(groupIndex, entry.id, i, null) }));
+	if (moveToItems.length > 0) menuItems.push({ label: 'Move To', items: moveToItems });
+	menuItems.push({ separator: true });
+	menuItems.push({ label: 'Unassign', onClick: () => _moveItem(groupIndex, entry.id, -1, null) });
+
+	_showSettingsContextMenu(x, y, menuItems);
+}
+
+function _showDeleteGroupModal(groupIndex) {
+	const config = contexts.getContextMenuConfig();
+	const group = config.groups[groupIndex];
+	if (!group) return;
+
+	document.getElementById('cm-delete-group-modal')?.remove();
+
+	const overlay = document.createElement('div');
+	overlay.id = 'cm-delete-group-modal';
+	overlay.className = 'user-warning-modal-overlay';
+	overlay.addEventListener('click', (event) => { if (event.target === overlay) overlay.remove(); });
+
+	const box = document.createElement('div');
+	box.className = 'user-warning-modal-box';
+
+	const title = document.createElement('div');
+	title.className = 'user-warning-modal-title';
+	title.textContent = `Delete "${group.name}" (${group.items.length} item${group.items.length === 1 ? '' : 's'})`;
+	box.appendChild(title);
+
+	const otherGroups = config.groups.map((g, i) => ({ g, i })).filter(({ i }) => i !== groupIndex);
+
+	const form = document.createElement('div');
+	form.className = 'cm-delete-group-form';
+
+	const unassignLabel = document.createElement('label');
+	const unassignRadio = document.createElement('input');
+	unassignRadio.type = 'radio';
+	unassignRadio.name = 'cm-delete-choice';
+	unassignRadio.value = 'unassign';
+	unassignRadio.checked = true;
+	unassignLabel.appendChild(unassignRadio);
+	unassignLabel.appendChild(document.createTextNode(`Unassign all ${group.items.length} item(s)`));
+	form.appendChild(unassignLabel);
+
+	const moveLabel = document.createElement('label');
+	const moveRadio = document.createElement('input');
+	moveRadio.type = 'radio';
+	moveRadio.name = 'cm-delete-choice';
+	moveRadio.value = 'move';
+	moveRadio.disabled = otherGroups.length === 0;
+	moveLabel.appendChild(moveRadio);
+	moveLabel.appendChild(document.createTextNode('Move all items to: '));
+	const select = document.createElement('select');
+	select.disabled = otherGroups.length === 0;
+	otherGroups.forEach(({ g, i }) => {
+		const opt = document.createElement('option');
+		opt.value = String(i);
+		opt.textContent = g.name;
+		select.appendChild(opt);
+	});
+	select.addEventListener('focus', () => { moveRadio.checked = true; });
+	moveLabel.appendChild(select);
+	form.appendChild(moveLabel);
+	box.appendChild(form);
+
+	const btnRow = document.createElement('div');
+	btnRow.className = 'cm-delete-group-btn-row';
+	const cancelBtn = document.createElement('button');
+	cancelBtn.className = 'cm-modal-btn-secondary';
+	cancelBtn.textContent = 'Cancel';
+	cancelBtn.addEventListener('click', () => overlay.remove());
+	const deleteBtn = document.createElement('button');
+	deleteBtn.className = 'cm-modal-btn-danger';
+	deleteBtn.textContent = 'Delete Group';
+	deleteBtn.addEventListener('click', async () => {
+		const choice = form.querySelector('input[name="cm-delete-choice"]:checked')?.value;
+		const cfg = contexts.getContextMenuConfig();
+		const removedGroup = cfg.groups[groupIndex];
+		if (choice === 'move') {
+			cfg.groups[Number(select.value)].items.push(...removedGroup.items);
 		} else {
-			row.style.cssText = `display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer;user-select:none;gap:10px;font-size:12px;background:${entry.id === _cmSelectedId ? '#e8f0fe' : ''}`;
-			row.dataset.normalCss = row.style.cssText;
+			cfg.unassigned.items.push(...removedGroup.items);
+		}
+		cfg.groups.splice(groupIndex, 1);
+		contexts.setContextMenuConfig(cfg);
+		overlay.remove();
+		_renderContextMenuGroups(document.getElementById('context-menu-order-list'));
+		await _saveContextMenuConfig();
+	});
+	btnRow.appendChild(cancelBtn);
+	btnRow.appendChild(deleteBtn);
+	box.appendChild(btnRow);
 
-			const handle = document.createElement('span');
-			handle.textContent = '⠿';
-			handle.style.cssText = 'cursor:grab;color:#ccc;font-size:15px;flex-shrink:0;';
-			handle.title = 'Drag to reorder';
+	overlay.appendChild(box);
+	document.body.appendChild(overlay);
+}
 
-			const label = document.createElement('span');
-			label.textContent = entry.label;
-			label.style.flex = '1';
+// ── Small in-modal dropdown menu (group/item right-click menus) ─────────────
+// Reuses the .custom-ctx-menu/.custom-ctx-item/.custom-ctx-submenu CSS classes for
+// visual consistency with the live file-grid context menu, but with its own plain
+// {label, onClick}/{label, items}/{separator} entries and independent click routing —
+// contexts.js's showCustomContextMenu is tightly coupled to file-grid panelId semantics.
+function _hideSettingsContextMenu() {
+	document.getElementById('cm-settings-ctx-menu')?.remove();
+	document.querySelectorAll('.custom-ctx-submenu').forEach(el => el.remove());
+}
 
-			const pills = document.createElement('span');
-			pills.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
-			if (!entry.conditions.singleOnly) pills.appendChild(makePill('multi', '#e3f2fd', '#1565c0'));
-			if (entry.conditions.files)       pills.appendChild(makePill('file', '#f3e5f5', '#6a1b9a'));
-			if (entry.conditions.dirs)        pills.appendChild(makePill('dir', '#fff8e1', '#e65100'));
-
-			row.appendChild(handle);
-			row.appendChild(label);
-			row.appendChild(pills);
-
-			row.addEventListener('click', () => {
-				if (row.dataset.filtered === 'true') return;
-				_cmSelectedId = entry.id;
-				container.querySelectorAll('.cm-order-row').forEach(r => {
-					r.style.background = r.dataset.id === entry.id ? '#e8f0fe' : '';
-				});
-				_showContextMenuItemDetail(entry);
-			});
-
-			// Auto-show detail for the previously selected item after re-render
-			if (entry.id === _cmSelectedId) {
-				_showContextMenuItemDetail(entry);
-			}
+function _buildSettingsMenuEl(menuItems) {
+	const menu = document.createElement('div');
+	menu.className = 'custom-ctx-menu';
+	for (const item of menuItems) {
+		if (item.separator) {
+			const sep = document.createElement('div');
+			sep.className = 'custom-ctx-separator';
+			menu.appendChild(sep);
+			continue;
 		}
 
-		row.addEventListener('dragstart', (e) => {
-			dragSrcIndex = i;
-			e.dataTransfer.effectAllowed = 'move';
-			e.dataTransfer.setData('text/plain', String(i));
-			setTimeout(() => { row.style.opacity = '0.4'; }, 0);
-		});
+		const row = document.createElement('div');
+		row.className = 'custom-ctx-item';
 
-		row.addEventListener('dragend', () => {
-			row.style.opacity = '';
-			container.querySelectorAll('.cm-order-row').forEach(r => { r.style.borderTop = ''; });
-		});
+		const label = document.createElement('span');
+		label.className = 'custom-ctx-label';
+		label.textContent = item.label;
+		row.appendChild(label);
 
-		row.addEventListener('dragover', (e) => {
-			e.preventDefault();
-			e.dataTransfer.dropEffect = 'move';
-			container.querySelectorAll('.cm-order-row').forEach((r, ri) => {
-				r.style.borderTop = ri === i ? '2px solid #2196F3' : '';
+		const hasSub = Array.isArray(item.items) && item.items.length > 0;
+		if (hasSub) {
+			const arrow = document.createElement('span');
+			arrow.className = 'custom-ctx-arrow';
+			arrow.textContent = '›';
+			row.appendChild(arrow);
+		}
+
+		// Hover highlighting applies to every row (not just submenu parents) so the whole
+		// menu feels consistent — only the submenu-opening behavior is conditional.
+		row.addEventListener('mouseenter', () => {
+			menu.querySelectorAll('.custom-ctx-item').forEach(r => r.classList.remove('active'));
+			row.classList.add('active');
+			document.querySelectorAll('.custom-ctx-submenu').forEach(s => s.remove());
+			if (!hasSub) return;
+			const sub = _buildSettingsMenuEl(item.items);
+			sub.classList.add('custom-ctx-submenu');
+			const rect = row.getBoundingClientRect();
+			sub.style.left = (rect.right + 2) + 'px';
+			sub.style.top = rect.top + 'px';
+			document.body.appendChild(sub);
+			requestAnimationFrame(() => {
+				const subRect = sub.getBoundingClientRect();
+				if (subRect.right > window.innerWidth) sub.style.left = (rect.left - subRect.width - 2) + 'px';
+				if (subRect.bottom > window.innerHeight) sub.style.top = (rect.top - (subRect.bottom - window.innerHeight)) + 'px';
 			});
 		});
 
-		row.addEventListener('dragleave', (e) => {
-			if (!container.contains(e.relatedTarget)) {
-				container.querySelectorAll('.cm-order-row').forEach(r => { r.style.borderTop = ''; });
-			}
-		});
+		if (!hasSub) {
+			row.addEventListener('click', (event) => {
+				event.stopPropagation();
+				_hideSettingsContextMenu();
+				item.onClick?.();
+			});
+		}
 
-		row.addEventListener('drop', async (e) => {
-			e.preventDefault();
-			if (dragSrcIndex === null || dragSrcIndex === i) { dragSrcIndex = null; return; }
-			const newOrder = [...orderIds];
-			const [moved] = newOrder.splice(dragSrcIndex, 1);
-			const insertAt = dragSrcIndex < i ? i - 1 : i;
-			newOrder.splice(insertAt, 0, moved);
-			dragSrcIndex = null;
-			contexts.setContextMenuOrder(newOrder);
-			_renderContextMenuList(container, newOrder);
-			await _saveContextMenuOrder(newOrder);
-		});
+		menu.appendChild(row);
+	}
+	return menu;
+}
 
-		container.appendChild(row);
+function _showSettingsContextMenu(x, y, menuItems) {
+	_hideSettingsContextMenu();
+	const menu = _buildSettingsMenuEl(menuItems);
+	menu.id = 'cm-settings-ctx-menu';
+	menu.style.left = x + 'px';
+	menu.style.top = y + 'px';
+	document.body.appendChild(menu);
+
+	requestAnimationFrame(() => {
+		const rect = menu.getBoundingClientRect();
+		if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
+		if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
 	});
+
+	const onOutside = (event) => {
+		if (!event.target.closest?.('#cm-settings-ctx-menu') && !event.target.closest?.('.custom-ctx-submenu')) {
+			_hideSettingsContextMenu();
+			document.removeEventListener('click', onOutside);
+			document.removeEventListener('keydown', onEsc);
+		}
+	};
+	const onEsc = (event) => {
+		if (event.key === 'Escape') {
+			_hideSettingsContextMenu();
+			document.removeEventListener('click', onOutside);
+			document.removeEventListener('keydown', onEsc);
+		}
+	};
+	document.addEventListener('click', onOutside);
+	document.addEventListener('keydown', onEsc);
+}
+
+// ── Group/item tree rendering ────────────────────────────────────────────────
+
+function _renderContextMenuGroups(container) {
+	const config = contexts.getContextMenuConfig();
+	if (!config || !container) return;
+	const regMap = new Map(contexts.CONTEXT_MENU_REGISTRY.map(e => [e.id, e]));
+
+	container.innerHTML = '';
+	config.groups.forEach((group, groupIndex) => {
+		container.appendChild(_buildGroupEl(group, groupIndex, regMap, false));
+	});
+	container.appendChild(_buildGroupEl(config.unassigned, -1, regMap, true));
+
 	_applyFilters(container);
+}
+
+function _buildGroupEl(group, groupIndex, regMap, isUnassigned) {
+	const wrap = document.createElement('div');
+	wrap.className = 'cm-group' + (isUnassigned ? ' cm-group-unassigned' : '');
+	wrap.dataset.groupIndex = groupIndex;
+
+	const header = document.createElement('div');
+	header.className = 'cm-group-header';
+
+	const chevron = document.createElement('span');
+	chevron.className = 'cm-group-chevron' + (group.collapsed ? ' collapsed' : '');
+	chevron.textContent = '\u25be';
+	header.appendChild(chevron);
+
+	const nameEl = document.createElement('span');
+	nameEl.className = 'cm-group-name';
+	nameEl.textContent = isUnassigned ? 'Unassigned' : group.name;
+	header.appendChild(nameEl);
+
+	const line = document.createElement('div');
+	line.className = 'cm-group-line';
+	header.appendChild(line);
+
+	const body = document.createElement('div');
+	body.className = 'cm-group-body';
+	if (group.collapsed) body.style.display = 'none';
+
+	if (group.items.length === 0) {
+		const empty = document.createElement('div');
+		empty.className = 'cm-group-empty';
+		empty.textContent = 'Drop items here';
+		body.appendChild(empty);
+	} else {
+		// Unassigned is just a holding bucket — its stored order is never meaningful, so it's
+		// always displayed alphabetically rather than by (arbitrary) array position.
+		const displayIds = isUnassigned
+			? [...group.items].sort((a, b) => (regMap.get(a)?.label || a).localeCompare(regMap.get(b)?.label || b))
+			: group.items;
+		displayIds.forEach((id) => {
+			const entry = regMap.get(id);
+			if (!entry) return;
+			body.appendChild(_buildItemRowEl(entry, groupIndex, group.items.indexOf(id)));
+		});
+	}
+
+	header.addEventListener('click', () => {
+		group.collapsed = !group.collapsed;
+		chevron.classList.toggle('collapsed', group.collapsed);
+		body.style.display = group.collapsed ? 'none' : '';
+		_saveContextMenuConfig();
+	});
+
+	// Clicking the name text itself should only select-for-rename (via dblclick below),
+	// never toggle collapse — stopping propagation here keeps it from also hitting the
+	// header's collapse-toggle listener.
+	nameEl.addEventListener('click', (event) => event.stopPropagation());
+
+	if (!isUnassigned) {
+		nameEl.addEventListener('dblclick', (event) => {
+			event.stopPropagation();
+			_startGroupRename(nameEl, group.name, groupIndex);
+		});
+		header.addEventListener('contextmenu', (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			_showGroupContextMenu(event.clientX, event.clientY, groupIndex);
+		});
+	}
+
+	// Dropping directly on the header/empty body (i.e. not on a specific item row)
+	// appends the dragged item to the end of this group.
+	let dragEnterCount = 0;
+	wrap.addEventListener('dragenter', (event) => {
+		if (!_cmDragState) return;
+		event.preventDefault();
+		dragEnterCount++;
+		wrap.classList.add('cm-group-drop-target');
+	});
+	wrap.addEventListener('dragover', (event) => { if (_cmDragState) event.preventDefault(); });
+	wrap.addEventListener('dragleave', () => {
+		if (!_cmDragState) return;
+		dragEnterCount = Math.max(0, dragEnterCount - 1);
+		if (dragEnterCount === 0) wrap.classList.remove('cm-group-drop-target');
+	});
+	wrap.addEventListener('drop', (event) => {
+		if (!_cmDragState) return;
+		event.preventDefault();
+		dragEnterCount = 0;
+		wrap.classList.remove('cm-group-drop-target');
+		_moveItem(_cmDragState.sourceGroupIndex, _cmDragState.itemId, groupIndex, null);
+		_cmDragState = null;
+	});
+
+	wrap.appendChild(header);
+	wrap.appendChild(body);
+	return wrap;
+}
+
+function _buildItemRowEl(entry, groupIndex, itemIndex) {
+	const row = document.createElement('div');
+	row.className = 'cm-item-row';
+	row.draggable = true;
+	row.dataset.id = entry.id;
+	if (entry.id === _cmSelectedId) row.classList.add('selected');
+
+	const label = document.createElement('span');
+	label.className = 'cm-item-label';
+	label.textContent = entry.label;
+	row.appendChild(label);
+
+	const pills = document.createElement('span');
+	pills.className = 'cm-item-pills';
+	if (!entry.conditions.singleOnly) pills.appendChild(_makePill('multi'));
+	if (entry.conditions.files) pills.appendChild(_makePill('file'));
+	if (entry.conditions.dirs) pills.appendChild(_makePill('dir'));
+	row.appendChild(pills);
+
+	row.addEventListener('click', () => {
+		if (row.classList.contains('cm-item-filtered')) return;
+		_cmSelectedId = entry.id;
+		document.querySelectorAll('.cm-item-row').forEach(r => r.classList.toggle('selected', r.dataset.id === entry.id));
+		_showContextMenuItemDetail(entry);
+	});
+
+	row.addEventListener('contextmenu', (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+		_showItemContextMenu(event.clientX, event.clientY, entry, groupIndex);
+	});
+
+	row.addEventListener('dragstart', (event) => {
+		_cmDragState = { sourceGroupIndex: groupIndex, itemId: entry.id };
+		event.dataTransfer.effectAllowed = 'move';
+		event.dataTransfer.setData('text/plain', entry.id);
+		setTimeout(() => row.classList.add('dragging'), 0);
+	});
+	row.addEventListener('dragend', () => {
+		row.classList.remove('dragging');
+		_cmDragState = null;
+		document.querySelectorAll('.cm-item-row.drop-before, .cm-item-row.drop-after').forEach(r => r.classList.remove('drop-before', 'drop-after'));
+		document.querySelectorAll('.cm-group-drop-target').forEach(g => g.classList.remove('cm-group-drop-target'));
+	});
+	row.addEventListener('dragover', (event) => {
+		if (!_cmDragState) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const rect = row.getBoundingClientRect();
+		const before = (event.clientY - rect.top) < rect.height / 2;
+		row.classList.toggle('drop-before', before);
+		row.classList.toggle('drop-after', !before);
+	});
+	row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
+	row.addEventListener('drop', (event) => {
+		if (!_cmDragState) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const rect = row.getBoundingClientRect();
+		const before = (event.clientY - rect.top) < rect.height / 2;
+		row.classList.remove('drop-before', 'drop-after');
+		if (_cmDragState.itemId === entry.id) { _cmDragState = null; return; }
+		_moveItem(_cmDragState.sourceGroupIndex, _cmDragState.itemId, groupIndex, before ? itemIndex : itemIndex + 1);
+		_cmDragState = null;
+	});
+
+	if (entry.id === _cmSelectedId) {
+		_showContextMenuItemDetail(entry);
+	}
+
+	return row;
 }
 
 function _showContextMenuItemDetail(entry) {
@@ -2954,15 +3390,14 @@ function _showContextMenuItemDetail(entry) {
 	}
 }
 
-async function _saveContextMenuOrder(order) {
+async function _saveContextMenuConfig() {
 	try {
-		const settings = await window.electronAPI.getSettings();
-		settings.context_menu_order = order;
-		const result = await window.electronAPI.saveSettings(settings);
+		const config = contexts.getContextMenuConfig();
+		const result = await window.electronAPI.saveContextMenuConfig(config);
 		if (result && result.success === false) {
-			showFormError('#contextmenu-status', 'Failed to save order.');
+			showFormError('#contextmenu-status', 'Failed to save.');
 		} else {
-			showFormSuccess('#contextmenu-status', 'Order saved.');
+			showFormSuccess('#contextmenu-status', 'Saved.');
 		}
 	} catch (err) {
 		showFormError('#contextmenu-status', 'Error: ' + (err.message || 'Unknown'));

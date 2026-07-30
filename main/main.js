@@ -10,6 +10,7 @@ const logger = require('../src/logger');
 const db = require('../src/db');
 const fs = require('../src/filesystem');
 const categories = require('../src/categories');
+const contextMenuConfig = require('../src/contextMenuConfig');
 const tags = require('../src/tags');
 const filetypes = require('../src/filetypes');
 const icons = require('../src/icons');
@@ -2310,6 +2311,31 @@ ipcMain.handle('save-favorites', (event, favorites) => {
     return { success: true };
   } catch (err) {
     logger.error('Error saving favorites:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * Context menu config: Get groups/display-mode config (dedicated file, separate from settings.json).
+ */
+ipcMain.handle('get-context-menu-config', () => {
+  try {
+    return contextMenuConfig.getContextMenuConfig();
+  } catch (err) {
+    logger.error('Error getting context menu config:', err.message);
+    return null;
+  }
+});
+
+/**
+ * Context menu config: Save groups/display-mode config
+ */
+ipcMain.handle('save-context-menu-config', (event, config) => {
+  try {
+    contextMenuConfig.saveContextMenuConfig(config);
+    return { success: true };
+  } catch (err) {
+    logger.error('Error saving context menu config:', err.message);
     return { success: false, error: err.message };
   }
 });

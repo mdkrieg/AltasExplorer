@@ -191,6 +191,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Hotkeys
   getHotkeys: () => ipcRenderer.invoke('get-hotkeys'),
   saveHotkeys: (hotkeyData) => ipcRenderer.invoke('save-hotkeys', hotkeyData),
+
+  // Context menu config (groups/display-mode, dedicated file)
+  getContextMenuConfig: () => ipcRenderer.invoke('get-context-menu-config'),
+  saveContextMenuConfig: (config) => ipcRenderer.invoke('save-context-menu-config', config),
   
   // Window icon update
   updateWindowIcon: (categoryName, initials) =>

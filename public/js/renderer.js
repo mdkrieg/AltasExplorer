@@ -39,6 +39,7 @@ import * as terminal from './modules/terminal.js';
 import { openDragTrayForActivePanel } from './modules/dragdrop.js';
 import * as clipboard from './modules/clipboard.js';
 import * as gridLayoutSettings from './modules/gridLayoutSettings.js';
+import { warnUserToast } from './modules/userWarnings.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, attachFvWidgetHeaderListeners, openNotesViewerForPath, cancelFileViewerEdit, getFileViewerHost } from './modules/notes.js';
@@ -233,7 +234,11 @@ async function initialize() {
     const appSettings = await window.electronAPI.getSettings();
     console.log('Settings loaded:', appSettings);
     panels.setCacheBrowsingMode(appSettings.cache_browsing || 'enabled');
-    contexts.initContextMenuOrder(appSettings.context_menu_order || null);
+    const cmConfig = await window.electronAPI.getContextMenuConfig();
+    const { invalidItems } = contexts.initContextMenuConfig(cmConfig);
+    if (invalidItems.length > 0) {
+      warnUserToast('Context menu: removed unrecognized item(s)', invalidItems);
+    }
 
     const homePath = appSettings.home_directory;
 

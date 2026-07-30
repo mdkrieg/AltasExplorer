@@ -71,7 +71,9 @@ Philosophy:
 ### ROADMAP:
 [x] reminders sidebar should refresh slowly on its own, maybe once a minute
 
-[ ] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
+[ ] ability to "pin" files to top of list view or gallery view
+
+[test] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
 
 [x] Search bar should eagerly search the visible fields when changed - submitting the search bar will eventually become a deeper search including invisible columns and contents of text files (contents' names of zip files too?)
 

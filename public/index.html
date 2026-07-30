@@ -740,14 +740,26 @@
             <div
               style="padding: 10px 15px; background: #f9f9f9; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 13px;">
               Menu Item Order</div>
-            <div id="contextmenu-filter-bar"
-              style="padding: 5px 10px; display: flex; gap: 6px; align-items: center; border-bottom: 1px solid #eee; background: #fefefe; flex-shrink: 0;">
-              <span style="font-size: 11px; color: #999; flex-shrink: 0;">Show only:</span>
-              <button data-filter="multi" class="cm-filter-btn"></button>
-              <button data-filter="file" class="cm-filter-btn"></button>
-              <button data-filter="dir" class="cm-filter-btn"></button>
+            <div id="contextmenu-display-mode-bar"
+              style="padding: 8px 15px; display: flex; gap: 8px; align-items: center; justify-content: space-between; border-bottom: 1px solid #eee; background: #fefefe; flex-shrink: 0;">
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span style="font-size: 11px; color: #999; flex-shrink: 0;">Display as:</span>
+                <button data-mode="flat" class="cm-mode-btn">Flat</button>
+                <button data-mode="tabbed" class="cm-mode-btn">Tabbed</button>
+              </div>
+              <div id="contextmenu-filter-bar" style="display: flex; gap: 6px; align-items: center;">
+                <span style="font-size: 11px; color: #999; flex-shrink: 0;">Show only:</span>
+                <button data-filter="multi" class="cm-filter-btn"></button>
+                <button data-filter="file" class="cm-filter-btn"></button>
+                <button data-filter="dir" class="cm-filter-btn"></button>
+              </div>
             </div>
             <div id="context-menu-order-list" style="flex: 1; overflow-y: auto;"></div>
+            <div style="padding: 8px 15px; border-top: 1px solid #eee; flex-shrink: 0;">
+              <button id="btn-contextmenu-add-group"
+                style="width: 100%; padding: 6px; background: #e3f2fd; color: #1565c0; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">+
+                Add Group</button>
+            </div>
           </div>
           <!-- Resizable Divider -->
           <div id="contextmenu-divider"
@@ -785,7 +797,7 @@
               style="padding: 10px 15px; border-top: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
               <button id="btn-contextmenu-reset"
                 style="width: 100%; padding: 8px; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">Reset
-                to Default Order</button>
+                to Default Groups</button>
               <div id="contextmenu-status" style="display: none; font-size: 11px; margin-top: 4px;"></div>
             </div>
           </div>
