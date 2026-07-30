@@ -28,6 +28,7 @@ import * as utils from './modules/utils.js';
 import * as sidebar from './modules/sidebar.js';
 import * as panels from './modules/panels.js';
 import * as contexts from './modules/contexts.js';
+import * as contextMenuWidget from './modules/contextMenuWidget.js';
 import * as history from './modules/history.js';
 import * as notes from './modules/notes.js';
 import * as alerts from './modules/alerts.js';
@@ -1513,78 +1514,34 @@ function attachEventListeners() {
     const activePanel = Object.keys(panelState).find(id => $(`#panel-${id}`).hasClass('panel-active'));
     const cwd = activePanel && panelState[activePanel] ? panelState[activePanel].currentPath : undefined;
 
-    contexts.hideCustomContextMenu();
-
-    const menu = document.createElement('div');
-    menu.id = 'custom-ctx-menu';
-    menu.className = 'custom-ctx-menu';
-
-    const addRow = (text, action) => {
-      const row = document.createElement('div');
-      row.className = 'custom-ctx-item';
-      const label = document.createElement('span');
-      label.className = 'custom-ctx-label';
-      label.textContent = text;
-      row.appendChild(label);
-      row.addEventListener('mouseenter', () => {
-        menu.querySelectorAll('.custom-ctx-item').forEach(r => r.classList.remove('active'));
-        row.classList.add('active');
-      });
-      row.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        contexts.hideCustomContextMenu();
-        action();
-      });
-      menu.appendChild(row);
-    };
+    const items = [];
 
     // Existing panels 2-4 (panel 1 has no terminal container)
     for (let i = 2; i <= panels.visiblePanels; i++) {
       const targetPanelId = i;
-      addRow(`Open in Panel ${targetPanelId}`, async () => {
-        await terminal.createTerminalPanel(targetPanelId, cwd);
-        panels.setActivePanelId(targetPanelId);
+      items.push({
+        text: `Open in Panel ${targetPanelId}`,
+        onClick: async () => {
+          await terminal.createTerminalPanel(targetPanelId, cwd);
+          panels.setActivePanelId(targetPanelId);
+        }
       });
     }
     // N+1: open a new panel (capped at 4)
     if (panels.visiblePanels < 4) {
       const newPanelId = panels.visiblePanels + 1;
-      addRow(`Open in new Panel ${newPanelId}`, async () => {
-      const created = await panels.addPanel();
-        const targetId = created ?? newPanelId;
-        await terminal.createTerminalPanel(targetId, cwd);
-        panels.setActivePanelId(targetId);
+      items.push({
+        text: `Open in new Panel ${newPanelId}`,
+        onClick: async () => {
+          const created = await panels.addPanel();
+          const targetId = created ?? newPanelId;
+          await terminal.createTerminalPanel(targetId, cwd);
+          panels.setActivePanelId(targetId);
+        }
       });
     }
 
-    if (!menu.children.length) return;
-
-    menu.style.left = e.clientX + 'px';
-    menu.style.top = e.clientY + 'px';
-    document.body.appendChild(menu);
-
-    requestAnimationFrame(() => {
-      const mr = menu.getBoundingClientRect();
-      if (mr.right > window.innerWidth) menu.style.left = (e.clientX - mr.width) + 'px';
-      if (mr.bottom > window.innerHeight) menu.style.top = (e.clientY - mr.height) + 'px';
-    });
-
-    const onOutside = (ev) => {
-      if (!ev.target.closest?.('#custom-ctx-menu')) {
-        contexts.hideCustomContextMenu();
-        document.removeEventListener('click', onOutside);
-        document.removeEventListener('keydown', onEsc);
-      }
-    };
-    const onEsc = (ev) => {
-      if (ev.key === 'Escape') {
-        contexts.hideCustomContextMenu();
-        document.removeEventListener('click', onOutside);
-        document.removeEventListener('keydown', onEsc);
-      }
-    };
-    document.addEventListener('click', onOutside);
-    document.addEventListener('keydown', onEsc);
+    contextMenuWidget.showContextMenu(items, e.clientX, e.clientY);
   });
 
   // Terminal drawer: close button (also bound inside openTerminalModal, this is a belt-and-suspenders binding)

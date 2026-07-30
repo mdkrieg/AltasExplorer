@@ -20,6 +20,7 @@ import * as terminal from './terminal.js';
 import * as clipboard from './clipboard.js';
 import * as mirrorsUi from './mirrorsUi.js';
 import { w2utils, w2confirm } from './vendor/w2ui.es6.min.js';
+import * as contextMenuWidget from './contextMenuWidget.js';
 import {
 	panelState,
 	selectedItemState,
@@ -1287,143 +1288,18 @@ async function handleContextMenuClick(event, panelId) {
 }
 
 export function hideCustomContextMenu() {
-	document.getElementById('custom-ctx-menu')?.remove();
-	document.querySelectorAll('.custom-ctx-submenu').forEach(element => element.remove());
+	contextMenuWidget.hideContextMenu();
 }
 
-// Builds item rows (separators, icons, labels, submenu-hover flyouts, click routing) into
-// `container`. Shared by buildMenuEl (single flat list) and buildTabbedMenuEl (one call per
-// tab pane) so hover/submenu/click behavior is identical between flat and tabbed display modes
-// — only the container differs.
-function _appendMenuItemRows(container, items, panelId) {
-	let activeSubEl = null;
-	let subHideTimer = null;
-
-	const clearHideTimer = () => clearTimeout(subHideTimer);
-	const startHideTimer = () => {
-		subHideTimer = setTimeout(() => {
-			if (activeSubEl) {
-				activeSubEl.remove();
-				activeSubEl = null;
-			}
-		}, 200);
-	};
-
-	for (const item of items) {
-		if (item.text === '--') {
-			const sep = document.createElement('div');
-			sep.className = 'custom-ctx-separator';
-			container.appendChild(sep);
-			continue;
-		}
-
-		const row = document.createElement('div');
-		row.className = 'custom-ctx-item';
-		if (item.id) row.dataset.id = item.id;
-
-		if (item.iconHtml) {
-			const iconWrap = document.createElement('span');
-			iconWrap.className = 'custom-ctx-icon';
-			iconWrap.innerHTML = item.iconHtml;
-			row.appendChild(iconWrap);
-		}
-
-		const label = document.createElement('span');
-		label.className = 'custom-ctx-label';
-		label.textContent = item.text;
-		row.appendChild(label);
-
-		const hasSub = Array.isArray(item.items) && item.items.length > 0;
-		if (hasSub) {
-			const arrow = document.createElement('span');
-			arrow.className = 'custom-ctx-arrow';
-			arrow.textContent = '›';
-			row.appendChild(arrow);
-		}
-
-		row.addEventListener('mouseenter', () => {
-			clearHideTimer();
-			container.querySelectorAll('.custom-ctx-item').forEach(itemRow => itemRow.classList.remove('active'));
-			row.classList.add('active');
-
-			if (!hasSub) {
-				if (activeSubEl) {
-					activeSubEl.remove();
-					activeSubEl = null;
-				}
-				return;
-			}
-
-			if (activeSubEl) {
-				activeSubEl.remove();
-				activeSubEl = null;
-			}
-
-			// Submenus always render flat regardless of the top-level display mode — tabbing an
-			// already-scoped flyout (e.g. "Set Category") would be scope creep, not a space saving.
-			const sub = buildMenuEl(item.items, panelId);
-			sub.classList.add('custom-ctx-submenu');
-			const rowRect = row.getBoundingClientRect();
-			sub.style.left = (rowRect.right + 2) + 'px';
-			sub.style.top = rowRect.top + 'px';
-			document.body.appendChild(sub);
-			activeSubEl = sub;
-
-			requestAnimationFrame(() => {
-				const subRect = sub.getBoundingClientRect();
-				if (subRect.right > window.innerWidth) {
-					sub.style.left = (rowRect.left - subRect.width - 2) + 'px';
-				}
-				if (subRect.bottom > window.innerHeight) {
-					sub.style.top = (rowRect.top - (subRect.bottom - window.innerHeight)) + 'px';
-				}
-			});
-
-			sub.addEventListener('mouseenter', () => clearHideTimer());
-			sub.addEventListener('mouseleave', () => startHideTimer());
-		});
-
-		if (hasSub) {
-			row.addEventListener('mouseleave', () => startHideTimer());
-		} else {
-			row.addEventListener('click', (event) => {
-				event.stopPropagation();
-				hideCustomContextMenu();
-				if (typeof item.onClick === 'function') {
-					item.onClick();
-				} else {
-					handleContextMenuClick({ detail: { menuItem: item } }, panelId);
-				}
-			});
-		}
-
-		// Items marked clickable (e.g. "Open In") fire the handler even when they have a submenu.
-		// Submenu appears on hover; clicking the root label navigates the current panel.
-		if (hasSub && item.clickable) {
-			row.addEventListener('click', (event) => {
-				event.stopPropagation();
-				hideCustomContextMenu();
-				handleContextMenuClick({ detail: { menuItem: item } }, panelId);
-			});
-		}
-
-		container.appendChild(row);
-	}
-}
-
-function buildMenuEl(items, panelId) {
-	const menu = document.createElement('div');
-	menu.className = 'custom-ctx-menu';
-	_appendMenuItemRows(menu, items, panelId);
-	return menu;
-}
-
-// Tabbed variant: buckets items by the persisted groups config (see initContextMenuConfig)
-// into hover-activated tabs instead of one long flat list. Opt-in via the 'tabbed'
-// display_mode setting. Tab labels are the user's own (renameable) group names.
-function buildTabbedMenuEl(items, panelId) {
+// Buckets `items` by the persisted groups config (see initContextMenuConfig) into
+// hover-activated tabs instead of one long flat list. Tab labels are the user's own
+// (renameable) group names. Returns null when tabbing isn't worth it (no config yet, or
+// ≤1 populated group) so the caller falls back to the plain flat list — a single tab
+// wouldn't justify a tab strip, and the fallback needs the *original* flat `items` (with
+// its separators) rather than a lone tab's item subset.
+function _buildContextMenuTabDefs(items) {
 	const config = _contextMenuConfig;
-	if (!config) return buildMenuEl(items, panelId);
+	if (!config) return null;
 
 	const builtByRegistryId = new Map(); // registryId -> [item, ...]
 	const unmapped = []; // items with no registry entry — always shown, defensive fallback
@@ -1449,79 +1325,20 @@ function buildTabbedMenuEl(items, panelId) {
 	}
 	if (unmapped.length > 0) tabDefs.push({ label: 'Other', items: unmapped });
 
-	// A single (or zero) populated tab isn't worth a tab strip — fall back to the flat list.
-	if (tabDefs.length <= 1) return buildMenuEl(items, panelId);
-
-	const menu = document.createElement('div');
-	menu.className = 'custom-ctx-menu custom-ctx-menu-tabbed';
-
-	const tabbar = document.createElement('div');
-	tabbar.className = 'custom-ctx-tabbar';
-	const content = document.createElement('div');
-	content.className = 'custom-ctx-tab-content';
-	menu.appendChild(tabbar);
-	menu.appendChild(content);
-
-	const tabs = [];
-	const panes = [];
-	for (const tabDef of tabDefs) {
-		const tab = document.createElement('div');
-		tab.className = 'custom-ctx-tab';
-		tab.textContent = tabDef.label;
-
-		const pane = document.createElement('div');
-		pane.className = 'custom-ctx-tab-pane';
-		_appendMenuItemRows(pane, tabDef.items, panelId);
-
-		// Hover (not click) switches tabs, per the space-saving hover UX this feature exists for.
-		tab.addEventListener('mouseenter', () => {
-			tabs.forEach(t => t.classList.remove('active'));
-			panes.forEach(p => p.classList.remove('active'));
-			tab.classList.add('active');
-			pane.classList.add('active');
-		});
-
-		tabbar.appendChild(tab);
-		content.appendChild(pane);
-		tabs.push(tab);
-		panes.push(pane);
-	}
-
-	// Measure-then-fix sizing: briefly show every pane (invisibly, off the currently-displayed
-	// document flow via the .custom-ctx-tab-pane CSS being position:absolute) to find the
-	// largest natural width/height, then lock that size onto .custom-ctx-tab-content. Locking to
-	// the max across ALL tabs — not just the active one — is what keeps the menu from resizing
-	// as the user hovers across tabs; an unlocked resize would let the cursor slip off the tab
-	// strip mid-hover (the same class of bug as flaky OS Start-Menu flyouts).
-	menu.style.visibility = 'hidden';
-	document.body.appendChild(menu);
-	panes.forEach(p => p.classList.add('custom-ctx-tab-pane-measuring'));
-	let maxWidth = 0, maxHeight = 0;
-	panes.forEach(p => {
-		const rect = p.getBoundingClientRect();
-		maxWidth = Math.max(maxWidth, rect.width);
-		maxHeight = Math.max(maxHeight, rect.height);
-	});
-	panes.forEach(p => p.classList.remove('custom-ctx-tab-pane-measuring'));
-	document.body.removeChild(menu);
-	menu.style.visibility = '';
-	content.style.width = maxWidth + 'px';
-	content.style.height = maxHeight + 'px';
-
-	tabs[0].classList.add('active');
-	panes[0].classList.add('active');
-
-	return menu;
+	return tabDefs.length > 1 ? tabDefs : null;
 }
 
 export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp, pendingViewMode) {
-	hideCustomContextMenu();
-
-	const menu = getContextMenuDisplayMode() === 'tabbed' ? buildTabbedMenuEl(items, panelId) : buildMenuEl(items, panelId);
-	menu.id = 'custom-ctx-menu';
-	menu.style.left = x + 'px';
-	menu.style.top = y + 'px';
-	document.body.appendChild(menu);
+	const opts = {
+		// Items without their own onClick (most of generateW2UIContextMenu's output) route
+		// through the file-grid's existing click-routing table.
+		defaultOnClick: (item) => handleContextMenuClick({ detail: { menuItem: item } }, panelId)
+	};
+	const tabDefs = getContextMenuDisplayMode() === 'tabbed' ? _buildContextMenuTabDefs(items) : null;
+	const menuEl = tabDefs
+		? contextMenuWidget.showTabbedContextMenu(tabDefs, x, y, opts)
+		: contextMenuWidget.showContextMenu(items, x, y, opts);
+	if (!menuEl) return;
 
 	// If the default app name wasn't cached yet, fire the IPC call AFTER this render frame
 	// to avoid PowerShell spawn jank during the initial menu paint.
@@ -1529,9 +1346,9 @@ export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp, p
 		setTimeout(() => {
 			pendingDefaultApp().then(result => {
 				if (!result || !result.appName) return;
-				const menuEl = document.getElementById('custom-ctx-menu');
-				if (!menuEl) return; // menu already closed
-				const openRow = menuEl.querySelector('.custom-ctx-item[data-id="open-in-default-app"]');
+				const currentMenuEl = document.getElementById('custom-ctx-menu');
+				if (!currentMenuEl) return; // menu already closed
+				const openRow = currentMenuEl.querySelector('.custom-ctx-item[data-id="open-in-default-app"]');
 				const openLabel = openRow && openRow.querySelector('.custom-ctx-label');
 				if (openLabel) openLabel.textContent = `Open with ${result.appName}`;
 			});
@@ -1541,36 +1358,13 @@ export function showCustomContextMenu(items, x, y, panelId, pendingDefaultApp, p
 	// Patch the view-file label once the binary probe resolves (unknown file types)
 	if (pendingViewMode) {
 		pendingViewMode.then(mode => {
-			const menuEl = document.getElementById('custom-ctx-menu');
-			if (!menuEl) return;
-			const viewRow = menuEl.querySelector('.custom-ctx-item[data-id="view-file"]');
+			const currentMenuEl = document.getElementById('custom-ctx-menu');
+			if (!currentMenuEl) return;
+			const viewRow = currentMenuEl.querySelector('.custom-ctx-item[data-id="view-file"]');
 			const viewLabel = viewRow && viewRow.querySelector('.custom-ctx-label');
 			if (viewLabel) viewLabel.textContent = mode === 'hex' ? 'View Hex' : 'View/Edit';
 		});
 	}
-
-	requestAnimationFrame(() => {
-		const rect = menu.getBoundingClientRect();
-		if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
-		if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
-	});
-
-	const onOutside = (event) => {
-		if (!event.target.closest?.('#custom-ctx-menu') && !event.target.closest?.('.custom-ctx-submenu')) {
-			hideCustomContextMenu();
-			document.removeEventListener('click', onOutside);
-			document.removeEventListener('keydown', onEsc);
-		}
-	};
-	const onEsc = (event) => {
-		if (event.key === 'Escape') {
-			hideCustomContextMenu();
-			document.removeEventListener('click', onOutside);
-			document.removeEventListener('keydown', onEsc);
-		}
-	};
-	document.addEventListener('click', onOutside);
-	document.addEventListener('keydown', onEsc);
 }
 
 export function initializeGlobalContextMenuHandlers() {

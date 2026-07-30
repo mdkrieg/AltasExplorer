@@ -13,7 +13,52 @@ Newest entries first.
 
 ---
 
-## renderer-esm-tests
+## unified-context-menu-widget
+
+**All custom right-click flyout menus share one widget (`public/js/modules/contextMenuWidget.js`)**
+
+**Date:** 2026-07-29
+
+**What was tried:** The hand-rolled `.custom-ctx-menu`/`.custom-ctx-item`/`.custom-ctx-submenu`
+DOM pattern (hover highlighting, hover-activated submenu flyouts, outside-click/Escape
+dismissal) was independently hand-copied four times: the file-grid menu (`contexts.js`, the
+original — flat and tabbed), the Context Menu settings tab's group/item menus (`settings.js`),
+the favorites sidebar menu (`sidebar.js`), and the terminal panel-picker menu (`renderer.js`).
+
+**Why this was rejected:** The `settings.js` copy dropped a subtle-but-load-bearing detail
+from the original: submenu dismissal must be scoped to "the mouse actually left the parent
+row and its own flyout" (closure-scoped `activeSubEl` + a short hide-timer), not "any row
+anywhere got a mouseenter." The clone instead did a global
+`document.querySelectorAll('.custom-ctx-submenu').forEach(s => s.remove())` on every row's
+mouseenter — which also fired for rows *inside* the open submenu, deleting it the instant the
+cursor moved off the parent and into its own flyout. This was found empirically while
+verifying the Context Menu settings tab live: submenus would never stay open. Separately,
+`item.disabled` was set on several `contexts.js` registry entries (e.g. "Remove Tag" with no
+tags, "Paste" with an empty clipboard) but no copy of the pattern ever actually read that
+flag — disabled items were always fully clickable and hoverable, a second latent bug found
+during the same review.
+
+**What was chosen instead:** One shared module, `contextMenuWidget.js`, exporting
+`buildMenuEl`/`buildTabbedMenuEl` (DOM construction) and `showContextMenu`/
+`showTabbedContextMenu`/`hideContextMenu` (positioning + outside-click/Escape + show/hide).
+It normalizes both item-shape conventions the four call sites had drifted into
+(`{text}`/`text:'--'` from `contexts.js` vs. `{label}`/`{separator:true}` from `settings.js`),
+accepts an optional `opts.defaultOnClick(item)` instead of hardcoding `contexts.js`'s
+file-grid click-routing table, generalizes the sidebar's hardcoded `custom-ctx-item-danger`
+class string into a per-item `danger` boolean, and now actually enforces `item.disabled`
+(dimmed, no hover/click/submenu). `contexts.js` keeps its own tabbed-mode registry-bucketing
+logic (grouping items by the persisted Context Menu config) since that's file-grid-specific
+data prep, not part of the generic widget; it just hands the widget pre-built `tabDefs`.
+
+**Consequence:** `contexts.js`'s exported `showCustomContextMenu(items, x, y, panelId,
+pendingDefaultApp, pendingViewMode)` / `hideCustomContextMenu()` signatures are unchanged
+(still used by `dragdrop.js`/`panels.js`) — only their internals now delegate to the widget.
+Any new custom right-click menu should use the widget directly rather than hand-rolling the
+pattern a fifth time.
+
+---
+
+
 
 **Renderer ES modules are unit-tested via `--experimental-vm-modules`, not Babel**
 

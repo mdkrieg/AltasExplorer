@@ -5036,6 +5036,12 @@ hr {
   color: #c0392b;
 }
 
+/* Disabled rows never get .active (no hover listener attached), so no :hover/.active variant needed here. */
+.custom-ctx-item-disabled {
+  color: #aaa;
+  cursor: default;
+}
+
 /* Tabbed context menu (opt-in via 'tabbed' context_menu_display_mode setting) */
 .custom-ctx-menu-tabbed {
   padding: 0;

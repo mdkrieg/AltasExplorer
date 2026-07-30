@@ -17,7 +17,7 @@
 
 import { w2sidebar } from './vendor/w2ui.es6.min.js';
 import { navigateToDirectory, visiblePanels, addPanel, setActivePanelId, setGridFocusedPanelId, matchFileType, initializeGridForPanel } from './panels.js';
-import { hideCustomContextMenu } from './contexts.js';
+import * as contextMenuWidget from './contextMenuWidget.js';
 import {
   panelState,
   sidebarState,
@@ -1559,114 +1559,76 @@ async function deleteGroup(node) {
 }
 
 /**
- * Show the favorites context menu using the shared custom-ctx-menu style.
+ * Show the favorites context menu using the shared contextMenuWidget.
  */
 function showFavoritesContextMenu(x, y, targetType = 'item', node = null) {
-  hideCustomContextMenu();
-
-  const menu = document.createElement('div');
-  menu.id = 'custom-ctx-menu';
-  menu.className = 'custom-ctx-menu';
-
-  const addRow = (text, action, extraClass = '') => {
-    const row = document.createElement('div');
-    row.className = 'custom-ctx-item' + (extraClass ? ' ' + extraClass : '');
-    const label = document.createElement('span');
-    label.className = 'custom-ctx-label';
-    label.textContent = text;
-    row.appendChild(label);
-    row.addEventListener('mouseenter', () => {
-      menu.querySelectorAll('.custom-ctx-item').forEach(r => r.classList.remove('active'));
-      row.classList.add('active');
-    });
-    row.addEventListener('click', (e) => {
-      e.stopPropagation();
-      hideCustomContextMenu();
-      action();
-    });
-    menu.appendChild(row);
-  };
-
-  const addSeparator = () => {
-    const sep = document.createElement('div');
-    sep.className = 'custom-ctx-separator';
-    menu.appendChild(sep);
-  };
+  const items = [];
 
   if (targetType === 'item' && node) {
     // One top-level entry per visible panel
     for (let i = 1; i <= visiblePanels; i++) {
       const panelId = i;
-      addRow(`Open in Panel ${panelId}`, async () => {
-        if (node.path) {
-          await navigateToDirectory(node.path, panelId);
-          setActivePanelId(panelId);
-          setGridFocusedPanelId(panelId);
+      items.push({
+        text: `Open in Panel ${panelId}`,
+        onClick: async () => {
+          if (node.path) {
+            await navigateToDirectory(node.path, panelId);
+            setActivePanelId(panelId);
+            setGridFocusedPanelId(panelId);
+          }
         }
       });
     }
     // N+1: open a new panel (capped at 4)
     if (visiblePanels < 4) {
       const newPanelId = visiblePanels + 1;
-      addRow(`Open in new Panel ${newPanelId}`, async () => {
-        if (node.path) {
-          const targetId = await addPanel();
-          if (!targetId) return;
-          // addPanel() shows the welcome view (atlas://landing). Initialize the grid,
-          // then hide the welcome view before navigating to the real directory.
-          await initializeGridForPanel(targetId);
-          $(`#panel-${targetId} .panel-welcome-view`).hide();
-          $(`#panel-${targetId} .panel-landing-page`).hide();
-          $(`#panel-${targetId} .panel-grid`).show();
-          await navigateToDirectory(node.path, targetId);
-          setActivePanelId(targetId);
-          setGridFocusedPanelId(targetId);
+      items.push({
+        text: `Open in new Panel ${newPanelId}`,
+        onClick: async () => {
+          if (node.path) {
+            const targetId = await addPanel();
+            if (!targetId) return;
+            // addPanel() shows the welcome view (atlas://landing). Initialize the grid,
+            // then hide the welcome view before navigating to the real directory.
+            await initializeGridForPanel(targetId);
+            $(`#panel-${targetId} .panel-welcome-view`).hide();
+            $(`#panel-${targetId} .panel-landing-page`).hide();
+            $(`#panel-${targetId} .panel-grid`).show();
+            await navigateToDirectory(node.path, targetId);
+            setActivePanelId(targetId);
+            setGridFocusedPanelId(targetId);
+          }
         }
       });
     }
-    addSeparator();
-    addRow('Remove from Favorites', async () => {
-      if (node.path) await removeFromFavorites(node.path);
-    }, 'custom-ctx-item-danger');
-  } else if (targetType === 'group' && node) {
-    addRow('Rename', async () => {
-      const newName = await showInputPrompt('Enter new group name:', node.text);
-      if (newName && newName.trim()) await renameGroup(node, newName.trim());
+    items.push({ separator: true });
+    items.push({
+      text: 'Remove from Favorites',
+      danger: true,
+      onClick: async () => {
+        if (node.path) await removeFromFavorites(node.path);
+      }
     });
-    addRow('Delete', async () => {
-      await deleteGroup(node);
-    }, 'custom-ctx-item-danger');
+  } else if (targetType === 'group' && node) {
+    items.push({
+      text: 'Rename',
+      onClick: async () => {
+        const newName = await showInputPrompt('Enter new group name:', node.text);
+        if (newName && newName.trim()) await renameGroup(node, newName.trim());
+      }
+    });
+    items.push({
+      text: 'Delete',
+      danger: true,
+      onClick: async () => {
+        await deleteGroup(node);
+      }
+    });
   }
 
-  if (!menu.children.length) return;
-
-  menu.style.left = x + 'px';
-  menu.style.top = y + 'px';
-  document.body.appendChild(menu);
-
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
-    if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
-  });
-
-  const onOutside = (e) => {
-    if (!e.target.closest?.('#custom-ctx-menu')) {
-      hideCustomContextMenu();
-      document.removeEventListener('click', onOutside);
-      document.removeEventListener('keydown', onEsc);
-    }
-  };
-  const onEsc = (e) => {
-    if (e.key === 'Escape') {
-      hideCustomContextMenu();
-      document.removeEventListener('click', onOutside);
-      document.removeEventListener('keydown', onEsc);
-    }
-  };
-  document.addEventListener('click', onOutside);
-  document.addEventListener('keydown', onEsc);
+  contextMenuWidget.showContextMenu(items, x, y);
 }
+
 
 // ── Favorites Edit Mode ────────────────────────────────────────────────────
 

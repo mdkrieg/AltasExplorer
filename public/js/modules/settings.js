@@ -12,6 +12,7 @@
 
 import * as panels from './panels.js';
 import * as contexts from './contexts.js';
+import * as contextMenuWidget from './contextMenuWidget.js';
 import { w2ui, w2grid, w2confirm, w2alert, w2field } from './vendor/w2ui.es6.min.js';
 import {
 	panelState,
@@ -3066,105 +3067,16 @@ function _showDeleteGroupModal(groupIndex) {
 }
 
 // ── Small in-modal dropdown menu (group/item right-click menus) ─────────────
-// Reuses the .custom-ctx-menu/.custom-ctx-item/.custom-ctx-submenu CSS classes for
-// visual consistency with the live file-grid context menu, but with its own plain
-// {label, onClick}/{label, items}/{separator} entries and independent click routing —
-// contexts.js's showCustomContextMenu is tightly coupled to file-grid panelId semantics.
+// Thin wrappers around the shared contextMenuWidget so call sites below didn't need to
+// change — same {label, onClick}/{label, items}/{separator} item shape as before.
+// See agent-docs/DECISIONS.md#unified-context-menu-widget for why this used to be an
+// independent clone (it had silently lost the submenu hide-timer, breaking submenu hover).
 function _hideSettingsContextMenu() {
-	document.getElementById('cm-settings-ctx-menu')?.remove();
-	document.querySelectorAll('.custom-ctx-submenu').forEach(el => el.remove());
-}
-
-function _buildSettingsMenuEl(menuItems) {
-	const menu = document.createElement('div');
-	menu.className = 'custom-ctx-menu';
-	for (const item of menuItems) {
-		if (item.separator) {
-			const sep = document.createElement('div');
-			sep.className = 'custom-ctx-separator';
-			menu.appendChild(sep);
-			continue;
-		}
-
-		const row = document.createElement('div');
-		row.className = 'custom-ctx-item';
-
-		const label = document.createElement('span');
-		label.className = 'custom-ctx-label';
-		label.textContent = item.label;
-		row.appendChild(label);
-
-		const hasSub = Array.isArray(item.items) && item.items.length > 0;
-		if (hasSub) {
-			const arrow = document.createElement('span');
-			arrow.className = 'custom-ctx-arrow';
-			arrow.textContent = '›';
-			row.appendChild(arrow);
-		}
-
-		// Hover highlighting applies to every row (not just submenu parents) so the whole
-		// menu feels consistent — only the submenu-opening behavior is conditional.
-		row.addEventListener('mouseenter', () => {
-			menu.querySelectorAll('.custom-ctx-item').forEach(r => r.classList.remove('active'));
-			row.classList.add('active');
-			document.querySelectorAll('.custom-ctx-submenu').forEach(s => s.remove());
-			if (!hasSub) return;
-			const sub = _buildSettingsMenuEl(item.items);
-			sub.classList.add('custom-ctx-submenu');
-			const rect = row.getBoundingClientRect();
-			sub.style.left = (rect.right + 2) + 'px';
-			sub.style.top = rect.top + 'px';
-			document.body.appendChild(sub);
-			requestAnimationFrame(() => {
-				const subRect = sub.getBoundingClientRect();
-				if (subRect.right > window.innerWidth) sub.style.left = (rect.left - subRect.width - 2) + 'px';
-				if (subRect.bottom > window.innerHeight) sub.style.top = (rect.top - (subRect.bottom - window.innerHeight)) + 'px';
-			});
-		});
-
-		if (!hasSub) {
-			row.addEventListener('click', (event) => {
-				event.stopPropagation();
-				_hideSettingsContextMenu();
-				item.onClick?.();
-			});
-		}
-
-		menu.appendChild(row);
-	}
-	return menu;
+	contextMenuWidget.hideContextMenu();
 }
 
 function _showSettingsContextMenu(x, y, menuItems) {
-	_hideSettingsContextMenu();
-	const menu = _buildSettingsMenuEl(menuItems);
-	menu.id = 'cm-settings-ctx-menu';
-	menu.style.left = x + 'px';
-	menu.style.top = y + 'px';
-	document.body.appendChild(menu);
-
-	requestAnimationFrame(() => {
-		const rect = menu.getBoundingClientRect();
-		if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
-		if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
-	});
-
-	const onOutside = (event) => {
-		if (!event.target.closest?.('#cm-settings-ctx-menu') && !event.target.closest?.('.custom-ctx-submenu')) {
-			_hideSettingsContextMenu();
-			document.removeEventListener('click', onOutside);
-			document.removeEventListener('keydown', onEsc);
-		}
-	};
-	const onEsc = (event) => {
-		if (event.key === 'Escape') {
-			_hideSettingsContextMenu();
-			document.removeEventListener('click', onOutside);
-			document.removeEventListener('keydown', onEsc);
-		}
-	};
-	document.addEventListener('click', onOutside);
-	document.addEventListener('keydown', onEsc);
+	contextMenuWidget.showContextMenu(menuItems, x, y);
 }
 
 // ── Group/item tree rendering ────────────────────────────────────────────────
