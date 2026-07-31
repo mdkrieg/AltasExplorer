@@ -727,7 +727,9 @@ export function initPasteModals() {
 	const textInput = document.getElementById('paste-text-filename');
 	if (textInput) {
 		textInput.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') { e.preventDefault(); _savePasteText(); }
+			// stopPropagation: this input is the modal's commit, so Ctrl+Enter
+			// must not also reach the document-level scope resolver.
+			if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); _savePasteText(); }
 			if (e.key === 'Escape') { e.preventDefault(); closePasteTextModal(); }
 		});
 	}
@@ -740,7 +742,7 @@ export function initPasteModals() {
 	const imageInput = document.getElementById('paste-image-filename');
 	if (imageInput) {
 		imageInput.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') { e.preventDefault(); _savePasteImage(); }
+			if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); _savePasteImage(); }
 			if (e.key === 'Escape') { e.preventDefault(); closePasteImageModal(); }
 		});
 	}

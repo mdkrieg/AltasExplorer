@@ -30,6 +30,7 @@ import * as mirrorsUi from './mirrorsUi.js';
 import * as viewTypes from './viewTypes.js';
 import * as board from './board.js';
 import { getPathSuggestions, scoreCandidate } from './path-autocomplete.js';
+import { addMonacoCommitCommand } from './commitKeys.js';
 import {
 	panelState,
 	selectedItemState,
@@ -4258,6 +4259,9 @@ async function openCreateTagModal(panelId, initialName, options = {}) {
 		.on('keydown.itemTagCreate', async function (event) {
 			if (event.key === 'Enter') {
 				event.preventDefault();
+				// This form is the modal's commit, so Ctrl+Enter must not also
+				// reach the document-level scope resolver and submit twice.
+				event.stopPropagation();
 				await submitCreateTagModal(false);
 			}
 		});
@@ -8810,6 +8814,11 @@ export function attachPanelEventListeners(panelId) {
 					automaticLayout: true,
 					fontSize: 12,
 					fontFamily: 'Consolas, "Courier New", monospace'
+				});
+				// The Save button is re-bound per widget host, so click it rather
+				// than capturing this call's save closure.
+				addMonacoCommitCommand(panelState[0].notesMonacoEditor, () => {
+					$('#ip-widget').find('.btn-notes-save-item').filter(':visible').trigger('click');
 				});
 			} else {
 				panelState[0].notesMonacoEditor.setValue(sectionContent);

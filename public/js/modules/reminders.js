@@ -27,6 +27,7 @@ import {
   addPendingComment,
   addPendingReply
 } from './annotationHelpers.js';
+import { onCommitKey } from './commitKeys.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -245,6 +246,18 @@ async function saveReminder() {
   const newCompleted = !!getCompletedInput()?.checked;
 
   if (!newText) return; // Don't save an empty reminder
+
+  // Confirm annotations still mid-edit, and flush text typed into an add field
+  // but never submitted — saving should not quietly throw either away.
+  const annotationsEl = getAnnotations();
+  if (annotationsEl) {
+    annotationsEl.querySelectorAll('.todo-comment-row.editing, .todo-reply-row.editing')
+      .forEach(row => confirmEditAnnotation(row));
+    annotationsEl.querySelectorAll('.todo-reply-add-input')
+      .forEach(input => commitInlineEdit(input, annotationsEl));
+    annotationsEl.querySelectorAll('.todo-comment-add-input')
+      .forEach(input => commitInlineEdit(input, annotationsEl));
+  }
 
   try {
     // Re-read the current file so we don't overwrite concurrent changes
@@ -548,19 +561,8 @@ function wireModalEvents() {
     });
 
     annotationsEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.target.matches('.todo-comment-add-input')) {
-        e.preventDefault();
-        addPendingComment(parseInt(e.target.dataset.itemIndex, 10), annotationsEl);
-      }
-      if (e.key === 'Enter' && e.target.matches('.todo-reply-add-input')) {
-        e.preventDefault();
-        const commentRow = e.target.closest('.todo-comment-row');
-        if (commentRow) addPendingReply(commentRow);
-      }
-      if (e.key === 'Enter' && e.target.matches('.todo-item-edit-input')) {
-        e.preventDefault();
-        const annotRow = e.target.closest('.todo-comment-row, .todo-reply-row');
-        if (annotRow) confirmEditAnnotation(annotRow);
+      if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+        if (commitInlineEdit(e.target, annotationsEl)) e.preventDefault();
       }
       if (e.key === 'Escape' && e.target.matches('.todo-item-edit-input')) {
         e.preventDefault();
@@ -568,7 +570,39 @@ function wireModalEvents() {
         if (annotRow) cancelEditAnnotation(annotRow);
       }
     });
+
+    // Ctrl+Enter is nested: it confirms the annotation under the cursor and
+    // stops there. Declining lets it bubble out to the modal's Save, which is
+    // wired declaratively via data-commit-root.
+    onCommitKey(annotationsEl, (e) => commitInlineEdit(e.target, annotationsEl));
   }
+}
+
+/**
+ * Confirm whatever inline annotation edit the given element represents.
+ * Returns true when something was committed; Ctrl+Enter uses that to decide
+ * whether to stop here or fall through to saving the whole reminder.
+ */
+function commitInlineEdit(target, scope) {
+  if (!target || typeof target.matches !== 'function') return false;
+
+  if (target.matches('.todo-comment-add-input')) {
+    if (!target.value.trim()) return false;
+    addPendingComment(parseInt(target.dataset.itemIndex, 10), scope);
+    return true;
+  }
+  if (target.matches('.todo-reply-add-input')) {
+    if (!target.value.trim()) return false;
+    const commentRow = target.closest('.todo-comment-row');
+    if (!commentRow) return false;
+    addPendingReply(commentRow);
+    return true;
+  }
+  if (target.matches('.todo-item-edit-input')) {
+    const annotRow = target.closest('.todo-comment-row, .todo-reply-row');
+    if (annotRow) { confirmEditAnnotation(annotRow); return true; }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------

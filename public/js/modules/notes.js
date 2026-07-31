@@ -14,6 +14,7 @@
 
 import * as utils from './utils.js';
 import * as panels from './panels.js';
+import { addMonacoCommitCommand } from './commitKeys.js';
 import { w2popup, w2confirm, w2utils } from './vendor/w2ui.es6.min.js';
 import { panelState, setFileEditMode, setSelectedItemState } from '../renderer.js';
 
@@ -311,7 +312,7 @@ export async function initializeMonacoLoader() {
   });
 }
 
-function createMonacoEditorInstance(containerElement) {
+function createMonacoEditorInstance(containerElement, panelId) {
   if (monacoEditor) {
     monacoEditor.dispose();
   }
@@ -328,6 +329,9 @@ function createMonacoEditorInstance(containerElement) {
     fontSize: 13,
     fontFamily: 'Consolas, "Courier New", monospace'
   });
+
+  // Ctrl+Enter saves, matching the Ctrl+S hotkey and every other editor.
+  addMonacoCommitCommand(monacoEditor, () => { void toggleFileEditMode(panelId); });
 
   console.log('Monaco editor instance created');
   return monacoEditor;
@@ -359,7 +363,7 @@ export async function showFileView(panelId, filePathOverride, viewMode) {
     const settings = await window.electronAPI.getSettings();
     const fileFormat = resolveViewFormat(filePath, viewMode, settings.file_format);
 
-    createMonacoEditorInstance($fileEditorContainer[0]);
+    createMonacoEditorInstance($fileEditorContainer[0], panelId);
     attachImagePasteHandler(monacoEditor, filePath);
 
     const content = await window.electronAPI.readFileContent(filePath);
@@ -402,7 +406,7 @@ export async function showFileView(panelId, filePathOverride, viewMode) {
 
     setFileEditMode(false);
   } catch (err) {
-    createMonacoEditorInstance($fileEditorContainer[0]);
+    createMonacoEditorInstance($fileEditorContainer[0], panelId);
 
     if (monacoEditor) {
       monacoEditor.setValue('');
@@ -587,6 +591,10 @@ export async function openNotesModal(record) {
     automaticLayout: true,
     fontSize: 13,
     fontFamily: 'Consolas, "Courier New", monospace'
+  });
+  // toggleNotesEditMode() is the save path when already in edit mode.
+  addMonacoCommitCommand(notesModalEditor, () => {
+    if (notesModalEditMode) void toggleNotesEditMode();
   });
   attachImagePasteHandler(notesModalEditor, notesFilePath);
 
@@ -874,6 +882,10 @@ export async function openFileViewerModal(filePath, viewMode) {
       automaticLayout: true,
       fontSize: 13,
       fontFamily: 'Consolas, "Courier New", monospace'
+    });
+    // toggleFileViewerEditMode() is the save path when already in edit mode.
+    addMonacoCommitCommand(fvModalEditor, () => {
+      if (fvModalEditMode) void toggleFileViewerEditMode();
     });
     attachImagePasteHandler(fvModalEditor, filePath);
 
@@ -1212,6 +1224,12 @@ export async function openNotesViewerForPath(filePath, panelId, editMode = false
       automaticLayout: true,
       fontSize: 13,
       fontFamily: 'Consolas, "Courier New", monospace'
+    });
+    // The Save button is re-bound on every open, so click it rather than
+    // capturing this call's save closure.
+    addMonacoCommitCommand(editor, () => {
+      const $btn = $fileToolbar.find('.btn-file-save');
+      if ($btn.is(':visible')) $btn.trigger('click');
     });
     $fileEditorContainer.data('monaco-editor', editor);
   } else {

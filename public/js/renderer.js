@@ -41,6 +41,7 @@ import { openDragTrayForActivePanel } from './modules/dragdrop.js';
 import * as clipboard from './modules/clipboard.js';
 import * as gridLayoutSettings from './modules/gridLayoutSettings.js';
 import { warnUserToast } from './modules/userWarnings.js';
+import { installCommitScopes, onCommitKey, isCommitKey } from './modules/commitKeys.js';
 import { w2ui, w2layout, w2grid, w2confirm, w2alert, w2popup } from './modules/vendor/w2ui.es6.min.js';
 
 export { monacoEditor, formatFileContent, openNotesModal, showFileView, showHexView, hideFileView, toggleFileEditMode, openFileViewerModal, toggleFileViewerEditMode, switchFileViewerView, hideFileViewerModal, attachFvWidgetHeaderListeners, openNotesViewerForPath, cancelFileViewerEdit, getFileViewerHost } from './modules/notes.js';
@@ -701,7 +702,9 @@ async function showNewFolderModal(parentPath, panelId) {
 
   // Store handlers so they can be removed on close
   input._newFolderKeydown = async function (e) {
-    if (e.key === 'Enter') { e.preventDefault(); await doCreate(); }
+    // stopPropagation: this input is the modal's commit, so Ctrl+Enter must
+    // not also reach the document-level scope resolver and submit twice.
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); await doCreate(); }
     if (e.key === 'Escape') { e.preventDefault(); closeNewFolderModal(); }
   };
   document.getElementById('btn-new-folder-confirm')._newFolderClick = doCreate;
@@ -769,7 +772,7 @@ async function showRenameModal(itemPath, panelId) {
   }
 
   input._renameKeydown = async function (e) {
-    if (e.key === 'Enter') { e.preventDefault(); await doRename(); }
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); await doRename(); }
     if (e.key === 'Escape') { e.preventDefault(); closeRenameModal(); }
   };
   document.getElementById('btn-rename-item-confirm')._renameClick = doRename;
@@ -791,6 +794,11 @@ function closeRenameModal() {
  * Attach event listeners to buttons and grid
  */
 function attachEventListeners() {
+  // Ctrl+Enter commits the innermost thing that can be committed — see
+  // modules/commitKeys.js. Installed first so it sits outside every inline
+  // handler that might claim the chord before it.
+  installCommitScopes();
+
   // Capture-phase key handler for grid navigation and panel cycling.
   // Must be capture phase so we can intercept before the browser or w2ui processes them.
   document.addEventListener('keydown', function (event) {
@@ -1417,6 +1425,7 @@ function attachEventListeners() {
   $('#save-layout-global-name').on('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
+      e.stopPropagation();
       panels.confirmSaveLayoutGlobal();
     } else if (e.key === 'Escape') {
       e.preventDefault();

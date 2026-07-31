@@ -13,6 +13,7 @@
  */
 
 import * as utils from './utils.js';
+import { isCommitKey } from './commitKeys.js';
 import { w2tooltip } from './vendor/w2ui.es6.min.js';
 
 const SCOPES = ['global', 'category', 'local'];
@@ -608,10 +609,12 @@ function bindCellEditor(rowKey, scope) {
 		if (errorEl) errorEl.textContent = '';
 	});
 	sizeInput?.addEventListener('keydown', (e) => {
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			applyBtn?.click();
-		}
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		// Ctrl+Enter is nested: applying the cell is the inner commit, so stop
+		// here rather than also saving the modal on the way out.
+		if (isCommitKey(e)) e.stopPropagation();
+		applyBtn?.click();
 	});
 
 	applyBtn?.addEventListener('click', () => {
@@ -670,8 +673,17 @@ export function initUI() {
 		openCellEditor(cell.getAttribute('data-row'), cell.getAttribute('data-scope'), cell);
 	});
 
-	// Enter = Save when no cell editor is open (editors handle their own Enter)
+	// Enter = Save when no cell editor is open (editors handle their own Enter).
+	// Ctrl+Enter does the same but is not blocked by a focused textarea, so it
+	// works everywhere in the modal — that is the app-wide commit chord.
 	modal.addEventListener('keydown', (e) => {
+		if (isCommitKey(e)) {
+			if (isEditorOpen()) return; // the open cell editor claims it first
+			e.preventDefault();
+			e.stopPropagation();
+			save();
+			return;
+		}
 		if (e.key === 'Enter' && !isEditorOpen() && e.target.tagName !== 'TEXTAREA') {
 			e.preventDefault();
 			save();

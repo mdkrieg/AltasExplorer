@@ -10,7 +10,7 @@ Philosophy:
 
 * Control over everything. I'd rather be able to shoot myself in the foot than not be able to do something.
 
-* Keep it ussable and useful, the app should make me want to use it.
+* Keep it usable and useful, the app should make me want to use it.
 
 * Keep it unopinionated, I should be able to use the app as little or as much as I want.
 
@@ -87,9 +87,9 @@ Philosophy:
 
 [ ] Drag and drop from grid into favorites
 
-[ ] Any way to get default icons for files? This would be great for anyone first using the app, the loss of familiarity is adding friction
+[x] Any way to get default icons for files? This would be great for anyone first using the app, the loss of familiarity is adding friction
 
-[ ] Ctrl+Enter should save in any active editor (notes, others)
+[x] Ctrl+Enter should save in any active editor (notes, others)
 
 [ ] Give Abandon/Save/Cancel confirmation on any modal input 
 
@@ -129,7 +129,7 @@ Philosophy:
 
 [ ] When adding Panel 2, it flickers accross the bottom briefly (panels 3 and 4 are okay), please clean this up - ideally it should just appear in the correct position (maybe animate?)
 
-[ ] TODO modal, refine how CTRL+Enter works (currently seems to cancel edits?)
+[x] TODO modal, refine how CTRL+Enter works (currently seems to cancel edits?)
 
 [ ] Make a setting on Categories for LOCAL FAVORITES to inherit down to subdirs
 
