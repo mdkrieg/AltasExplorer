@@ -57,7 +57,21 @@ class FilesystemService {
       if (ignoreFilenames.includes(entry)) continue;
       try {
         const fullPath = path.join(normalizedPath, entry);
-        const stats = fs.statSync(fullPath);
+        // lstat, not stat: stat follows reparse points, so a link reports its
+        // TARGET's inode and every consumer keyed on inode (change detection,
+        // move detection, dir identity) confuses the link with the real thing.
+        // For everything that survives the filter below, lstat === stat.
+        const stats = fs.lstatSync(fullPath);
+
+        // Symlinks and Windows junctions are deliberately not listed. They are
+        // an alias for something the user can already reach by its real path,
+        // and the profile root is full of hidden legacy ones (`My Documents`,
+        // `Application Data`, …) that alias each other. Listing them duplicates
+        // rows, doubles scan/index work, and lets deep search walk in circles.
+        // Shortcuts remain discoverable via LOCAL FAVORITES, which enumerates
+        // them separately (get-shortcuts-in-directory in main/main.js).
+        if (stats.isSymbolicLink()) continue;
+
         const inode = stats.ino.toString(); // Get inode
         const perms = checkAccess(fullPath);
 

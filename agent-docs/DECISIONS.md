@@ -13,6 +13,60 @@ Newest entries first.
 
 ---
 
+## junction-identity
+
+**A directory listing never follows links, and an inode match alone never means "renamed"**
+
+**Date:** 2026-07-31
+
+**What was tried:** `readDirectory` used `fs.statSync`, and `ensureDirectoryRecord` treated
+"no `dirs` row for this path, but a row exists with this inode" as proof the directory had
+been renamed — rehoming that row onto the new path.
+
+**Why this was rejected:** `fs.stat` follows reparse points, so a Windows junction reports
+its *target's* inode. A user profile is full of hidden legacy junctions (`My Documents` →
+`Documents`, `Application Data` → `AppData\Roaming`, `Recent`, `SendTo`, `Start Menu`, …),
+which meant `C:\Users\user\My Documents` and `C:\Users\user\Documents` were indistinguishable
+by inode. Both paths matched the same single `dirs` row, so each scan renamed that row to the
+first path, then back to the second, and reported both as `changeState: 'new'`. Every pass
+emitted two `dirAdded` events; one live profile had accumulated 376 of them, 58% of all
+`dir_history` rows in the database. The renderer's background-refresh append path then stacked
+a duplicate grid row per bogus "new" per refresh. Because both names resolved to one `dir_id`,
+any tags/category/notes put on `Documents` silently also applied to `My Documents`.
+
+**What was chosen instead:** Two independent guards, either of which alone would stop the
+thrash — kept both because they fix different wrongs:
+
+- `readDirectory` uses `lstatSync` and skips `isSymbolicLink()` entries outright. Links are an
+  alias for something reachable by its real path; listing them duplicates rows, doubles scan
+  and index work, and lets deep search walk in circles through profile junctions. For every
+  entry that survives the filter, `lstat` and `stat` are identical, so this costs nothing.
+- `ensureDirectoryRecord` only accepts an inode match as a move when the recorded path is
+  actually gone from disk (`fsSync.existsSync`). Two live paths sharing an inode are not a
+  rename, whatever the inode says.
+- The missing-child-directory loop skips children that are still on disk as links
+  (`isExistingLink`). Once links stopped being listed, any `dirs` row for one — created when
+  the user navigated straight into it — looked "missing from its parent" and was orphaned on
+  the next scan, inflating the parent's Orphans badge. Absent from the listing by policy is
+  not the same as gone.
+
+Same shape of mistake in all three: an inference ("renamed", "deleted") drawn from a proxy
+signal without checking the thing it claims about. Check the disk before believing the index.
+
+**Consequence:** symlinks and junctions are not shown in the file list at all, deliberately
+and with no setting to re-enable — revisit only if a real need surfaces. They remain
+discoverable through LOCAL FAVORITES, which enumerates shortcuts separately via
+`get-shortcuts-in-directory` in `main/main.js` (its own `lstatSync` walk, unaffected by this).
+When two live paths do share an inode, the second one now gets its own `dirs` row rather than
+stealing the first's; note `getDirectoryByInode` is still `LIMIT 1` and would pick one
+arbitrarily, which is acceptable only because links no longer reach the scanner.
+
+**Deliberately not done:** deduplicating rows in `applyBackgroundChanges`
+(`public/js/modules/panels.js`). Blind dedupe there would have hidden the visible symptom that
+led to this bug being found in the first place. The duplicate rows are a *symptom*; fix causes.
+
+---
+
 ## unified-context-menu-widget
 
 **All custom right-click flyout menus share one widget (`public/js/modules/contextMenuWidget.js`)**

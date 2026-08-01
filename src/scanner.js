@@ -119,6 +119,18 @@ function getMonitoringObservationDeadTimeMs() {
   }
 }
 
+/**
+ * True when `p` exists on disk and is a symlink/junction. Used to tell "the
+ * listing omits this on purpose" apart from "this is gone".
+ */
+function isExistingLink(p) {
+  try {
+    return fsSync.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 function ensureDirectoryRecord(dirPath, inode, categoryName = 'Default') {
   const existingByPath = db.getDirectory(dirPath);
   if (existingByPath) {
@@ -135,8 +147,16 @@ function ensureDirectoryRecord(dirPath, inode, categoryName = 'Default') {
     return { dir: db.getDirectory(dirPath), isNew: false, movedFrom: null };
   }
 
+  // An inode match means "this directory was renamed/moved" ONLY if the path we
+  // have on record is actually gone. Two live paths can legitimately share an
+  // inode — a Windows junction reports its target's inode under fs.stat — and
+  // rehoming the row on that basis makes the two paths fight over a single row,
+  // renaming it back and forth once per scan and emitting a dirAdded every time.
+  // (The `My Documents` → `Documents` junction in a user profile did exactly
+  // this: 376 bogus history rows. See agent-docs/DECISIONS.md#junction-identity.)
+  // When both paths exist we fall through and give this one its own row.
   const existingByInode = db.getDirectoryByInode(inode);
-  if (existingByInode) {
+  if (existingByInode && !fsSync.existsSync(existingByInode.dirname)) {
     const parentId = db.getParentDirectoryId(dirPath);
     const previousPath = existingByInode.dirname;
     db.updateDirectoryPath(existingByInode.id, dirPath, parentId);
@@ -541,6 +561,13 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       try {
         const _cdRow = db.getDirById(childDir.id);
         if (!_cdRow || _cdRow.deleted_at) continue;
+
+        // A link is absent from `entries` because readDirectory deliberately
+        // omits links, not because it is gone. Orphaning it would report a
+        // directory as missing while it is sitting right there on disk. Rows
+        // for links exist only when the user navigated straight into one (via
+        // LOCAL FAVORITES, which does list them).
+        if (isExistingLink(childDir.dirname)) continue;
 
         const movedDirRecord = db.findDirectoryInOtherParents(childDir.inode, dirId);
         if (movedDirRecord) {

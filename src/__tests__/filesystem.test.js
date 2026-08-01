@@ -29,9 +29,15 @@ const FilesystemService = require('../filesystem');
  * 
  * The readDirectory() method should:
  * - Call fs.readdirSync() to list directory contents
- * - Call fs.statSync() for each entry to get file metadata
+ * - Call fs.lstatSync() for each entry to get file metadata
+ * - Skip symlinks and Windows junctions entirely
  * - Separate folders from files
  * - Return folders first, then files
+ *
+ * NOTE: these mocks use lstatSync, not statSync. readDirectory deliberately
+ * does not follow links (a link reports its target's inode, which breaks
+ * inode-keyed change detection), so every mocked stat object must also answer
+ * isSymbolicLink().
  */
 describe('FilesystemService - readDirectory()', () => {
   /**
@@ -60,15 +66,16 @@ describe('FilesystemService - readDirectory()', () => {
     // When our code calls fs.readdirSync('/test/directory'), it gets this array
     fs.readdirSync.mockReturnValue(['a.txt', 'subfolder']);
 
-    // Mock fs.statSync() - it's called twice (once per file)
+    // Mock fs.lstatSync() - it's called twice (once per file)
     // We need to return different stats depending on which file is being checked
     // .mockImplementation() gives us more control than .mockReturnValue()
-    fs.statSync.mockImplementation((filePath) => {
+    fs.lstatSync.mockImplementation((filePath) => {
       // If this is the subfolder, return stats showing it's a directory
       if (filePath.includes('subfolder')) {
         return {
           ino: 1001,
           isDirectory: () => true,  // This is a folder
+          isSymbolicLink: () => false,
           size: 4096,
           mtime: new Date('2026-01-01'),
           birthtime: new Date('2025-12-01')
@@ -78,6 +85,7 @@ describe('FilesystemService - readDirectory()', () => {
       return {
         ino: 1002,
         isDirectory: () => false,  // This is a file
+        isSymbolicLink: () => false,
         size: 1024,
         mtime: new Date('2026-01-02'),
         birthtime: new Date('2025-12-02')
@@ -110,9 +118,10 @@ describe('FilesystemService - readDirectory()', () => {
     const testPath = '/test/directory';
 
     fs.readdirSync.mockReturnValue(['document.pdf']);
-    fs.statSync.mockReturnValue({
+    fs.lstatSync.mockReturnValue({
       ino: 5678,  // The inode number
       isDirectory: () => false,
+      isSymbolicLink: () => false,
       size: 2048,
       mtime: new Date('2026-01-01'),
       birthtime: new Date('2025-12-01')
@@ -127,28 +136,30 @@ describe('FilesystemService - readDirectory()', () => {
 
   /**
    * TEST: Should handle individual file read errors gracefully
-   * 
+   *
    * REAL-WORLD SCENARIO: User has a directory with a permission-denied file.
    * Our code should:
    * - Catch the error for that specific file
    * - Log it (for debugging)
    * - Continue processing other files
-   * - Return the successfully-read files
+   * - Still list the unreadable entry, flagged with permError, so the grid can
+   *   render it as inaccessible rather than pretending it does not exist
    */
-  it('should skip files that fail to read (permissions, etc.)', () => {
+  it('should list files that fail to read (permissions, etc.) as permError entries', () => {
     const testPath = '/test/directory';
 
     // Directory contains 3 files
     fs.readdirSync.mockReturnValue(['good1.txt', 'bad.txt', 'good2.txt']);
 
-    // Mock statSync to throw an error for the middle file
-    fs.statSync.mockImplementation((filePath) => {
+    // Mock lstatSync to throw an error for the middle file
+    fs.lstatSync.mockImplementation((filePath) => {
       if (filePath.includes('bad.txt')) {
         throw new Error('Permission denied');
       }
       return {
         ino: 1000,
         isDirectory: () => false,
+        isSymbolicLink: () => false,
         size: 100,
         mtime: new Date('2026-01-01'),
         birthtime: new Date('2025-12-01')
@@ -160,13 +171,74 @@ describe('FilesystemService - readDirectory()', () => {
 
     const result = FilesystemService.readDirectory(testPath);
 
-    // Should only have 2 items (bad.txt was skipped)
-    expect(result).toHaveLength(2);
-    expect(result[0].filename).toBe('good1.txt');
-    expect(result[1].filename).toBe('good2.txt');
+    // All 3 entries come back, with bad.txt marked inaccessible
+    expect(result.map(r => r.filename)).toEqual(['good1.txt', 'bad.txt', 'good2.txt']);
+    expect(result[1].permError).toBe(true);
+    expect(result[1].inode).toBe('-1:bad.txt');
+    expect(result[0].permError).toBe(false);
+    expect(result[2].permError).toBe(false);
 
     // Verify that a warning was logged (logger.warn called for the bad file)
     expect(logger.warn).toHaveBeenCalled();
+  });
+
+  /**
+   * TEST: Should omit symlinks and Windows junctions
+   *
+   * REAL-WORLD SCENARIO: a Windows user profile contains hidden legacy
+   * junctions (`My Documents` → `Documents`, `Application Data` → `AppData\Roaming`).
+   * fs.stat follows them, so they report their TARGET's inode — which made the
+   * scanner treat the junction and its target as the same directory and rename
+   * the DB row back and forth on every pass.
+   *
+   * readDirectory must drop them before any of that can happen. Note the
+   * junction below shares real.ino with its target: that collision is the whole
+   * point, and the only thing distinguishing the two is isSymbolicLink().
+   */
+  it('should omit symlinks and junctions from the listing', () => {
+    const testPath = '/test/directory';
+
+    fs.readdirSync.mockReturnValue(['Documents', 'My Documents', 'notes.txt']);
+
+    fs.lstatSync.mockImplementation((filePath) => {
+      // The junction: lstat reveals it as a link (stat would not have)
+      if (filePath.includes('My Documents')) {
+        return {
+          ino: 4242,               // same inode as its target — the collision
+          isDirectory: () => true,
+          isSymbolicLink: () => true,
+          size: 0,
+          mtime: new Date('2026-01-01'),
+          birthtime: new Date('2025-12-01')
+        };
+      }
+      if (filePath.includes('Documents')) {
+        return {
+          ino: 4242,
+          isDirectory: () => true,
+          isSymbolicLink: () => false,
+          size: 4096,
+          mtime: new Date('2026-01-01'),
+          birthtime: new Date('2025-12-01')
+        };
+      }
+      return {
+        ino: 7,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+        size: 512,
+        mtime: new Date('2026-01-02'),
+        birthtime: new Date('2025-12-02')
+      };
+    });
+
+    const result = FilesystemService.readDirectory(testPath);
+
+    // The junction is gone; the real folder and the file remain
+    expect(result.map(r => r.filename)).toEqual(['Documents', 'notes.txt']);
+
+    // And it is NOT reported as a permission error either — it is simply absent
+    expect(result.some(r => r.permError)).toBe(false);
   });
 });
 
