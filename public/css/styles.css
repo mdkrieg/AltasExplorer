@@ -2537,6 +2537,15 @@ hr {
   background: #f5f5f5;
 }
 
+/* Live filter: non-matching rows stay in the list, below the hits, dimmed */
+.w2ui-grid .w2ui-grid-body tr.grid-filter-miss {
+  opacity: 0.5;
+}
+/* ...but the row the user is actually on stays fully legible */
+.w2ui-grid .w2ui-grid-body tr.grid-filter-miss.w2ui-selected {
+  opacity: 1;
+}
+
 /* Non-active panel: override w2ui's !important blue with grey */
 .panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-records table tr.w2ui-selected,
 .panel-item:not(.panel-active) .w2ui-grid .w2ui-grid-body .w2ui-grid-frecords table tr.w2ui-selected,

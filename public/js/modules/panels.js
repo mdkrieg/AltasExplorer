@@ -1822,6 +1822,13 @@ function attachPanelToolbarEventListeners(panelId) {
 				applyPanelToolbarSearch(panelId, val);
 			}
 			this.blur();
+		} else if (e.key === 'ArrowDown') {
+			// Step out of the search box and into the list, landing on the top hit.
+			// blur() flushes any filter still sitting in the debounce timer, so the
+			// list is in its final order before we pick the first row.
+			e.preventDefault();
+			this.blur();
+			focusListFromSearchBar(panelId);
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
 			e.stopPropagation();
@@ -1861,12 +1868,35 @@ export function applyPanelToolbarSearch(panelId, value) {
 // Per-panel timer for deferred fuzzy marker application after grid.refresh().
 const _liveSearchMarkerTimers = {};
 
+// Row class applied to records that do not match the live filter. They stay in
+// the grid (below the hits, in sort order) but are dimmed via CSS.
+const FILTER_MISS_CLASS = 'grid-filter-miss';
+
+/**
+ * Add or remove FILTER_MISS_CLASS on a record without disturbing other row
+ * classes (clipboard cut/copy markers, etc.). Records using w2ui's per-column
+ * class object form are left alone.
+ */
+function setRecordFilterMiss(rec, isMiss) {
+	if (!rec) return;
+	if (!rec.w2ui) rec.w2ui = {};
+	if (rec.w2ui.class != null && typeof rec.w2ui.class !== 'string') return;
+	const classes = String(rec.w2ui.class || '')
+		.split(' ')
+		.filter(c => c && c !== FILTER_MISS_CLASS);
+	if (isMiss) classes.push(FILTER_MISS_CLASS);
+	rec.w2ui.class = classes.join(' ');
+}
+
 /**
  * Apply a live (eager) filter to the panel grid and gallery using a
  * forgiving match: exact/contains matches are shown and highlighted with
  * w2ui's standard marker; fuzzy (DL-distance ≤ 1) matches are shown and
  * highlighted with a distinct 'w2ui-marker-fuzzy' class. Tag names are
  * also considered when no filename match is found.
+ *
+ * Non-matching records are not hidden — they are moved below the matches,
+ * keeping their current sort order, and dimmed with FILTER_MISS_CLASS.
  *
  * @param {number} panelId
  * @param {string} query  — the raw (un-trimmed) search value
@@ -1884,6 +1914,7 @@ export function applyLivePanelFilter(panelId, query) {
 
 	if (grid) {
 		if (!q) {
+			for (const rec of grid.records) setRecordFilterMiss(rec, false);
 			grid.searchData = [];
 			grid.last.searchIds = [];
 			grid.total = grid.records.length;
@@ -1980,10 +2011,22 @@ export function applyLivePanelFilter(panelId, query) {
 				...partialWordTagIdxs.map(x => x.idx),
 			];
 
+			// Everything that didn't match follows the hits, dimmed. grid.records is
+			// kept in display order by w2ui's localSort, so walking it in index order
+			// preserves whatever sort the user had applied.
+			const hitSet = new Set(allIds);
+			const missIds = [];
+			for (let i = 0; i < grid.records.length; i++) {
+				if (!hitSet.has(i)) missIds.push(i);
+			}
+			for (const i of allIds) setRecordFilterMiss(grid.records[i], false);
+			for (const i of missIds) setRecordFilterMiss(grid.records[i], true);
+			const displayIds = allIds.concat(missIds);
+
 			// searchData drives w2ui's built-in markSearch() for exact filename matches.
 			grid.searchData = [{ field: 'filename', operator: 'contains', value: q }];
-			grid.last.searchIds = allIds;
-			grid.total = allIds.length;
+			grid.last.searchIds = displayIds;
+			grid.total = displayIds.length;
 			grid.refresh();
 
 			// markSearch fires at 50 ms inside w2ui; our custom pass runs at 100 ms.
@@ -7673,6 +7716,69 @@ export function setActivePanelId(panelId) {
 	}
 }
 
+/**
+ * Move the selection out of the toolbar search box and into the panel's list,
+ * landing on the first displayed item — the top filter hit while filtering.
+ * The search box is expected to have been blurred already so the list shows
+ * its focused selection colours and arrow keys reach the grid.
+ */
+export function focusListFromSearchBar(panelId) {
+	const state = panelState[panelId];
+	if (!state) return;
+	const viewType = getPanelViewType(panelId);
+
+	if (viewType === 'gallery') {
+		const items = $(`#panel-${panelId} .panel-gallery`).find('.gallery-item').toArray();
+		const firstVisible = items.find(el => el.style.display !== 'none');
+		if (!firstVisible) return;
+		const recid = parseInt(firstVisible.dataset.recid, 10);
+		state.gallerySelectedRecids = new Set([recid]);
+		$(items).removeClass('gallery-item-selected');
+		$(firstVisible).addClass('gallery-item-selected');
+		firstVisible.scrollIntoView({ block: 'nearest' });
+		const record = (state.galleryRecords || []).find(r => r.recid === recid);
+		if (record) updateSelectedItemFromRecord(record, panelId);
+		return;
+	}
+
+	if (viewType !== 'list') return; // board / file / properties have no row list to enter
+	const grid = state.w2uiGrid;
+	if (!grid || !grid.records || grid.records.length === 0) return;
+	const recids = getGridDisplayRecids(grid);
+	if (recids.length === 0) return;
+
+	const firstRecid = recids[0];
+	gridFocusedPanelId = panelId;
+	grid.selectNone();
+	grid.select(firstRecid);
+	if (typeof grid.scrollIntoView === 'function') grid.scrollIntoView(firstRecid);
+	selectionAnchorRecids[panelId] = firstRecid;
+
+	const record = grid.records.find(r => r.recid === firstRecid);
+	if (record) updateSelectedItemFromRecord(record, panelId);
+}
+
+/**
+ * The reverse of focusListFromSearchBar: hand focus back to the toolbar search
+ * box with the caret at the end, so the user can keep refining the filter.
+ *
+ * Only fires when the box already has text — with an empty filter the top of the
+ * list is a normal place to sit, and starting a new filter is just typing.
+ * Reads the live input value rather than state.toolbarSearch, which only tracks
+ * committed (Enter/Escape) searches, not what is currently being typed.
+ *
+ * @returns {boolean} true if focus moved to the search box
+ */
+export function focusSearchBarFromList(panelId) {
+	const toolbar = getPanelToolbarElement(panelId);
+	if (!toolbar) return false;
+	const input = toolbar.querySelector('.panel-tb-search');
+	if (!input || !input.value.trim()) return false;
+	input.focus();
+	input.setSelectionRange(input.value.length, input.value.length);
+	return true;
+}
+
 export function focusSearchBarWithChar(panelId, char) {
 	const state = panelState[panelId];
 	if (!state) return;
@@ -9451,6 +9557,18 @@ export async function updateItemPropertiesPage(panelId = 0) {
 	}
 }
 
+/**
+ * Recids in the order the grid is actually rendering them: last.searchIds order
+ * when a search/live filter is applied, otherwise plain grid.records order.
+ */
+function getGridDisplayRecids(grid) {
+	const searchIds = grid.last?.searchIds;
+	if (grid.searchData?.length > 0 && Array.isArray(searchIds) && searchIds.length > 0) {
+		return searchIds.map(i => grid.records[i]?.recid).filter(recid => recid !== undefined);
+	}
+	return grid.records.map(r => r.recid);
+}
+
 export function gridNavigate(direction, isShift, targetPanelId) {
 	const panelId = targetPanelId !== undefined ? targetPanelId : gridFocusedPanelId;
 	if (panelId === null || panelId === undefined) return;
@@ -9462,7 +9580,9 @@ export function gridNavigate(direction, isShift, targetPanelId) {
 	// DOM queries only cover visible rows when virtual scrolling is active, causing the
 	// selected recid to drop out of the list when it scrolls off-screen — making indexOf
 	// return -1 and newIndex snap back to 0 (the wrap-around bug).
-	const allRecids = grid.records.map(r => r.recid);
+	// While a live filter is active w2ui renders rows in last.searchIds order (hits
+	// first, then dimmed misses), so navigation has to follow that order instead.
+	const allRecids = getGridDisplayRecids(grid);
 	if (allRecids.length === 0) return;
 
 	const selected = grid.getSelection();
@@ -9472,6 +9592,9 @@ export function gridNavigate(direction, isShift, targetPanelId) {
 		if (selected.length > 0) {
 			currentIndex = allRecids.indexOf(selected[selected.length - 1]);
 		}
+		// Up from the top row steps back into an active filter, mirroring the
+		// ArrowDown that brought focus here. Keeps the selection where it is.
+		if (direction === 'up' && currentIndex === 0 && focusSearchBarFromList(panelId)) return;
 		let newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
 		newIndex = Math.max(0, Math.min(allRecids.length - 1, newIndex));
 		const newRecid = allRecids[newIndex];
@@ -9554,7 +9677,12 @@ export function galleryNavigate(direction, panelId) {
 		const candidates = items.filter(el =>
 			direction === 'up' ? el.offsetTop < curTop : el.offsetTop > curTop
 		);
-		if (!candidates.length) return; // already on first or last row
+		if (!candidates.length) {
+			// Already on the first or last row. From the top row, up steps back into
+			// an active filter — same as the grid.
+			if (direction === 'up') focusSearchBarFromList(targetPanelId);
+			return;
+		}
 
 		const targetRowTop = direction === 'up'
 			? Math.max(...candidates.map(el => el.offsetTop))
