@@ -508,8 +508,18 @@ class DatabaseService {
       this.db.exec('ALTER TABLE dirs ADD COLUMN atlas_json_mtime INTEGER');
     }
 
-    // Startup sweep: file_content has no enforced FK (PRAGMA foreign_keys is
-    // never enabled), so reclaim rows whose files row is gone.
+    // Startup sweep: reclaim file_content rows whose files row is gone.
+    //
+    // file_content.file_id DOES declare an FK to files(id), and better-sqlite3
+    // enables PRAGMA foreign_keys by default — so no current code path can
+    // orphan a row (deleteFile/clearDirectory/replaceFileInode each clear the
+    // content row first, and skipping that would raise a constraint error, not
+    // leak a row). The sweep exists for rows written by a connection that ran
+    // WITHOUT enforcement: the pragma is per-connection and SQLite never
+    // validates retroactively, so orphans from an older build, the sqlite3 CLI,
+    // or any other tool touching data.sqlite would otherwise persist forever.
+    // They cost disk (each row caches a file's full extracted text) rather than
+    // correctness — deep search joins file_content to files with an INNER JOIN.
     try {
       this.db.exec('DELETE FROM file_content WHERE file_id NOT IN (SELECT id FROM files)');
     } catch (err) {

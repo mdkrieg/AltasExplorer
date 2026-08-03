@@ -155,8 +155,19 @@ describeIfBinding('DatabaseService - file_content lifecycle cleanup', () => {
 
   it('createSchema startup sweep removes rows whose files row is gone', () => {
     const { fileId } = seed();
-    // Bypass deleteFile to simulate a row left behind (FKs are unenforced).
-    db.db.prepare('DELETE FROM files WHERE id = ?').run(fileId);
+    // Manufacture the state the sweep exists for. FKs *are* enforced here
+    // (better-sqlite3 enables the pragma by default), so no current code path
+    // can produce an orphan — but the pragma is per-connection and SQLite never
+    // validates retroactively, so a row orphaned by a connection that ran
+    // without it (an older build, the sqlite3 CLI, another tool) survives
+    // forever. Turning it off for this one statement reproduces that faithfully
+    // rather than working around the constraint.
+    db.db.pragma('foreign_keys = OFF');
+    try {
+      db.db.prepare('DELETE FROM files WHERE id = ?').run(fileId);
+    } finally {
+      db.db.pragma('foreign_keys = ON');
+    }
     expect(contentRowCount()).toBe(1);
     db.createSchema();
     expect(contentRowCount()).toBe(0);

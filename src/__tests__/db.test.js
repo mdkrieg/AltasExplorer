@@ -204,7 +204,12 @@ describeIfBinding('DatabaseService - moveDirectoryTree()', () => {
       new_parent_id: parent,
     });
 
-    const child = db.db.prepare("SELECT dirname FROM dirs WHERE dirname LIKE 'C:\\dst\\folder%' ESCAPE '\\'").all();
+    // The pattern has to escape its own backslashes. Under ESCAPE '\', a bare
+    // '\d' reads as a literal 'd', so an unescaped 'C:\dst\folder%' silently
+    // becomes 'C:dstfolder%' and matches nothing — the assertion then "fails"
+    // on a rewrite that actually worked.
+    const likePattern = 'C:\\dst\\folder'.replace(/[%_\\]/g, '\\$&') + '%';
+    const child = db.db.prepare("SELECT dirname FROM dirs WHERE dirname LIKE ? ESCAPE '\\'").all(likePattern);
     // top + 1 child.
     expect(child.map(r => r.dirname).sort()).toEqual(['C:\\dst\\folder', 'C:\\dst\\folder\\child']);
   });
