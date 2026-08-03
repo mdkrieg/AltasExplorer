@@ -281,6 +281,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File history operations
   getItemHistory: (item) => ipcRenderer.invoke('get-item-history', item),
   getFileHistory: (inode) => ipcRenderer.invoke('get-file-history', inode),
+  getDirectoryContentsHistory: (dirId) => ipcRenderer.invoke('get-directory-contents-history', { dirId }),
   getFileRecordByPath: (filePath) => ipcRenderer.invoke('get-file-record-by-path', { filePath }),
 
   // Alerts

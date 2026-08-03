@@ -1102,7 +1102,15 @@ function attachPathInputListeners($header, panelId) {
 				newPath = $(this).val().trim();
 			}
 			dismissInput();
-			if (newPath && newPath !== panelState[panelId].currentPath) {
+			// Compare against the full URI, not the bare path. `currentPath` drops
+			// the query params, so while a panel showed `X?history` (or ?properties,
+			// ?orphans, …) typing plain `X` matched and the Enter did nothing —
+			// leaving a param view by editing the path bar was impossible.
+			const st = panelState[panelId];
+			const currentUri = st.currentBasePath
+				? buildNavUri(st.currentBasePath, st.currentNavParams || new Set())
+				: st.currentPath;
+			if (newPath && newPath !== currentUri) {
 				navigateToDirectory(newPath, panelId);
 			}
 			return;
@@ -4773,37 +4781,62 @@ async function showItemPropertiesForPath(filePath, panelId, fileStats, auxEncode
 	await updateItemPropertiesPage();
 }
 
-async function showHistoryViewForPath(filePath, panelId, fileStats, auxEncoded = '') {
+/**
+ * Switch a panel to the full history view (`?history`) for a path.
+ *
+ * `?history&contents` folds the history of a directory's files and immediate
+ * subdirectories into the same list. It is meaningless for a file and for a
+ * multi-select (which is already showing several items), so in those cases the
+ * toggle is hidden and the param is dropped from the URI rather than being carried
+ * along invisibly.
+ *
+ * @param {string} filePath
+ * @param {number} panelId
+ * @param {object} fileStats
+ * @param {string} [auxEncoded] Encoded aux items for a multi-select history view
+ * @param {boolean} [includeContents] Value of the `contents` URI param
+ */
+async function showHistoryViewForPath(filePath, panelId, fileStats, auxEncoded = '', includeContents = false) {
 	const lastSep = Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/'));
 	const filename = lastSep >= 0 ? filePath.slice(lastSep + 1) : filePath;
+	const isDirectory = fileStats.isDirectory || false;
+	const isMultiSelect = !!auxEncoded;
+	const contentsAvailable = isDirectory && !isMultiSelect;
+	const contentsOn = contentsAvailable && !!includeContents;
 
 	const selectedRecord = {
 		path: filePath,
 		filename,
 		filenameRaw: filename,
-		isFolder: fileStats.isDirectory || false,
+		isFolder: isDirectory,
 		inode: fileStats.inode || null,
 		dir_id: fileStats.dir_id || null
 	};
 
+	const navParams = new Set(['history']);
+	if (contentsOn) navParams.add('contents');
+
 	const state = panelState[panelId];
 	state.currentPath = filePath;
 	state.currentBasePath = filePath;
-	state.currentNavParams = new Set(['history']);
+	state.currentNavParams = navParams;
 
 	const $panel = $(`#panel-${panelId}`);
 	$panel.find('.panel-grid, .panel-gallery, .panel-landing-page, .panel-file-view, .panel-terminal-view, .panel-welcome-view').hide();
 	hideHistoryView(panelId);
 	$panel.find('.panel-history-view').css('display', 'flex');
 	hidePanelToolbar(panelId);
+	// Painted before the history fetch so the view has its final geometry from the
+	// first frame — the grid below must not be pushed down when the data lands.
+	updateHistoryContentsToggle(panelId, contentsAvailable, contentsOn);
 
 	// Resolve the category implied by this file's parent directory before painting
 	// the header, so the title bar receives the correct category colours on first paint.
-	await resolvePathCategory(panelId, filePath, fileStats.isDirectory || false);
+	await resolvePathCategory(panelId, filePath, isDirectory);
 	// Build history URI — include auxitems if this is a multi-select history view
 	const historyUri = auxEncoded
-		? buildNavUri(filePath, new Set(['history']), new Map([['auxitems', auxEncoded]]))
-		: filePath + '?history';
+		? buildNavUri(filePath, navParams, new Map([['auxitems', auxEncoded]]))
+		: buildNavUri(filePath, navParams);
 	updatePanelHeader(panelId, historyUri);
 	setActivePanelId(panelId);
 
@@ -4813,7 +4846,37 @@ async function showHistoryViewForPath(filePath, panelId, fileStats, auxEncoded =
 	const baseDir = lastSep2 >= 0 ? filePath.slice(0, lastSep2) : filePath;
 	const auxPaths = auxEncoded ? decodeAuxItems(baseDir, auxEncoded) : [];
 
-	await openHistoryViewInPanel(selectedRecord, panelId, auxPaths);
+	await openHistoryViewInPanel(selectedRecord, panelId, auxPaths, { includeContents: contentsOn });
+}
+
+/**
+ * Show/hide and check/uncheck the history view's Contents toggle for a panel.
+ * @param {number} panelId
+ * @param {boolean} available Whether the toggle applies at all (directories only)
+ * @param {boolean} isOn
+ */
+function updateHistoryContentsToggle(panelId, available, isOn) {
+	const $toolbar = $(`#panel-${panelId} .panel-history-toolbar`);
+	$toolbar.toggleClass('active', !!available);
+	// The checked state is reset even when the toolbar is hidden, so a file's
+	// history can't leave a stale tick behind for the next directory shown here.
+	const checked = !!available && !!isOn;
+	const $btn = $toolbar.find('.panel-history-contents-btn');
+	$btn.toggleClass('is-active', checked).attr('aria-pressed', checked ? 'true' : 'false');
+	// &#9745; ballot-box-with-check / &#9744; empty ballot box
+	$btn.find('.panel-history-contents-mark').html(checked ? '&#9745;' : '&#9744;');
+}
+
+/**
+ * Toggle `?history&contents` for a panel by re-navigating, so the URI in the path
+ * bar stays the single source of truth for what the view is showing.
+ * @param {number} panelId
+ */
+function toggleHistoryContents(panelId) {
+	const state = panelState[panelId];
+	if (!state?.currentBasePath || !state.currentNavParams?.has('history')) return;
+	const newParams = toggleNavParam(state.currentNavParams, 'contents');
+	navigateToDirectory(buildNavUri(state.currentBasePath, newParams), panelId);
 }
 
 // ============================================================
@@ -5071,7 +5134,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 					// ?history → show history view inside panel
 					const auxEncoded = paramValues ? (paramValues.get('auxitems') || '') : '';
 					hidePanelLoading(panelId);
-					await showHistoryViewForPath(normalizedPath, panelId, fileStats, auxEncoded);
+					await showHistoryViewForPath(normalizedPath, panelId, fileStats, auxEncoded, navParams.has('contents'));
 					return;
 				} else if (_fileNavHandler) {
 					// bare path / ?hexview / ?notes / ?notes#edit → delegate to renderer
@@ -5101,7 +5164,7 @@ export async function navigateToDirectory(dirPath, panelId = activePanelId, addT
 			hidePanelLoading(panelId);
 			const statsResult = await window.electronAPI.getItemStats(normalizedPath);
 			if (statsResult && statsResult.success) {
-				await showHistoryViewForPath(normalizedPath, panelId, statsResult, auxEncoded);
+				await showHistoryViewForPath(normalizedPath, panelId, statsResult, auxEncoded, navParams.has('contents'));
 			}
 			return;
 		}
@@ -8463,6 +8526,12 @@ export function attachPanelEventListeners(panelId) {
 		if (!$(e.target).is(interactiveSel) && !$(e.target).closest(interactiveSel).length) {
 			setActivePanelId(panelId);
 		}
+	});
+
+	// Outside the panelId > 1 block below: every panel, panel 1 included, can host
+	// the history view, so every panel needs its Contents toggle wired.
+	$panel.find('.panel-history-contents-btn').off('click').on('click', function () {
+		toggleHistoryContents(panelId);
 	});
 
 	if (panelId === 0 || panelId > 1) {

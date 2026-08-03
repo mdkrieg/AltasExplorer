@@ -113,7 +113,13 @@ Same split as reminders — modal vs. sidebar section.
 Alert badge and alert modal.
 
 ### `history.js`
-History modal and per-file change summaries (audit trail UI).
+The full-panel history view (`?history`) and per-item change summaries (audit trail UI).
+
+Every flavour of the view — a single item, a multi-select, a directory with `?history&contents` — is modelled as a set of **subjects**, one per item whose history is on screen, merged into a single timestamp-sorted grid. Each subject keeps its own state timeline because the Change Summary card compares a row against the previous state *of that same item*; comparing across items would be meaningless. The Item column appears only when there is more than one subject.
+
+The Change Summary's Previous/Changed headings carry the timestamp of the state they describe, formatted identically to the grid's "Detected At" column so a card can be matched back to its row by eye. Up/Down move the grid selection (`historyNavigate`, the counterpart to `panels.gridNavigate`) and are routed from the global key handler in `renderer.js`; a row is always selected so the card never describes a line the user cannot pick out.
+
+`openHistoryModal` / `hideHistoryModal` and `#history-modal` in `index.html` are **dead code** — nothing calls the open function. History is panel-hosted only (reachable from the properties view's history section via its P1..Pn+1 buttons).
 
 ### `settings.js`
 Settings modal — categories, tags, hotkeys.

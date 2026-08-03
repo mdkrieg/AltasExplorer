@@ -5245,6 +5245,23 @@ ipcMain.handle('get-items-history', (event, { items }) => {
 });
 
 /**
+ * Item History: Get the history of a directory's contents (files recorded against
+ * the directory + immediate subdirectories) for the history view's "Contents" toggle.
+ */
+ipcMain.handle('get-directory-contents-history', (event, { dirId }) => {
+  try {
+    if (!dirId) {
+      return { success: false, error: 'Directory ID is required for contents history.' };
+    }
+    const data = db.getDirectoryContentsHistory(dirId);
+    return { success: true, data };
+  } catch (err) {
+    logger.error('Error retrieving directory contents history:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+/**
  * File History: Get all history records for a file by inode
  */
 ipcMain.handle('get-file-history', (event, inode) => {

@@ -5511,6 +5511,27 @@ hr {
   display: block;
   border-radius: 2px;
 }
+/* Toolbar of the full-panel history view (?history). Styled to match .panel-toolbar
+   so a panel showing history reads as the same kind of surface as one showing a
+   directory. Hidden entirely for files — only directories have contents to fold in. */
+.panel-history-toolbar {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #e0e0e0;
+  min-height: 32px;
+}
+.panel-history-toolbar.active {
+  display: flex;
+}
+.panel-history-contents-mark {
+  font-size: 13px;
+  line-height: 1;
+}
+
 .history-table {
   width: 100%;
   border-collapse: collapse;

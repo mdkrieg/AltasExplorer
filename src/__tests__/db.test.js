@@ -276,3 +276,67 @@ describeIfBinding('DatabaseService - insertCopiedFileRow()', () => {
     expect(histCount).toBe(1);
   });
 });
+
+describeIfBinding('DatabaseService - getDirectoryContentsHistory()', () => {
+  beforeEach(() => freshDb());
+  afterAll(() => { try { db.db.close(); } catch (_) {} db.db = null; });
+
+  function insertFileHistoryRow(inode, dir_id, file_id, eventType, changeValue, detectedAt) {
+    return db.db.prepare(`
+      INSERT INTO file_history (inode, dir_id, file_id, eventType, changeValue, detectedAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(inode, dir_id, file_id, eventType, JSON.stringify(changeValue), detectedAt).lastInsertRowid;
+  }
+
+  function insertDirHistoryRow(dir_id, eventType, changeValue, detectedAt) {
+    return db.db.prepare(`
+      INSERT INTO dir_history (dir_id, eventType, changeValue, detectedAt)
+      VALUES (?, ?, ?, ?)
+    `).run(dir_id, eventType, JSON.stringify(changeValue), detectedAt).lastInsertRowid;
+  }
+
+  it('returns file and subdirectory history newest-first, tagged for a merged list', () => {
+    const parent = insertDir('C:\\work', null, 'p');
+    const child = insertDir('C:\\work\\sub', parent, 'c');
+    const fileId = insertFile('inode-a', parent, 'a.txt');
+
+    insertFileHistoryRow('inode-a', parent, fileId, 'fileModified', { size: 10 }, 1000);
+    insertFileHistoryRow('inode-a', parent, fileId, 'fileAdded', { size: 5 }, 3000);
+    insertDirHistoryRow(child, 'dirAdded', { dirname: 'sub' }, 2000);
+
+    const rows = db.getDirectoryContentsHistory(parent);
+
+    expect(rows.map(r => r.detectedAt)).toEqual([3000, 2000, 1000]);
+    expect(rows.map(r => r.itemKind)).toEqual(['file', 'dir', 'file']);
+    // Subdirectory rows are named by their leaf, not the full dirname.
+    expect(rows.map(r => r.itemName)).toEqual(['a.txt', 'sub', 'a.txt']);
+    // itemKey groups rows back into per-item timelines.
+    expect(rows[0].itemKey).toBe(rows[2].itemKey);
+    expect(rows[1].itemKey).toBe(`dir:${child}`);
+    // ...while itemPath keeps the full path for the Path column.
+    expect(rows[1].itemPath).toBe('C:\\work\\sub');
+  });
+
+  it('excludes the directory\'s own history and anything outside it', () => {
+    const parent = insertDir('C:\\work', null, 'p');
+    const sibling = insertDir('C:\\other', null, 's');
+    const siblingFile = insertFile('inode-s', sibling, 's.txt');
+
+    insertDirHistoryRow(parent, 'dirOpened', { dirname: 'work' }, 5000);
+    insertFileHistoryRow('inode-s', sibling, siblingFile, 'fileAdded', { size: 1 }, 6000);
+
+    expect(db.getDirectoryContentsHistory(parent)).toEqual([]);
+  });
+
+  it('keeps the history of soft-deleted files — a file going away is history too', () => {
+    const parent = insertDir('C:\\work', null, 'p');
+    const fileId = insertFile('inode-gone', parent, 'gone.txt');
+    insertFileHistoryRow('inode-gone', parent, fileId, 'fileRemoved', { filename: 'gone.txt' }, 1000);
+    db.db.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').run(2000, fileId);
+
+    const rows = db.getDirectoryContentsHistory(parent);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].itemName).toBe('gone.txt');
+    expect(rows[0].itemKind).toBe('file');
+  });
+});

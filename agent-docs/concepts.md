@@ -33,12 +33,15 @@ A URI can include:
 
 The URI is the canonical handle for "what is this panel showing right now."
 
+Because it is canonical, **compare against the full URI, never the bare path**, when deciding whether a panel is already where the user asked to go. `panelState[n].currentPath` holds only the path — a check against it treats `X?history` and `X` as the same place, so typing the plain path to leave a param view registers as a no-op.
+
 Recognized query parameters (non-exhaustive):
 
 | Parameter | Meaning |
 |---|---|
 | `?properties` | Show the file properties summary for the given path |
 | `?history` | Show the file/directory change history for the given path |
+| `?history&contents` | Directories only — fold the history of the directory's files and immediate subdirectories into the same list |
 | `?orphans` | Show files not linked to any directory in the database |
 | `?trash` | Show items in the trash virtual view |
 

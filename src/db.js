@@ -1691,6 +1691,59 @@ class DatabaseService {
     `).all(inode, dirId);
   }
 
+  /**
+   * Get the history of everything *inside* a directory: every file_history row
+   * recorded against the directory, plus the dir_history of every immediate
+   * subdirectory. The directory's own history is NOT included — callers merge it
+   * in themselves so the two lists stay separately addressable.
+   *
+   * Rows carry three extra fields so a caller can render them in one merged list
+   * without a second round of lookups:
+   *   `itemKind`  — 'file' | 'dir'
+   *   `itemName`  — the file/folder name
+   *   `itemKey`   — stable per-item identity for grouping ('file:<inode>:<dir_id>' / 'dir:<id>')
+   *
+   * Soft-deleted files are included: a file being gone is exactly the kind of
+   * thing the history is there to record.
+   *
+   * @param {number} dirId
+   * @returns {array} History rows, newest first
+   */
+  getDirectoryContentsHistory(dirId) {
+    const fileRows = this.db.prepare(`
+      SELECT fh.*,
+             'file' AS itemKind,
+             COALESCE(f.filename, fh.inode) AS itemName,
+             'file:' || fh.inode || ':' || fh.dir_id AS itemKey
+      FROM file_history fh
+      LEFT JOIN files f ON f.id = fh.file_id
+      WHERE fh.dir_id = ?
+    `).all(dirId);
+
+    const subdirRows = this.db.prepare(`
+      SELECT dh.*,
+             'dir' AS itemKind,
+             d.dirname AS itemName,
+             'dir:' || d.id AS itemKey
+      FROM dir_history dh
+      JOIN dirs d ON d.id = dh.dir_id
+      WHERE d.parent_id = ?
+    `).all(dirId);
+
+    // dirs.dirname is a full path; the merged list wants a leaf name.
+    for (const row of subdirRows) {
+      const name = String(row.itemName || '');
+      const lastSep = Math.max(name.lastIndexOf('\\'), name.lastIndexOf('/'));
+      row.itemPath = name;
+      row.itemName = lastSep >= 0 ? name.slice(lastSep + 1) : name;
+    }
+
+    return [...fileRows, ...subdirRows].sort((a, b) => {
+      const delta = (b.detectedAt || 0) - (a.detectedAt || 0);
+      return delta !== 0 ? delta : (b.id || 0) - (a.id || 0);
+    });
+  }
+
   findDirectoryInOtherParents(inode, excludeParentId) {
     return this.db.prepare(`
       SELECT *

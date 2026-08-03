@@ -935,6 +935,28 @@ function attachEventListeners() {
       }
     }
 
+    // History view (?history) owns Up/Down while it is the panel's body. Checked
+    // ahead of the gallery and grid branches below: those key off the panel's
+    // resolved view type, which still reports gallery/list for a panel whose body
+    // has been replaced by the history grid.
+    if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+        !event.altKey && !event.ctrlKey && !event.metaKey &&
+        $(`#panel-${activePanelId} .panel-history-view`).is(':visible')) {
+      const target = event.target;
+      // Leave the comment-cell editor and the path bar alone. w2ui's own
+      // keyboard-capture textarea sits inside the history view — that one is not a
+      // user input and must pass through, same carve-out the file grid makes.
+      const isRealInput = target &&
+          (target.tagName === 'INPUT' || target.tagName === 'SELECT' ||
+           target.contentEditable === 'true' ||
+           (target.tagName === 'TEXTAREA' && $(target).closest('.panel-history-view').length === 0));
+      if (!isRealInput && history.historyNavigate(event.key === 'ArrowUp' ? 'up' : 'down', activePanelId)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
+
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown' ||
          event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
         !event.altKey && !event.ctrlKey && !event.metaKey) {
