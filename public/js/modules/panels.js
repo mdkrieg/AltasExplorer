@@ -182,6 +182,81 @@ async function getOsFileIconUrl(ext) {
 	osIconCache.set(ext, dataUrl); // cache null too — don't retry on every render
 	return dataUrl;
 }
+
+// Formats whose icon lives in the file itself, not in the extension
+// association. For these the extension-keyed probe can only ever return the
+// generic shell default, so rows get a second pass — see enrichFileIcons.
+const SELF_ICONING_EXTS = new Set(['.exe', '.dll', '.lnk', '.ico', '.scr', '.cpl']);
+
+/** Lowercase extension including the dot, or null for extension-less names. */
+function extensionOf(filename) {
+	if (typeof filename !== 'string') return null;
+	const dotIdx = filename.lastIndexOf('.');
+	return dotIdx > 0 ? filename.slice(dotIdx).toLowerCase() : null;
+}
+
+/**
+ * Second-pass icon resolution for self-iconing files.
+ *
+ * First paint already gave every row the extension-keyed icon, which for these
+ * formats is the generic shell default (one blue "application" icon for every
+ * .exe). This runs after the grid is up and swaps in each file's own embedded
+ * icon, so the paint is never blocked on it. Rows whose extraction fails keep
+ * the generic icon they already have.
+ */
+async function enrichFileIcons(panelId) {
+	const state = panelState[panelId];
+	const grid = state?.w2uiGrid;
+	if (!grid || !Array.isArray(state.sourceRecords)) return;
+
+	const targets = state.sourceRecords.filter(record =>
+		!record.isFolder &&
+		!record.iconEnriched &&
+		record.path &&
+		record.changeState !== 'moved' && // the moved marker outranks the file's own icon
+		SELF_ICONING_EXTS.has(extensionOf(record.filenameRaw))
+	);
+	if (targets.length === 0) return;
+
+	// Claim up front so an overlapping populate doesn't dispatch these twice.
+	for (const record of targets) record.iconEnriched = true;
+
+	const dirPath = state.currentPath;
+	let iconsByPath;
+	try {
+		iconsByPath = await window.electronAPI.batchGetFileIcons(targets.map(r => r.path));
+	} catch (err) {
+		console.error('Error enriching file icons:', err);
+		return;
+	}
+	if (!iconsByPath) return;
+
+	// The panel may have navigated or been rebuilt while the batch was in
+	// flight — recids from the old build are meaningless against a new grid.
+	const live = panelState[panelId];
+	if (!live || live.w2uiGrid !== grid || live.currentPath !== dirPath) return;
+
+	// Re-match by path against the live records rather than trusting the
+	// captured objects, and only repaint rows the filter is actually showing.
+	const liveByPath = new Map();
+	for (const record of live.sourceRecords) {
+		if (!record.isFolder && record.path) liveByPath.set(record.path, record);
+	}
+	const visibleRecids = new Set((grid.records || []).map(r => r.recid));
+
+	for (const [filePath, dataUrl] of Object.entries(iconsByPath)) {
+		if (!dataUrl) continue; // extraction failed — keep the generic extension icon
+		const record = liveByPath.get(filePath);
+		if (!record) continue;
+		const className = getRowClassName(record.changeState);
+		const img = `<img src="${dataUrl}" style="width: 20px; height: 20px; object-fit: contain;">`;
+		record.icon = className ? `<div class="${className}">${img}</div>` : img;
+		// Filtered-out rows pick the new icon up on the next applyPanelFilters refresh.
+		if (visibleRecids.has(record.recid) && typeof grid.refreshCell === 'function') {
+			grid.refreshCell(record.recid, 'icon');
+		}
+	}
+}
 const INITIAL_LABEL_SUGGESTION_COUNT = 4;
 const LABEL_SUGGESTION_INCREMENT = 3;
 let createTagModalState = {
@@ -820,6 +895,9 @@ function setPanelSourceRecords(panelId, records) {
 	if (!state) return;
 	state.sourceRecords = Array.isArray(records) ? records : [];
 	applyPanelFilters(panelId);
+	// Post-paint: swap generic .exe/.lnk icons for each file's own. Deliberately
+	// not awaited — the grid is already on screen and this only repaints cells.
+	enrichFileIcons(panelId);
 }
 
 function appendPanelSourceRecords(panelId, records) {
@@ -829,12 +907,15 @@ function appendPanelSourceRecords(panelId, records) {
 	state.sourceRecords.push(...records);
 	if (state.filterVisible) {
 		applyPanelFilters(panelId);
-		return;
+	} else {
+		const grid = state.w2uiGrid;
+		if (!grid) return;
+		grid.add(records);
+		refreshFilterHeaderButtons(panelId);
 	}
-	const grid = state.w2uiGrid;
-	if (!grid) return;
-	grid.add(records);
-	refreshFilterHeaderButtons(panelId);
+	// Newly appended rows (background refresh) need the same second pass.
+	// Already-enriched records are skipped by their iconEnriched flag.
+	enrichFileIcons(panelId);
 }
 
 function clearPanelFilterInputs(panelId) {

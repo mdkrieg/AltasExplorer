@@ -206,6 +206,30 @@ const activeDeepSearches = new Map();
 // Session-persistent: survives renderer reloads, cleared on explicit Refresh.
 const osIconCache = new Map();
 
+// Per-file icon cache for "self-iconing" formats (.exe, .lnk, …) whose icon
+// lives in the file's own resources rather than in the extension association.
+// Keyed by "path|mtimeMs" — unlike osIconCache the key space is unbounded, so
+// this one is LRU-capped. Insertion order in a Map is the LRU order: reads
+// re-insert to move a key to the end, evictions take from the front.
+const FILE_ICON_CACHE_MAX = 2000;
+const fileIconCache = new Map();
+
+function fileIconCacheGet(key) {
+  if (!fileIconCache.has(key)) return undefined;
+  const value = fileIconCache.get(key);
+  fileIconCache.delete(key);
+  fileIconCache.set(key, value);
+  return value;
+}
+
+function fileIconCacheSet(key, value) {
+  if (fileIconCache.has(key)) fileIconCache.delete(key);
+  fileIconCache.set(key, value);
+  if (fileIconCache.size > FILE_ICON_CACHE_MAX) {
+    fileIconCache.delete(fileIconCache.keys().next().value);
+  }
+}
+
 // Wrap with Electron-aware notify (push progress events to all open windows)
 function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBackgroundRefresh = false, options = {}) {
   return _doScan(dirPath, isManualNavigation, isBackgroundRefresh, options, (event) => {
@@ -2479,11 +2503,53 @@ ipcMain.handle('get-os-file-icon', async (event, ext) => {
 });
 
 /**
- * Clear the OS file icon cache (called by the Refresh button so a deeper
+ * Get OS-native icons for specific files, extracted from each file's own
+ * resources rather than from its extension association. Used for formats
+ * where every file carries its own icon (.exe, .lnk, …) and an extension
+ * probe can only ever return the generic shell default.
+ *
+ * Batched because this runs as a post-paint enrichment pass over a whole
+ * directory. Returns { [path]: dataUrl | null }; a null means "extraction
+ * failed, keep whatever the extension-keyed icon gave you".
+ */
+ipcMain.handle('batch-get-file-icons', async (event, paths) => {
+  const result = {};
+  if (!Array.isArray(paths)) return result;
+  for (const filePath of paths) {
+    if (typeof filePath !== 'string' || !filePath) continue;
+    try {
+      // mtime is part of the key so a recompiled/replaced binary picks up its
+      // new icon without waiting for a Refresh.
+      const stats = fsSync.statSync(filePath);
+      const key = `${filePath}|${stats.mtimeMs}`;
+      const cached = fileIconCacheGet(key);
+      if (cached !== undefined) {
+        result[filePath] = cached;
+        continue;
+      }
+      const nimg = await app.getFileIcon(filePath, { size: 'normal' });
+      const dataUrl = nimg && !nimg.isEmpty() ? nimg.toDataURL() : null;
+      fileIconCacheSet(key, dataUrl); // cache failures too — don't re-probe every render
+      result[filePath] = dataUrl;
+    } catch (err) {
+      logger.warn(`Could not get file icon for "${filePath}": ${err.message}`);
+      result[filePath] = null;
+    }
+  }
+  return result;
+});
+
+/**
+ * Clear the OS file icon caches (called by the Refresh button so a deeper
  * look picks up any icon changes from newly-installed/uninstalled apps).
+ *
+ * Both maps are cleared. fileIconCache is mostly self-invalidating via mtime,
+ * but a .lnk resolves its icon from its *target* — updating that target leaves
+ * the shortcut's own mtime untouched, so Refresh is the only trigger there.
  */
 ipcMain.handle('clear-os-icon-cache', () => {
   osIconCache.clear();
+  fileIconCache.clear();
 });
 
 /**

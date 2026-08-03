@@ -273,6 +273,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // OS file type icons (native shell icons, cached by extension)
   getOsFileIcon: (ext) => ipcRenderer.invoke('get-os-file-icon', ext),
+  // Per-file icons for self-iconing formats (.exe, .lnk, …), cached by path+mtime
+  batchGetFileIcons: (paths) => ipcRenderer.invoke('batch-get-file-icons', paths),
   clearOsIconCache: () => ipcRenderer.invoke('clear-os-icon-cache'),
 
   // EXIF metadata
