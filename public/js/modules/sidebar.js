@@ -41,7 +41,7 @@ let favEditMode = false;
 let favoritesEditSnapshot = null;
 
 // ── LOCAL FAVORITES state ─────────────────────────────────────────────────
-// Maps panelId (1-4) → Array<{ filename, targetPath, isDirectory, iconHtml }>
+// Maps panelId (1-4) → Array<{ filename, targetPath, isDirectory, linkKind, iconHtml }>
 const localFavoritesItems = new Map();
 let favRefreshDecorateTimer = null;
 let sidebarCollapsed = false;
@@ -1084,6 +1084,20 @@ async function resolveShortcutIconHtml(shortcut) {
 }
 
 /**
+ * Badge glyph for a LOCAL FAVORITES entry, chosen by link kind.
+ *
+ * A chain marks a filesystem-level link — the entry and its target are the same
+ * object on disk. An outbound arrow marks a .lnk, which only *describes* another
+ * path. Same distinction the grid draws, so the glyph means one thing app-wide.
+ */
+function resolveLinkBadgeHtml(linkKind) {
+  const isFsLink = linkKind === 'symlink';
+  const cls = isFsLink ? 'lf-link-badge' : 'lf-ext-link-badge';
+  const src = isFsLink ? 'link.svg' : 'external-link.svg';
+  return `<span class="${cls}"><img src="assets/icons/${src}" width="9" height="9"></span>`;
+}
+
+/**
  * Build the W2UI child nodes for the LOCAL FAVORITES group.
  */
 function buildLocalFavoritesNodes() {
@@ -1093,7 +1107,7 @@ function buildLocalFavoritesNodes() {
       const entry = entries[i];
       const displayName = entry.filename.replace(/\.lnk$/i, '');
       const iconWithBadge = entry.iconHtml
-        ? `<span class="lf-icon-wrap">${entry.iconHtml}<span class="lf-ext-link-badge"><img src="assets/icons/external-link.svg" width="9" height="9"></span></span>`
+        ? `<span class="lf-icon-wrap">${entry.iconHtml}${resolveLinkBadgeHtml(entry.linkKind)}</span>`
         : '';
       nodes.push({
         id: `lf-${panelId}-${i}`,

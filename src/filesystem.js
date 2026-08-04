@@ -62,18 +62,68 @@ class FilesystemService {
         // move detection, dir identity) confuses the link with the real thing.
         // For everything that survives the filter below, lstat === stat.
         const stats = fs.lstatSync(fullPath);
+        const perms = checkAccess(fullPath);
 
-        // Symlinks and Windows junctions are deliberately not listed. They are
-        // an alias for something the user can already reach by its real path,
-        // and the profile root is full of hidden legacy ones (`My Documents`,
-        // `Application Data`, …) that alias each other. Listing them duplicates
-        // rows, doubles scan/index work, and lets deep search walk in circles.
-        // Shortcuts remain discoverable via LOCAL FAVORITES, which enumerates
-        // them separately (get-shortcuts-in-directory in main/main.js).
-        if (stats.isSymbolicLink()) continue;
+        // Symlinks, Windows junctions and AppExecLink stubs all report as
+        // S_IFLNK here — Node collapses every reparse tag it recognises into
+        // isSymbolicLink() and never exposes the tag itself, so these three
+        // cannot be told apart at this level.
+        //
+        // They ARE real directory entries, so they are listed: hiding them
+        // makes the grid disagree with the filesystem, which is the one thing
+        // this app has to get right. (It also hid every Store app alias in
+        // %LOCALAPPDATA%\Microsoft\WindowsApps, whose targets live in a
+        // protected directory the user cannot reach by any other path.)
+        //
+        // What they are NOT is safe to identify by inode or to walk into:
+        //   - identity: a link's own inode is meaningless to callers that key
+        //     on it (change detection, move detection, dir identity), and
+        //     following it to the target's inode makes the link and the target
+        //     indistinguishable. Links get a synthetic, path-stable identity.
+        //   - traversal: walking them doubles scan/index work and lets deep
+        //     search walk in circles through the profile root's legacy aliases
+        //     (`My Documents`, `Application Data`, … all alias each other).
+        // `isLink` is the flag downstream code uses to honour both.
+        if (stats.isSymbolicLink()) {
+          let targetIsDirectory = false;
+          let targetReachable = true;
+          try {
+            // statSync follows the link — the only way to learn whether it
+            // should render as a folder or a file.
+            targetIsDirectory = fs.statSync(fullPath).isDirectory();
+          } catch {
+            // Broken link, or an AppExecLink whose target sits in a protected
+            // store directory (EACCES). Not traversable either way; still
+            // listed, because it really is there.
+            targetReachable = false;
+          }
+
+          const linkInfo = {
+            inode: `link:${entry}`,
+            filename: entry,
+            isDirectory: targetIsDirectory,
+            isLink: true,
+            linkTargetReachable: targetReachable,
+            size: 0,
+            dateModified: stats.mtime.getTime(),
+            dateCreated: stats.birthtime.getTime(),
+            path: fullPath,
+            mode: stats.mode,
+            perms,
+            permError: false
+          };
+
+          // Sorted with folders when it points at one, so a junction sits
+          // where Explorer puts it.
+          if (targetIsDirectory) {
+            folders.push(linkInfo);
+          } else {
+            files.push(linkInfo);
+          }
+          continue;
+        }
 
         const inode = stats.ino.toString(); // Get inode
-        const perms = checkAccess(fullPath);
 
         const fileInfo = {
           inode,

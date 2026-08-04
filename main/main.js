@@ -912,7 +912,15 @@ ipcMain.handle('read-directory', (event, dirPath) => {
 
 /**
  * Get shortcuts (symlinks and .lnk files on Windows) in a directory.
- * Returns each shortcut with its filename, resolved absolute targetPath, and isDirectory flag.
+ * Returns each shortcut with its filename, resolved absolute targetPath, isDirectory
+ * flag, and linkKind.
+ *
+ * linkKind distinguishes the two fundamentally different things this handler
+ * collapses together, so callers can render them distinctly:
+ *   'symlink' — a filesystem-level link (symlink OR junction; Node reports both
+ *               as S_IFLNK and does not expose the reparse tag to tell them apart).
+ *   'lnk'     — a shell-level .lnk file, which is an ordinary file whose CONTENTS
+ *               happen to describe another path.
  */
 ipcMain.handle('get-shortcuts-in-directory', (event, dirPath) => {
   try {
@@ -940,7 +948,7 @@ ipcMain.handle('get-shortcuts-in-directory', (event, dirPath) => {
             // Broken symlink — target doesn't exist; treat as file
             isDirectory = false;
           }
-          shortcuts.push({ filename: entry, targetPath, isDirectory });
+          shortcuts.push({ filename: entry, targetPath, isDirectory, linkKind: 'symlink' });
           continue;
         }
 
@@ -964,7 +972,7 @@ ipcMain.handle('get-shortcuts-in-directory', (event, dirPath) => {
               // Broken link — target doesn't exist; treat as file
               isDirectory = false;
             }
-            shortcuts.push({ filename: entry, targetPath, isDirectory });
+            shortcuts.push({ filename: entry, targetPath, isDirectory, linkKind: 'lnk' });
           } catch (_) {
             // shell.readShortcutLink can throw for invalid/corrupt .lnk files
           }
@@ -1271,12 +1279,28 @@ ipcMain.handle('get-cached-directory-entries', (event, dirPath) => {
       });
     }
 
-    // Files
+    // Files — plus links, which live in `files` under a synthetic `link:`
+    // inode because they never get a dirs row.
     for (const file of files) {
+      // A link that points at a directory has to render as a folder here too,
+      // or it changes shape when the background scan replaces this snapshot.
+      // Nothing in the row records the target's type, so resolve it: one stat
+      // per link, and links are rare.
+      const isLink = typeof file.inode === 'string' && file.inode.startsWith('link:');
+      let linkIsDirectory = false;
+      if (isLink) {
+        try {
+          linkIsDirectory = fsSync.statSync(path.join(normalizedPath, file.filename)).isDirectory();
+        } catch (_) {
+          // Broken link or unreachable target (AppExecLink) — render as a file
+        }
+      }
+
       entries.push({
         inode: file.inode,
         filename: file.filename,
-        isDirectory: false,
+        isDirectory: isLink ? linkIsDirectory : false,
+        isLink: isLink || undefined,
         size: file.size || 0,
         dateModified: file.dateModified || null,
         dateCreated: file.dateCreated || null,

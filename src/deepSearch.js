@@ -585,8 +585,11 @@ async function startDeepSearch(rootPath, query, onBatch, cancellationRef, option
 			// Track every filesystem path so we can compute orphans afterward.
 			visitedPaths.add(entry.path);
 
-			// Always enqueue subdirectories for BFS.
-			if (entry.isDirectory) queue.push(entry.path);
+			// Enqueue real subdirectories for BFS. Links are matched as results
+			// but never walked into — a junction's contents are already reached
+			// through the target's own path, and the profile root's legacy
+			// aliases point at each other, so following them loops.
+			if (entry.isDirectory && !entry.isLink) queue.push(entry.path);
 
 			// Already returned in Phase 1 — don't duplicate.
 			if (phase1Paths.has(entry.path)) continue;

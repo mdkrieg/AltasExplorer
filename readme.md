@@ -42,7 +42,7 @@ Philosophy:
 
 ### BUGS:
 
-[ ] selectable list attrs need a clear option
+[x] selectable list attrs need a clear option
 
 [ ] WOMM drag-out of app not working (need to hold Alt but still does nothing)
 
@@ -66,12 +66,14 @@ Philosophy:
 
 [-] When drag and dropping a file into a subfolder, leave the old file with a label (moved to [new location]) instead of refreshing the grid view.
 
-[ ] Do shortcuts not appear in the file grid? I feel like they should, perhaps this was a previous design choice but I am not liking it.
+[x] Do shortcuts not appear in the file grid? I feel like they should, perhaps this was a previous design choice but I am not liking it. --- shortcuts appear but symlinks do not is that correct?
 
 ### ROADMAP:
 [x] reminders sidebar should refresh slowly on its own, maybe once a minute
 
 [ ] ability to "pin" files to top of list view or gallery view
+
+[ ] dedicated context menu item for full history view - also consider if there's a way to make the target panel assignment more user friendly
 
 [test] Update search to inspect more than the filename, primarily tags, attributs and notes. Maybe even contents - configurable per file type? Also, have breadth-first recursion be default behavior
 

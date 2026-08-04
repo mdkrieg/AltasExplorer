@@ -4737,8 +4737,11 @@ hr {
   margin-right: 0;
   display: block;
 }
-/* Bottom-left badge showing external-link.svg */
-.lf-ext-link-badge {
+/* Bottom-left link badge: external-link.svg for .lnk shortcuts, link.svg for
+   filesystem symlinks/junctions. Separate classes so the outline-stroke chain
+   can be sized independently of the solid-fill arrow if it reads too faint. */
+.lf-ext-link-badge,
+.lf-link-badge {
   position: absolute;
   bottom: -2px;
   left: -2px;

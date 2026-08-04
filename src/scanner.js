@@ -120,6 +120,20 @@ function getMonitoringObservationDeadTimeMs() {
 }
 
 /**
+ * True for inodes this app synthesises rather than reads off the filesystem:
+ * `link:<filename>` for symlinks/junctions, `-1:<filename>` for entries that
+ * could not be stat'd.
+ *
+ * These encode a FILENAME, not filesystem identity, so the same string legally
+ * appears in many directories at once. Any lookup that treats an inode as a
+ * unique handle on one object — move detection above all — must skip them, or
+ * every same-named link reads as the same file having moved.
+ */
+function isSyntheticInode(inode) {
+  return typeof inode === 'string' && (inode.startsWith('link:') || inode.startsWith('-1:'));
+}
+
+/**
  * True when `p` exists on disk and is a symlink/junction. Used to tell "the
  * listing omits this on purpose" apart from "this is gone".
  */
@@ -358,6 +372,46 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         continue;
       }
 
+      // Links are listed but never traversed. They get a row in `files` (so
+      // they persist and don't re-report as 'new' every scan) under their
+      // synthetic path-stable inode, and nothing else: no dirs record even
+      // when they point at a directory, so no recursion, no child-dir
+      // bookkeeping, no checksum, no content extraction. Keeping them out of
+      // the dirs table is what stops a junction from being scanned as though
+      // it were a second copy of its target.
+      if (entry.isLink) {
+        const dbLink = dbFileMap.get(entry.inode);
+        let changeState = 'unchanged';
+        if (!dbLink) {
+          changeState = 'new';
+        } else if (dbLink.dateModified !== entry.dateModified) {
+          changeState = 'dateModified';
+        }
+
+        db.upsertFile({
+          inode: entry.inode,
+          dir_id: dirId,
+          filename: entry.filename,
+          dateModified: entry.dateModified,
+          dateCreated: entry.dateCreated,
+          size: 0,
+          mode: entry.mode ?? null
+        });
+
+        entriesWithChanges.push({
+          ...entry,
+          changeState,
+          dir_id: dirId,
+          perms: entry.perms || { read: false, write: false },
+          mode: entry.mode ?? null,
+          tags: (dbLink && dbLink.tags) ? dbLink.tags : null,
+          attributes: (dbLink && dbLink.attributes) ? dbLink.attributes : null
+        });
+
+        dbFileMap.delete(entry.inode);
+        continue;
+      }
+
       if (!entry.isDirectory) {
         const stalePermErrInode = `-1:${entry.filename}`;
         if (dbFileMap.has(stalePermErrInode)) {
@@ -450,7 +504,9 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
     // Used below to detect the sync-replace pattern: same filename, rotated inode.
     const newDiskEntriesByFilename = new Map();
     for (const e of entriesWithChanges) {
-      if (!e.isDirectory && e.changeState === 'new') {
+      // Links are excluded: a link that appears where a real file of the same
+      // name was deleted is a new link, not that file rotating its inode.
+      if (!e.isDirectory && !e.isLink && e.changeState === 'new') {
         newDiskEntriesByFilename.set(e.filename, e);
       }
     }
@@ -500,7 +556,14 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           continue;
         }
 
-        const movedFileRecord = db.findInodeInOtherDirectories(inode, dirId);
+        // Synthetic inodes encode a filename, so the same string exists in
+        // every directory that happens to hold a link (or an unreadable entry)
+        // by that name — `link:Desktop` is not one object that moved. Skipping
+        // the lookup drops through to the orphan branch below, which is the
+        // right answer: the link really is gone from THIS directory.
+        const movedFileRecord = isSyntheticInode(inode)
+          ? null
+          : db.findInodeInOtherDirectories(inode, dirId);
 
         if (movedFileRecord) {
           const newDirId = movedFileRecord.dir_id_match;
@@ -562,11 +625,11 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         const _cdRow = db.getDirById(childDir.id);
         if (!_cdRow || _cdRow.deleted_at) continue;
 
-        // A link is absent from `entries` because readDirectory deliberately
-        // omits links, not because it is gone. Orphaning it would report a
-        // directory as missing while it is sitting right there on disk. Rows
-        // for links exist only when the user navigated straight into one (via
-        // LOCAL FAVORITES, which does list them).
+        // A link never gets a dirs row from a scan any more, but rows survive
+        // from before that rule and from navigating straight into one. Such a
+        // row has no matching `entries` item — links are tracked in `files`
+        // now — so orphaning it would report a directory as missing while it
+        // is sitting right there on disk.
         if (isExistingLink(childDir.dirname)) continue;
 
         const movedDirRecord = db.findDirectoryInOtherParents(childDir.inode, dirId);
@@ -695,6 +758,15 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       if (entry.changeState === 'permError') continue;
       if (entry.changeState === 'moved' || entry.changeState === 'orphan') continue;
       if (entry.changeState === 'fileReplaced') continue;
+
+      // Links were already persisted by the entry loop above and need nothing
+      // from either branch below. The file branch would queue checksum and
+      // content work against a link; the directory branch would write a
+      // dot-entry row keyed on (inode, dir_id) — and because a link carries its
+      // PARENT's dir_id (it has no dirs row of its own), that upsert lands on
+      // the link's own row and renames it to '.', hiding it from every query
+      // that filters the dot entry out.
+      if (entry.isLink) continue;
 
       if (!entry.isDirectory) {
         const dbFile = existingDbFiles.find(f => f.inode === entry.inode);

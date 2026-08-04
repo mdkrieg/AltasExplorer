@@ -30,7 +30,7 @@ const FilesystemService = require('../filesystem');
  * The readDirectory() method should:
  * - Call fs.readdirSync() to list directory contents
  * - Call fs.lstatSync() for each entry to get file metadata
- * - Skip symlinks and Windows junctions entirely
+ * - List symlinks and junctions, but under a synthetic path-stable inode
  * - Separate folders from files
  * - Return folders first, then files
  *
@@ -183,7 +183,7 @@ describe('FilesystemService - readDirectory()', () => {
   });
 
   /**
-   * TEST: Should omit symlinks and Windows junctions
+   * TEST: Should list symlinks/junctions under a synthetic inode
    *
    * REAL-WORLD SCENARIO: a Windows user profile contains hidden legacy
    * junctions (`My Documents` → `Documents`, `Application Data` → `AppData\Roaming`).
@@ -191,11 +191,13 @@ describe('FilesystemService - readDirectory()', () => {
    * scanner treat the junction and its target as the same directory and rename
    * the DB row back and forth on every pass.
    *
-   * readDirectory must drop them before any of that can happen. Note the
-   * junction below shares real.ino with its target: that collision is the whole
-   * point, and the only thing distinguishing the two is isSymbolicLink().
+   * The fix is NOT to hide the junction — it is a real directory entry and the
+   * grid has to agree with the filesystem. The fix is to stop identifying it by
+   * that inode. Note the junction below shares its target's ino: that collision
+   * is the whole point, and `link:<filename>` is what makes the two rows
+   * distinguishable again.
    */
-  it('should omit symlinks and junctions from the listing', () => {
+  it('should list symlinks and junctions under a synthetic inode', () => {
     const testPath = '/test/directory';
 
     fs.readdirSync.mockReturnValue(['Documents', 'My Documents', 'notes.txt']);
@@ -232,13 +234,69 @@ describe('FilesystemService - readDirectory()', () => {
       };
     });
 
+    // statSync FOLLOWS the link — this is how the junction learns it should
+    // render as a folder.
+    fs.statSync.mockImplementation(() => ({ isDirectory: () => true }));
+
     const result = FilesystemService.readDirectory(testPath);
 
-    // The junction is gone; the real folder and the file remain
-    expect(result.map(r => r.filename)).toEqual(['Documents', 'notes.txt']);
+    // All three are listed, junction sorted with the folders
+    expect(result.map(r => r.filename)).toEqual(['Documents', 'My Documents', 'notes.txt']);
 
-    // And it is NOT reported as a permission error either — it is simply absent
+    const junction = result.find(r => r.filename === 'My Documents');
+    expect(junction.isLink).toBe(true);
+    expect(junction.isDirectory).toBe(true);
+    expect(junction.linkTargetReachable).toBe(true);
+
+    // Identity comes from the path, never from the colliding inode
+    expect(junction.inode).toBe('link:My Documents');
+    expect(junction.inode).not.toBe('4242');
+
+    // The real target keeps its real inode, so the two can no longer be confused
+    const real = result.find(r => r.filename === 'Documents');
+    expect(real.inode).toBe('4242');
+    expect(real.isLink).toBeUndefined();
+
+    // A link is not a permission error — it is a listed entry
     expect(result.some(r => r.permError)).toBe(false);
+  });
+
+  /**
+   * TEST: Should list a link whose target cannot be reached
+   *
+   * REAL-WORLD SCENARIO: the AppExecLink stubs in
+   * %LOCALAPPDATA%\Microsoft\WindowsApps (thunderbird.exe, python.exe, …).
+   * Node reports them as symlinks, but statSync throws EACCES because the
+   * target lives in the protected WindowsApps store directory. Explorer lists
+   * them, and so must we — "the user can reach it by its real path", the
+   * argument for hiding aliases, is precisely false here.
+   */
+  it('should list a link whose target is unreachable', () => {
+    const testPath = '/test/directory';
+
+    fs.readdirSync.mockReturnValue(['thunderbird.exe']);
+    fs.lstatSync.mockReturnValue({
+      ino: 99,
+      isDirectory: () => false,
+      isSymbolicLink: () => true,
+      size: 0,
+      mtime: new Date('2026-01-01'),
+      birthtime: new Date('2025-12-01')
+    });
+    fs.statSync.mockImplementation(() => {
+      const err = new Error('EACCES: permission denied');
+      err.code = 'EACCES';
+      throw err;
+    });
+
+    const result = FilesystemService.readDirectory(testPath);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].filename).toBe('thunderbird.exe');
+    expect(result[0].isLink).toBe(true);
+    expect(result[0].linkTargetReachable).toBe(false);
+    expect(result[0].isDirectory).toBe(false);
+    expect(result[0].permError).toBe(false);
   });
 });
 
