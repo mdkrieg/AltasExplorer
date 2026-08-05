@@ -64,15 +64,39 @@ class FilesystemService {
     const cached = this._attrCache.get(dirPath);
     if (cached && (Date.now() - cached.at) < this.ATTR_CACHE_TTL) return cached;
 
+    // `dir` is a cmd builtin, so this necessarily goes through cmd's parser.
+    // Two ways to hand it the directory, and neither is right for both cases:
+    //
+    //   cwd form      — the path is passed to CreateProcess as a parameter, so
+    //                   cmd's parser never sees it and there is nothing to
+    //                   escape. Correct for every legal directory name.
+    //                   BUT cmd refuses a UNC working directory: it prints
+    //                   "UNC paths are not supported. Defaulting to Windows
+    //                   directory." and then lists C:\Windows — a silently
+    //                   WRONG answer rather than an error.
+    //
+    //   argument form — works for UNC, but the path goes through cmd, which
+    //                   expands %VAR% first. A directory legitimately named
+    //                   "Build %VERSION%" then resolves to something else and
+    //                   quietly reports no attributes at all.
+    //
+    // So: cwd for local paths, argument for UNC. Injection is not the concern
+    // that decides this — `"` `<` `>` `|` `:` `*` `?` are all illegal in NTFS
+    // names, so a real path cannot close the quote in the argument form — but
+    // the cwd form removes the question entirely everywhere it can be used.
+    const isUnc = dirPath.startsWith('\\\\');
     const query = (spec) => {
       try {
-        const out = execSync(`dir /A:${spec} /B "${dirPath}"`, {
+        const opts = {
           encoding: 'utf8',
           timeout: 10000,
           windowsHide: true,
           maxBuffer: 32 * 1024 * 1024,
           stdio: ['ignore', 'pipe', 'ignore']
-        });
+        };
+        const out = isUnc
+          ? execSync(`dir /A:${spec} /B "${dirPath}"`, opts)
+          : execSync(`dir /A:${spec} /B`, { ...opts, cwd: dirPath });
         return new Set(out.split(/\r?\n/).map(s => s.trim()).filter(Boolean));
       } catch (_) {
         // `dir` exits non-zero with "File Not Found" when nothing matches the
