@@ -370,7 +370,20 @@ class CategoryService {
         settings.show_folder_name_with_dot_entries = false;
       }
       if (typeof settings.pin_meta_dirs === 'undefined') {
-        settings.pin_meta_dirs = false;
+        settings.pin_meta_dirs = true;
+      }
+      // Listing filters. Defaults mirror Windows Explorer's out-of-the-box
+      // behaviour: hidden and system entries are not shown. Links are hidden
+      // too — they are surfaced in LOCAL FAVORITES instead, which is where a
+      // link is useful without it competing with the real filesystem entry.
+      if (typeof settings.show_hidden_entries === 'undefined') {
+        settings.show_hidden_entries = false;
+      }
+      if (typeof settings.show_system_entries === 'undefined') {
+        settings.show_system_entries = false;
+      }
+      if (typeof settings.show_links_in_grid === 'undefined') {
+        settings.show_links_in_grid = false;
       }
       if (typeof settings.record_height === 'undefined') {
         settings.record_height = 30;

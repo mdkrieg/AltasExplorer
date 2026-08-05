@@ -941,14 +941,33 @@ ipcMain.handle('get-shortcuts-in-directory', (event, dirPath) => {
           // NOTE: resolving symlink to absolute path for in-app use.
           // Future work: when writing shortcuts back, guard against overwriting
           // relative symlinks with absolute paths.
-          targetPath = nativeFs.realpathSync(fullPath);
+          //
+          // realpathSync throws for a BROKEN link, and letting that reach the
+          // outer catch would drop the entry entirely — so a link whose target
+          // is gone would appear nowhere in the app once the grid stops
+          // listing links. `My Documents\My Pictures` is already in that state
+          // on a machine where Pictures was redirected to OneDrive. Fall back
+          // to the raw reparse target so it still surfaces, flagged broken.
+          let broken = false;
           try {
-            isDirectory = nativeFs.statSync(targetPath).isDirectory();
+            targetPath = nativeFs.realpathSync(fullPath);
           } catch (_) {
-            // Broken symlink — target doesn't exist; treat as file
-            isDirectory = false;
+            broken = true;
+            try {
+              targetPath = nativeFs.readlinkSync(fullPath);
+            } catch (_) {
+              targetPath = null;
+            }
           }
-          shortcuts.push({ filename: entry, targetPath, isDirectory, linkKind: 'symlink' });
+          if (targetPath) {
+            try {
+              isDirectory = nativeFs.statSync(targetPath).isDirectory();
+            } catch (_) {
+              // Broken symlink — target doesn't exist; treat as file
+              isDirectory = false;
+            }
+          }
+          shortcuts.push({ filename: entry, targetPath, isDirectory, linkKind: 'symlink', broken });
           continue;
         }
 
@@ -1276,6 +1295,9 @@ ipcMain.handle('get-cached-directory-entries', (event, dirPath) => {
         tags: db.getTagsForDirectoryId(child.id),
         perms: { read: true, write: true },
         mode: null,
+        attrs: child.attrs ?? null,
+        isHidden: child.attrs != null ? !!(child.attrs & 1) : false,
+        isSystem: child.attrs != null ? !!(child.attrs & 2) : false,
       });
     }
 
@@ -1312,6 +1334,9 @@ ipcMain.handle('get-cached-directory-entries', (event, dirPath) => {
         tags: file.tags || null,
         mode: file.mode ?? null,
         perms: { read: true, write: true },
+        attrs: file.attrs ?? null,
+        isHidden: file.attrs != null ? !!(file.attrs & 1) : false,
+        isSystem: file.attrs != null ? !!(file.attrs & 2) : false,
       });
     }
 

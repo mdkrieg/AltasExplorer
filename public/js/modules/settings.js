@@ -266,6 +266,9 @@ export async function initializeBrowserSettingsForm() {
 	const hideDotDotDirectory = settings.hide_dot_dot_directory || false;
 	const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
 	const pinMetaDirs = settings.pin_meta_dirs || false;
+	const showHiddenEntries = settings.show_hidden_entries || false;
+	const showSystemEntries = settings.show_system_entries || false;
+	const showLinksInGrid = settings.show_links_in_grid || false;
 	const recordHeight = settings.record_height || 30;
 	const backgroundRefreshEnabled = settings.background_refresh_enabled || false;
 	const backgroundRefreshInterval = settings.background_refresh_interval || 30;
@@ -282,6 +285,9 @@ export async function initializeBrowserSettingsForm() {
 	$('#browser-hide-dot-dot-directory').prop('checked', hideDotDotDirectory);
 	$('#browser-show-folder-name-with-dot-entries').prop('checked', showFolderNameWithDotEntries);
 	$('#browser-pin-meta-dirs').prop('checked', pinMetaDirs);
+	$('#browser-show-hidden-entries').prop('checked', showHiddenEntries);
+	$('#browser-show-system-entries').prop('checked', showSystemEntries);
+	$('#browser-show-links-in-grid').prop('checked', showLinksInGrid);
 	$('#browser-record-height').val(recordHeight);
 	$('#browser-background-refresh-enabled').prop('checked', backgroundRefreshEnabled);
 	$('#browser-background-refresh-interval').val(backgroundRefreshInterval).prop('disabled', !backgroundRefreshEnabled);
@@ -333,6 +339,9 @@ async function saveBrowserSettings() {
 		const hideDotDotDirectory = $('#browser-hide-dot-dot-directory').is(':checked');
 		const showFolderNameWithDotEntries = $('#browser-show-folder-name-with-dot-entries').is(':checked');
 		const pinMetaDirs = $('#browser-pin-meta-dirs').is(':checked');
+		const showHiddenEntries = $('#browser-show-hidden-entries').is(':checked');
+		const showSystemEntries = $('#browser-show-system-entries').is(':checked');
+		const showLinksInGrid = $('#browser-show-links-in-grid').is(':checked');
 		let recordHeight = parseInt($('#browser-record-height').val() || '30');
 		const backgroundRefreshEnabled = $('#browser-background-refresh-enabled').is(':checked');
 		let backgroundRefreshInterval = parseInt($('#browser-background-refresh-interval').val() || '30');
@@ -395,6 +404,9 @@ async function saveBrowserSettings() {
 		settings.background_refresh_interval = backgroundRefreshInterval;
 		settings.show_folder_name_with_dot_entries = showFolderNameWithDotEntries;
 		settings.pin_meta_dirs = pinMetaDirs;
+		settings.show_hidden_entries = showHiddenEntries;
+		settings.show_system_entries = showSystemEntries;
+		settings.show_links_in_grid = showLinksInGrid;
 		settings.checksum_max_concurrent = checksumMaxConcurrent;
 		settings.deep_search_max_concurrent = deepSearchMaxConcurrent;
 		settings.deep_search_size_cap_mb = deepSearchSizeCapMb;
@@ -408,6 +420,15 @@ async function saveBrowserSettings() {
 		}
 
 		await updateHomeDirectoryWarning(homeDirectory);
+
+		// The listing filters (hidden / system / links) and the meta-dir pinning
+		// are applied while records are BUILT, so every cached directory is now
+		// holding records built under the old settings. Drop the lot, then
+		// re-render the open panels so the change is visible immediately rather
+		// than on the next navigation.
+		panels.invalidateAllRecordsCache();
+		await panels.refreshAllPanels();
+
 		panels.applyRecordHeightToAllGrids(recordHeight);
 
 		showFormSuccess('browser-settings-status', 'Settings saved.');

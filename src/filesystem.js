@@ -25,18 +25,76 @@ function checkAccess(fullPath) {
   return { read, write };
 }
 
+// Attribute bits stored on files.attrs / dirs.attrs.
+const ATTR_HIDDEN = 1;
+const ATTR_SYSTEM = 2;
+
 class FilesystemService {
   constructor() {
     this.driveCache = [];
     this.driveCacheExpiry = 0;
     this.CACHE_TTL = 60000; // 60 seconds in milliseconds
     this.DRIVE_CHECK_TIMEOUT = 500; // 500ms timeout per drive
+    this._attrCache = new Map(); // dirPath → { hidden:Set, system:Set, at:number }
+    this.ATTR_CACHE_TTL = 5000;
   }
 
   /**
-   * Read directory contents and return file/folder info with inode and stats
+   * Windows hidden/system attributes for one directory's entries.
+   * Returns { hidden:Set<string>, system:Set<string> }, or null off Windows.
+   *
+   * Node exposes no Windows file attributes at all — `lstat().mode` and
+   * `accessSync` return identical results for a hidden+system junction and a
+   * plain one — so this has to come from outside.
+   *
+   * It must be `dir`, not `attrib`. `attrib` opens each entry, so every
+   * deny-listed legacy junction (`My Documents`, `Recent`, `My Music`, …)
+   * is silently omitted or misreported — measured: it found 3 of the 10
+   * junctions in the profile root and 0 of the 3 in Documents. `dir` reads
+   * attributes straight out of the directory entry via FindFirstFile and gets
+   * all of them right.
+   *
+   * Costs roughly 90ms per directory (two process spawns), which is why this
+   * is opt-in per call and cached: the scan path asks for it, deep search —
+   * which walks thousands of directories — does not.
    */
-  readDirectory(dirPath, ignoreFilenames = []) {
+  readWindowsAttributes(dirPath) {
+    if (process.platform !== 'win32') return null;
+
+    const cached = this._attrCache.get(dirPath);
+    if (cached && (Date.now() - cached.at) < this.ATTR_CACHE_TTL) return cached;
+
+    const query = (spec) => {
+      try {
+        const out = execSync(`dir /A:${spec} /B "${dirPath}"`, {
+          encoding: 'utf8',
+          timeout: 10000,
+          windowsHide: true,
+          maxBuffer: 32 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'ignore']
+        });
+        return new Set(out.split(/\r?\n/).map(s => s.trim()).filter(Boolean));
+      } catch (_) {
+        // `dir` exits non-zero with "File Not Found" when nothing matches the
+        // attribute filter, which is the common case — not an error.
+        return new Set();
+      }
+    };
+
+    const result = { hidden: query('H'), system: query('S'), at: Date.now() };
+    this._attrCache.set(dirPath, result);
+    return result;
+  }
+
+  /**
+   * Read directory contents and return file/folder info with inode and stats.
+   *
+   * options.withAttributes — additionally resolve Windows hidden/system flags
+   * onto each entry (`isHidden`, `isSystem`, `attrs` bitmask). Off by default
+   * because it costs two process spawns per directory; see
+   * readWindowsAttributes.
+   */
+  readDirectory(dirPath, ignoreFilenames = [], options = {}) {
     // Validate path before proceeding
     if (!dirPath || typeof dirPath !== 'string') {
       logger.error(`readDirectory: Invalid path type - received ${typeof dirPath}`);
@@ -52,6 +110,18 @@ class FilesystemService {
     const entries = fs.readdirSync(normalizedPath);
     const files = [];
     const folders = [];
+
+    const winAttrs = options.withAttributes ? this.readWindowsAttributes(normalizedPath) : null;
+    const attrsFor = (name) => {
+      if (!winAttrs) return null;
+      const isHidden = winAttrs.hidden.has(name);
+      const isSystem = winAttrs.system.has(name);
+      return {
+        isHidden,
+        isSystem,
+        attrs: (isHidden ? ATTR_HIDDEN : 0) | (isSystem ? ATTR_SYSTEM : 0)
+      };
+    };
 
     for (const entry of entries) {
       if (ignoreFilenames.includes(entry)) continue;
@@ -110,7 +180,8 @@ class FilesystemService {
             path: fullPath,
             mode: stats.mode,
             perms,
-            permError: false
+            permError: false,
+            ...(attrsFor(entry) || {})
           };
 
           // Sorted with folders when it points at one, so a junction sits
@@ -135,7 +206,8 @@ class FilesystemService {
           path: fullPath,
           mode: stats.mode,
           perms,
-          permError: false
+          permError: false,
+          ...(attrsFor(entry) || {})
         };
 
         if (stats.isDirectory()) {
@@ -495,3 +567,5 @@ class FilesystemService {
 }
 
 module.exports = new FilesystemService();
+module.exports.ATTR_HIDDEN = ATTR_HIDDEN;
+module.exports.ATTR_SYSTEM = ATTR_SYSTEM;

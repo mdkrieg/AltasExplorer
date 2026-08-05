@@ -508,6 +508,29 @@
                 </label>
                 <span style="color: #666; font-size: 12px;">When enabled, "." and ".." always appear at the top for
                   ascending sorts and at the bottom for descending sorts.</span>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input id="browser-show-hidden-entries" type="checkbox"
+                    style="width: 18px; height: 18px; cursor: pointer;">
+                  <span style="font-size: 12px;">Show hidden files and folders</span>
+                </label>
+                <span style="color: #666; font-size: 12px;">Mirrors Explorer's "Show hidden files, folders, and
+                  drives". Off by default, as in Explorer.</span>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input id="browser-show-system-entries" type="checkbox"
+                    style="width: 18px; height: 18px; cursor: pointer;">
+                  <span style="font-size: 12px;">Show protected operating system files</span>
+                </label>
+                <span style="color: #666; font-size: 12px;">Mirrors Explorer's "Hide protected operating system files"
+                  (inverted). Note that in Explorer BOTH this and the hidden setting must be on before hidden+system
+                  items such as "My Documents" appear.</span>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input id="browser-show-links-in-grid" type="checkbox"
+                    style="width: 18px; height: 18px; cursor: pointer;">
+                  <span style="font-size: 12px;">Show symlinks and junctions in the file grid</span>
+                </label>
+                <span style="color: #666; font-size: 12px;">Off by default. Links are always listed in LOCAL FAVORITES
+                  regardless of this setting. Does not affect .lnk shortcuts, which are ordinary files and always
+                  shown.</span>
               </div>
               <div style="display: flex; flex-direction: column; gap: 10px;">
                 <div style="font-weight: bold; font-size: 13px;">Window Title</div>

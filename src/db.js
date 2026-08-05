@@ -357,6 +357,21 @@ class DatabaseService {
       this.db.exec('ALTER TABLE files ADD COLUMN attributes TEXT');
     }
 
+    // Runtime migration: Windows hidden/system attribute bits (1=hidden,
+    // 2=system). NULL means "not yet determined" and is deliberately distinct
+    // from 0 ("determined, neither bit set") — the show-hidden/show-system
+    // filters must not hide rows scanned before this column existed.
+    // Directories carry their own bits because the cached render builds child
+    // folders from `dirs`, not from `files`.
+    const hasAttrsCol = fileCols.some(col => col.name === 'attrs');
+    if (!hasAttrsCol) {
+      this.db.exec('ALTER TABLE files ADD COLUMN attrs INTEGER');
+    }
+    const hasDirAttrsCol = dirCols.some(col => col.name === 'attrs');
+    if (!hasDirAttrsCol) {
+      this.db.exec('ALTER TABLE dirs ADD COLUMN attrs INTEGER');
+    }
+
     const fileHistoryCols = this.db.prepare('PRAGMA table_info(file_history)').all();
     const hasDirHistoryIdCol = fileHistoryCols.some(col => col.name === 'dir_history_id');
     if (!hasDirHistoryIdCol) {
@@ -834,15 +849,18 @@ class DatabaseService {
    */
   upsertFile(fileData) {
     const stmt = this.db.prepare(`
-      INSERT INTO files (inode, dir_id, filename, dateModified, dateCreated, size, mode, tags)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO files (inode, dir_id, filename, dateModified, dateCreated, size, mode, tags, attrs)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(inode, dir_id) DO UPDATE SET
         filename = excluded.filename,
         dateModified = excluded.dateModified,
         dateCreated = excluded.dateCreated,
         size = excluded.size,
         mode = excluded.mode,
-        tags = CASE WHEN excluded.tags IS NOT NULL THEN excluded.tags ELSE tags END
+        tags = CASE WHEN excluded.tags IS NOT NULL THEN excluded.tags ELSE tags END,
+        -- Keep the last known bits when a caller omits them (the dot-entry
+        -- write and the checksum path both do), rather than blanking them.
+        attrs = CASE WHEN excluded.attrs IS NOT NULL THEN excluded.attrs ELSE attrs END
     `);
 
     return stmt.run(
@@ -853,8 +871,20 @@ class DatabaseService {
       fileData.dateCreated || null,
       fileData.size || 0,
       fileData.mode ?? null,
-      fileData.tags || null
+      fileData.tags || null,
+      fileData.attrs ?? null
     );
+  }
+
+  /**
+   * Store the Windows hidden/system bits for a directory's own `dirs` row.
+   * Separate from upsertDirectory because the bits are discovered while
+   * scanning the PARENT (that is the listing they belong to), long after the
+   * dirs row itself was created.
+   */
+  setDirectoryAttrs(dirPath, attrs) {
+    if (attrs === null || typeof attrs === 'undefined') return;
+    this.db.prepare('UPDATE dirs SET attrs = ? WHERE dirname = ?').run(attrs, dirPath);
   }
 
   /**

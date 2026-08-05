@@ -150,6 +150,17 @@ function _rcInvalidateSubtree(path) {
 export function invalidateRecordsCache(path) { _rcInvalidate(path); }
 export function invalidateRecordsCacheSubtree(path) { _rcInvalidateSubtree(path); }
 
+/**
+ * Drop every cached directory. Needed when something changes how records are
+ * BUILT rather than what is on disk — a settings change, for instance.
+ *
+ * This cache stores finished records, so a path-scoped invalidation is not
+ * enough: the listing filters (show hidden / system / links) are applied when
+ * records are built, and every already-cached directory would keep replaying
+ * records built under the old settings.
+ */
+export function invalidateAllRecordsCache() { _recordsCache.clear(); }
+
 const closedPanelStack = [];
 const selectionAnchorRecids = {};
 
@@ -6600,6 +6611,34 @@ function showColumnContextMenuForPanel(panelId, field, mouseEvent) {
 	showCustomContextMenu(items, mouseEvent.clientX, mouseEvent.clientY, panelId);
 }
 
+/**
+ * Drop entries the listing settings say not to show.
+ *
+ * Applied at render time, not scan time, so toggling a setting re-renders
+ * without a rescan and the rows stay in the database either way.
+ *
+ * `isHidden` / `isSystem` are only meaningful once a directory has been scanned
+ * by a build that records them; rows from before that carry `attrs === null`
+ * and are deliberately treated as visible. Hiding them instead would make
+ * files vanish from directories that simply haven't been rescanned yet.
+ *
+ * `.` and `..` are never filtered — they are navigation, not content.
+ */
+function applyListingFilters(entries, settings) {
+	const showHidden = settings.show_hidden_entries || false;
+	const showSystem = settings.show_system_entries || false;
+	const showLinks = settings.show_links_in_grid || false;
+	if (showHidden && showSystem && showLinks) return entries;
+
+	return entries.filter(e => {
+		if (e.filename === '.' || e.filename === '..') return true;
+		if (!showLinks && e.isLink) return false;
+		if (!showHidden && e.isHidden) return false;
+		if (!showSystem && e.isSystem) return false;
+		return true;
+	});
+}
+
 async function populateFileGrid(entries, currentDirCategory, panelId = activePanelId) {
 	const state = panelState[panelId];
 	const cachePath = state.currentPath; // capture before any awaits
@@ -6617,9 +6656,9 @@ async function populateFileGrid(entries, currentDirCategory, panelId = activePan
 	state.pinMetaDirs = pinMetaDirs;
 	const currentFolderName = state.currentPath.split(/[\\\/]/).filter(p => p).pop() || state.currentPath;
 
-	let filteredEntries = entries;
+	let filteredEntries = applyListingFilters(entries, settings);
 	if (hideDotDirectory) {
-		filteredEntries = entries.filter(e => e.filename !== '.');
+		filteredEntries = filteredEntries.filter(e => e.filename !== '.');
 	} else if (showFolderNameWithDotEntries) {
 		filteredEntries = filteredEntries.map(e => {
 			if (e.filename === '.') {
@@ -6907,9 +6946,9 @@ async function buildViewRecords(entries, currentDirCategory, panelId) {
 	const showFolderNameWithDotEntries = settings.show_folder_name_with_dot_entries || false;
 	const currentFolderName = state.currentPath.split(/[\\\/]/).filter(p => p).pop() || state.currentPath;
 
-	let filteredEntries = entries;
+	let filteredEntries = applyListingFilters(entries, settings);
 	if (hideDotDirectory) {
-		filteredEntries = entries.filter(e => e.filename !== '.');
+		filteredEntries = filteredEntries.filter(e => e.filename !== '.');
 	} else if (showFolderNameWithDotEntries) {
 		filteredEntries = filteredEntries.map(e => {
 			if (e.filename === '.') return { ...e, displayFilename: `. (${currentFolderName})` };
@@ -9116,6 +9155,25 @@ export function attachPanelEventListeners(panelId) {
 			$panel.find('.item-props-notes').show();
 		});
 
+	}
+}
+
+/**
+ * Re-render every open panel from its current path.
+ *
+ * For changes that affect how records are built rather than what is on disk —
+ * the listing filters, meta-dir pinning. Pair with invalidateAllRecordsCache(),
+ * or each panel will just replay the records it already had.
+ */
+export async function refreshAllPanels() {
+	for (let panelId = 1; panelId <= 4; panelId++) {
+		const currentPath = panelState[panelId]?.currentPath;
+		if (!currentPath) continue;
+		try {
+			await navigateToDirectory(currentPath, panelId, false, true, true);
+		} catch (err) {
+			console.warn(`[settings] Could not refresh panel ${panelId}:`, err?.message || err);
+		}
 	}
 }
 
