@@ -1254,6 +1254,16 @@ ipcMain.handle('get-cached-directory-entries', (event, dirPath) => {
     const category = categories.getCategoryForDirectory(normalizedPath);
     const categoryName = category ? category.name : 'Default';
 
+    // One FindFirstFileW pass (~1.5ms) rather than reading persisted bits. This
+    // is the "no filesystem scan" path, but at this cost it is far below the
+    // IPC round-trip it rides on, and it keeps the cached render's filtering
+    // identical to the scan's instead of depending on when a row was written.
+    const winAttrs = fs.readWindowsAttributes(normalizedPath);
+    const attrsFor = (name) => {
+      const a = winAttrs ? winAttrs.get(name) : null;
+      return { isHidden: !!(a && a.hidden), isSystem: !!(a && a.system) };
+    };
+
     const entries = [];
 
     // "." — current directory self-entry (stores its own mtime)
@@ -1295,9 +1305,7 @@ ipcMain.handle('get-cached-directory-entries', (event, dirPath) => {
         tags: db.getTagsForDirectoryId(child.id),
         perms: { read: true, write: true },
         mode: null,
-        attrs: child.attrs ?? null,
-        isHidden: child.attrs != null ? !!(child.attrs & 1) : false,
-        isSystem: child.attrs != null ? !!(child.attrs & 2) : false,
+        ...attrsFor(childName),
       });
     }
 
@@ -1334,9 +1342,7 @@ ipcMain.handle('get-cached-directory-entries', (event, dirPath) => {
         tags: file.tags || null,
         mode: file.mode ?? null,
         perms: { read: true, write: true },
-        attrs: file.attrs ?? null,
-        isHidden: file.attrs != null ? !!(file.attrs & 1) : false,
-        isSystem: file.attrs != null ? !!(file.attrs & 2) : false,
+        ...attrsFor(file.filename),
       });
     }
 

@@ -25,9 +25,73 @@ function checkAccess(fullPath) {
   return { read, write };
 }
 
-// Attribute bits stored on files.attrs / dirs.attrs.
-const ATTR_HIDDEN = 1;
-const ATTR_SYSTEM = 2;
+// ---------------------------------------------------------------------------
+// Windows file attributes
+//
+// Node exposes none of them. The bits are read by the syscall and dropped
+// before they reach JavaScript: libuv's uv_dirent_s carries only { name, type },
+// and while uv_stat_t does have an st_flags field that libuv populates on
+// Windows, Node's binding copies a fixed subset of fields into fs.Stats and
+// st_flags is not among them. So this has to come from the Win32 API directly.
+//
+// FindFirstFileW/FindNextFileW is the same API `dir` uses internally, which
+// matters: it reads attributes out of the directory entry without opening each
+// file. Anything that opens by path — `attrib`, and GetFileAttributesW called
+// per entry — is either wrong or slow here. `attrib` silently missed 7 of the
+// 10 deny-listed junctions in the profile root and all 3 in Documents, because
+// they carry an Everyone:(DENY)(RD) ACE.
+//
+// Measured, per directory: 1.5ms for 42 entries, 22ms for System32's 4710.
+// The `dir` shell-out this replaced cost ~90ms regardless of size, and a
+// per-entry GetFileAttributesW loop cost 198ms for System32.
+// ---------------------------------------------------------------------------
+const FILE_ATTRIBUTE_HIDDEN = 0x2;
+const FILE_ATTRIBUTE_SYSTEM = 0x4;
+
+// Lazily initialised so a koffi load failure degrades to "no attributes known"
+// instead of taking down app startup. Attributes are an enhancement; every
+// consumer treats "unknown" as visible.
+let _win32 = undefined; // undefined = not tried, null = unavailable
+
+function getWin32Bindings() {
+  if (_win32 !== undefined) return _win32;
+  if (process.platform !== 'win32') {
+    _win32 = null;
+    return _win32;
+  }
+  try {
+    const koffi = require('koffi');
+    const kernel32 = koffi.load('kernel32.dll');
+
+    const FILETIME = koffi.struct('AE_FILETIME', {
+      dwLowDateTime: 'uint32',
+      dwHighDateTime: 'uint32'
+    });
+    const FIND_DATA = koffi.struct('AE_WIN32_FIND_DATAW', {
+      dwFileAttributes: 'uint32',
+      ftCreationTime: FILETIME,
+      ftLastAccessTime: FILETIME,
+      ftLastWriteTime: FILETIME,
+      nFileSizeHigh: 'uint32',
+      nFileSizeLow: 'uint32',
+      dwReserved0: 'uint32',
+      dwReserved1: 'uint32',
+      cFileName: koffi.array('char16', 260, 'String'),
+      cAlternateFileName: koffi.array('char16', 14, 'String')
+    });
+
+    _win32 = {
+      koffi,
+      FindFirstFileW: kernel32.func('void* __stdcall FindFirstFileW(str16 lpFileName, _Out_ AE_WIN32_FIND_DATAW *lpFindFileData)'),
+      FindNextFileW: kernel32.func('bool __stdcall FindNextFileW(void* hFindFile, _Out_ AE_WIN32_FIND_DATAW *lpFindFileData)'),
+      FindClose: kernel32.func('bool __stdcall FindClose(void* hFindFile)')
+    };
+  } catch (err) {
+    logger.warn('Windows attribute lookup unavailable (koffi failed to load):', err.message);
+    _win32 = null;
+  }
+  return _win32;
+}
 
 class FilesystemService {
   constructor() {
@@ -35,90 +99,65 @@ class FilesystemService {
     this.driveCacheExpiry = 0;
     this.CACHE_TTL = 60000; // 60 seconds in milliseconds
     this.DRIVE_CHECK_TIMEOUT = 500; // 500ms timeout per drive
-    this._attrCache = new Map(); // dirPath → { hidden:Set, system:Set, at:number }
-    this.ATTR_CACHE_TTL = 5000;
   }
 
   /**
-   * Windows hidden/system attributes for one directory's entries.
-   * Returns { hidden:Set<string>, system:Set<string> }, or null off Windows.
+   * Windows hidden/system attributes for every entry in one directory.
    *
-   * Node exposes no Windows file attributes at all — `lstat().mode` and
-   * `accessSync` return identical results for a hidden+system junction and a
-   * plain one — so this has to come from outside.
+   * Returns a Map of filename → { hidden, system }, or null when attributes
+   * cannot be determined (non-Windows, or koffi unavailable). Callers must
+   * treat null and "absent from the map" as "not hidden, not system" — an
+   * unknown attribute must never hide a file.
    *
-   * It must be `dir`, not `attrib`. `attrib` opens each entry, so every
-   * deny-listed legacy junction (`My Documents`, `Recent`, `My Music`, …)
-   * is silently omitted or misreported — measured: it found 3 of the 10
-   * junctions in the profile root and 0 of the 3 in Documents. `dir` reads
-   * attributes straight out of the directory entry via FindFirstFile and gets
-   * all of them right.
-   *
-   * Costs roughly 90ms per directory (two process spawns), which is why this
-   * is opt-in per call and cached: the scan path asks for it, deep search —
-   * which walks thousands of directories — does not.
+   * See the block comment above for why this is FindFirstFileW rather than
+   * `attrib`, `dir`, or a per-entry GetFileAttributesW loop.
    */
   readWindowsAttributes(dirPath) {
-    if (process.platform !== 'win32') return null;
+    const win32 = getWin32Bindings();
+    if (!win32) return null;
 
-    const cached = this._attrCache.get(dirPath);
-    if (cached && (Date.now() - cached.at) < this.ATTR_CACHE_TTL) return cached;
+    const { koffi, FindFirstFileW, FindNextFileW, FindClose } = win32;
+    const out = new Map();
+    let handle = null;
 
-    // `dir` is a cmd builtin, so this necessarily goes through cmd's parser.
-    // Two ways to hand it the directory, and neither is right for both cases:
-    //
-    //   cwd form      — the path is passed to CreateProcess as a parameter, so
-    //                   cmd's parser never sees it and there is nothing to
-    //                   escape. Correct for every legal directory name.
-    //                   BUT cmd refuses a UNC working directory: it prints
-    //                   "UNC paths are not supported. Defaulting to Windows
-    //                   directory." and then lists C:\Windows — a silently
-    //                   WRONG answer rather than an error.
-    //
-    //   argument form — works for UNC, but the path goes through cmd, which
-    //                   expands %VAR% first. A directory legitimately named
-    //                   "Build %VERSION%" then resolves to something else and
-    //                   quietly reports no attributes at all.
-    //
-    // So: cwd for local paths, argument for UNC. Injection is not the concern
-    // that decides this — `"` `<` `>` `|` `:` `*` `?` are all illegal in NTFS
-    // names, so a real path cannot close the quote in the argument form — but
-    // the cwd form removes the question entirely everywhere it can be used.
-    const isUnc = dirPath.startsWith('\\\\');
-    const query = (spec) => {
-      try {
-        const opts = {
-          encoding: 'utf8',
-          timeout: 10000,
-          windowsHide: true,
-          maxBuffer: 32 * 1024 * 1024,
-          stdio: ['ignore', 'pipe', 'ignore']
-        };
-        const out = isUnc
-          ? execSync(`dir /A:${spec} /B "${dirPath}"`, opts)
-          : execSync(`dir /A:${spec} /B`, { ...opts, cwd: dirPath });
-        return new Set(out.split(/\r?\n/).map(s => s.trim()).filter(Boolean));
-      } catch (_) {
-        // `dir` exits non-zero with "File Not Found" when nothing matches the
-        // attribute filter, which is the common case — not an error.
-        return new Set();
+    try {
+      const data = {};
+      handle = FindFirstFileW(dirPath.replace(/[\\/]+$/, '') + '\\*', data);
+
+      // FindFirstFileW returns INVALID_HANDLE_VALUE (-1) on failure — an
+      // unreadable or missing directory. Not an error worth logging: callers
+      // already handle a null result as "attributes unknown".
+      const addr = koffi.address(handle);
+      if (addr === -1 || addr === 0xFFFFFFFFFFFFFFFFn || addr === 0n || addr === 0) {
+        return null;
       }
-    };
 
-    const result = { hidden: query('H'), system: query('S'), at: Date.now() };
-    this._attrCache.set(dirPath, result);
-    return result;
+      do {
+        const name = data.cFileName;
+        if (name && name !== '.' && name !== '..') {
+          out.set(name, {
+            hidden: !!(data.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN),
+            system: !!(data.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM)
+          });
+        }
+      } while (FindNextFileW(handle, data));
+    } catch (err) {
+      logger.warn(`Error reading attributes for ${dirPath}:`, err.message);
+      return null;
+    } finally {
+      if (handle) {
+        try { FindClose(handle); } catch (_) { /* best effort */ }
+      }
+    }
+
+    return out;
   }
 
   /**
    * Read directory contents and return file/folder info with inode and stats.
-   *
-   * options.withAttributes — additionally resolve Windows hidden/system flags
-   * onto each entry (`isHidden`, `isSystem`, `attrs` bitmask). Off by default
-   * because it costs two process spawns per directory; see
-   * readWindowsAttributes.
+   * Every entry carries `isHidden` / `isSystem` where they can be determined.
    */
-  readDirectory(dirPath, ignoreFilenames = [], options = {}) {
+  readDirectory(dirPath, ignoreFilenames = []) {
     // Validate path before proceeding
     if (!dirPath || typeof dirPath !== 'string') {
       logger.error(`readDirectory: Invalid path type - received ${typeof dirPath}`);
@@ -135,16 +174,13 @@ class FilesystemService {
     const files = [];
     const folders = [];
 
-    const winAttrs = options.withAttributes ? this.readWindowsAttributes(normalizedPath) : null;
+    // One FindFirstFileW pass for the whole directory — cheap enough (1.5ms for
+    // 42 entries) that there is no longer any reason to make it opt-in.
+    const winAttrs = this.readWindowsAttributes(normalizedPath);
     const attrsFor = (name) => {
       if (!winAttrs) return null;
-      const isHidden = winAttrs.hidden.has(name);
-      const isSystem = winAttrs.system.has(name);
-      return {
-        isHidden,
-        isSystem,
-        attrs: (isHidden ? ATTR_HIDDEN : 0) | (isSystem ? ATTR_SYSTEM : 0)
-      };
+      const a = winAttrs.get(name);
+      return { isHidden: !!(a && a.hidden), isSystem: !!(a && a.system) };
     };
 
     for (const entry of entries) {
@@ -591,5 +627,3 @@ class FilesystemService {
 }
 
 module.exports = new FilesystemService();
-module.exports.ATTR_HIDDEN = ATTR_HIDDEN;
-module.exports.ATTR_SYSTEM = ATTR_SYSTEM;

@@ -326,12 +326,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
       dbFileMap.delete(`-1:${filename}`);
     }
 
-    // withAttributes: the scan is the one place that pays for Windows
-    // hidden/system bits (~90ms per directory, in the background scan rather
-    // than the interactive render). They are persisted onto the rows so the
-    // cached render can filter without paying it again, and so deep search —
-    // which walks thousands of directories — never has to.
-    const entries = fs.readDirectory(normalizedPath, ignoreFilenames, { withAttributes: true });
+    const entries = fs.readDirectory(normalizedPath, ignoreFilenames);
     const entriesWithChanges = [];
     const pendingMissingFiles = [];
     const pendingMissingDirs = [];
@@ -400,8 +395,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           dateModified: entry.dateModified,
           dateCreated: entry.dateCreated,
           size: 0,
-          mode: entry.mode ?? null,
-          attrs: entry.attrs ?? null
+          mode: entry.mode ?? null
         });
 
         entriesWithChanges.push({
@@ -480,10 +474,6 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
         const subDirCategoryName = subDirCategory ? subDirCategory.name : 'Default';
         const subDirInfo = ensureDirectoryRecord(entry.path, entry.inode, subDirCategoryName);
         const existingDir = subDirInfo.dir;
-        // A child folder's hidden/system bits belong to THIS listing, but the
-        // cached render reads child folders from `dirs`, so they are stored on
-        // the child's own row.
-        db.setDirectoryAttrs(entry.path, entry.attrs ?? null);
         let changeState = 'unchanged';
 
         if (subDirInfo.isNew) {
@@ -788,8 +778,7 @@ function doScanDirectoryWithComparison(dirPath, isManualNavigation = true, isBac
           dateModified: entry.dateModified,
           dateCreated: entry.dateCreated,
           size: entry.size,
-          mode: entry.mode ?? null,
-          attrs: entry.attrs ?? null
+          mode: entry.mode ?? null
         });
 
         const fileRecord = db.getFileByInode(entry.inode, dirId);

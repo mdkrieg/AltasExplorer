@@ -2688,8 +2688,15 @@ async function flushDeepSearchBatch(panelId, forceFinish) {
 	state.deepSearchFlushing = true;
 
 	try {
-		const batch  = state.deepSearchBuffer.splice(0);
+		const rawBatch = state.deepSearchBuffer.splice(0);
 		const isDone = forceFinish || !state.deepSearchInProgress;
+
+		// Deep search honours the same listing filters as the grid. It could not
+		// before: attributes used to be opt-in because they cost a process spawn
+		// per directory, and deep search walks thousands. They now come from the
+		// same directory pass that produced the entry.
+		const dsSettings = await window.electronAPI.getSettings();
+		const batch = applyListingFilters(rawBatch, dsSettings);
 
 		if (batch.length > 0) {
 			// Pre-sort the incoming batch by score desc.
