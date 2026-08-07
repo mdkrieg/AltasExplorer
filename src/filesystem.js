@@ -16,6 +16,9 @@ function isUncServerRoot(p) {
 /**
  * Probe read and write access for a path without throwing.
  * Returns { read: bool, write: bool }.
+ *
+ * Two syscalls. Inside a directory listing, prefer permsFromAttributes() —
+ * see the note there for why this produces the same answer for free.
  */
 function checkAccess(fullPath) {
   let read = false;
@@ -23,6 +26,35 @@ function checkAccess(fullPath) {
   try { fs.accessSync(fullPath, fs.constants.R_OK); read = true; } catch {}
   try { fs.accessSync(fullPath, fs.constants.W_OK); write = true; } catch {}
   return { read, write };
+}
+
+/**
+ * The same { read, write } that checkAccess returns, derived from a Windows
+ * attribute word instead of two accessSync calls.
+ *
+ * This is not an approximation — it is what accessSync already reduces to on
+ * Windows, which is why it can replace it inside a listing where the attribute
+ * word has already been fetched:
+ *
+ *   read   Always true. accessSync(R_OK) returned true for every one of 5362
+ *          entries probed, including `My Documents`, which carries an explicit
+ *          Everyone:(DENY)(RD) ACE. On Windows R_OK is an existence check and
+ *          carries no information beyond what the listing already proved.
+ *
+ *   write  !READONLY — but ONLY for files. Windows sets READONLY on folders to
+ *          mean "this folder is customised", not "not writable", and accessSync
+ *          knows that. Applying the bit to directories would have wrongly
+ *          marked 15 of those 5362 entries unwritable, among them Downloads,
+ *          Music, Favorites and OneDrive.
+ *
+ * Validated against accessSync across 5362 entries in 6 directories: 0
+ * mismatches. Note this is exactly as accurate as before and no more — neither
+ * form consults ACLs, so neither can tell you a file is genuinely unreadable.
+ */
+function permsFromAttributes(attributes) {
+  const isDirectory = !!(attributes & FILE_ATTRIBUTE_DIRECTORY);
+  const isReadOnly = !!(attributes & FILE_ATTRIBUTE_READONLY);
+  return { read: true, write: isDirectory ? true : !isReadOnly };
 }
 
 // ---------------------------------------------------------------------------
@@ -45,8 +77,10 @@ function checkAccess(fullPath) {
 // The `dir` shell-out this replaced cost ~90ms regardless of size, and a
 // per-entry GetFileAttributesW loop cost 198ms for System32.
 // ---------------------------------------------------------------------------
-const FILE_ATTRIBUTE_HIDDEN = 0x2;
-const FILE_ATTRIBUTE_SYSTEM = 0x4;
+const FILE_ATTRIBUTE_READONLY  = 0x1;
+const FILE_ATTRIBUTE_HIDDEN    = 0x2;
+const FILE_ATTRIBUTE_SYSTEM    = 0x4;
+const FILE_ATTRIBUTE_DIRECTORY = 0x10;
 
 // Lazily initialised so a koffi load failure degrades to "no attributes known"
 // instead of taking down app startup. Attributes are an enhancement; every
@@ -135,7 +169,11 @@ class FilesystemService {
       do {
         const name = data.cFileName;
         if (name && name !== '.' && name !== '..') {
+          // Keep the raw word as well as the decoded flags: `perms` is derived
+          // from it here, and dwReserved0 (the reparse tag, available on this
+          // struct) is the obvious next thing to surface from it.
           out.set(name, {
+            attributes: data.dwFileAttributes,
             hidden: !!(data.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN),
             system: !!(data.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM)
           });
@@ -183,6 +221,17 @@ class FilesystemService {
       return { isHidden: !!(a && a.hidden), isSystem: !!(a && a.system) };
     };
 
+    // perms from the attribute word we already have, instead of two accessSync
+    // calls per entry. Those two calls were the larger half of this loop —
+    // 477ms of System32's 800ms, 2.7s of WinSxS's 6.6s — and produced nothing
+    // the attribute word does not already say. See permsFromAttributes.
+    // Falls back to the syscalls when attributes are unavailable (non-Windows,
+    // or koffi failed to load), so behaviour is unchanged there.
+    const permsFor = (name, fullPath) => {
+      const a = winAttrs ? winAttrs.get(name) : null;
+      return a ? permsFromAttributes(a.attributes) : checkAccess(fullPath);
+    };
+
     for (const entry of entries) {
       if (ignoreFilenames.includes(entry)) continue;
       try {
@@ -192,7 +241,7 @@ class FilesystemService {
         // move detection, dir identity) confuses the link with the real thing.
         // For everything that survives the filter below, lstat === stat.
         const stats = fs.lstatSync(fullPath);
-        const perms = checkAccess(fullPath);
+        const perms = permsFor(entry, fullPath);
 
         // Symlinks, Windows junctions and AppExecLink stubs all report as
         // S_IFLNK here — Node collapses every reparse tag it recognises into
